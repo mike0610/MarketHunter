@@ -13,3 +13,44 @@
 2026-07-06 18:11:05.942 | INFO     | __main__:main:19 - Binance API: True
 2026-07-06 18:11:06.687 | INFO     | __main__:main:23 - Spot pairs: 442
 2026-07-06 18:11:06.687 | INFO     | __main__:main:25 - ['0GUSDT', '1000CATUSDT', '1000CHEEMSUSDT', '1000SATSUSDT', '1INCHUSDT', '1MBABYDOGEUSDT', '2ZUSDT', 'AAVEUSDT', 'ACEUSDT', 'ACHUSDT']
+2026-07-06 22:51:46.822 | INFO     | __main__:main:9 - ============================================================
+2026-07-06 22:51:46.822 | INFO     | __main__:main:10 - MarketHunter
+2026-07-06 22:51:46.822 | INFO     | __main__:main:11 - ============================================================
+2026-07-06 22:54:25.373 | INFO     | __main__:main:9 - ============================================================
+2026-07-06 22:54:25.373 | INFO     | __main__:main:10 - MarketHunter
+2026-07-06 22:54:25.373 | INFO     | __main__:main:11 - ============================================================
+2026-07-06 23:45:42.038 | INFO     | __main__:main:9 - ============================================================
+2026-07-06 23:45:42.038 | INFO     | __main__:main:10 - MarketHunter
+2026-07-06 23:45:42.038 | INFO     | __main__:main:11 - ============================================================
+2026-07-06 23:45:43.819 | INFO     | __main__:main:19 - Loaded symbols: 1094
+2026-07-06 23:45:43.820 | INFO     | __main__:main:21 - 
+2026-07-06 23:45:43.820 | INFO     | __main__:main:23 - First 20 symbols:
+2026-07-06 23:45:43.820 | INFO     | __main__:main:27 - futures  0GUSDT
+2026-07-06 23:45:43.820 | INFO     | __main__:main:27 - futures  1000000BOBUSDT
+2026-07-06 23:45:43.821 | INFO     | __main__:main:27 - futures  1000000MOGUSDT
+2026-07-06 23:45:43.821 | INFO     | __main__:main:27 - futures  1000BONKUSDT
+2026-07-06 23:45:43.821 | INFO     | __main__:main:27 - futures  1000CATUSDT
+2026-07-06 23:45:43.821 | INFO     | __main__:main:27 - futures  1000CHEEMSUSDT
+2026-07-06 23:45:43.821 | INFO     | __main__:main:27 - futures  1000FLOKIUSDT
+2026-07-06 23:45:43.821 | INFO     | __main__:main:27 - futures  1000LUNCUSDT
+2026-07-06 23:45:43.822 | INFO     | __main__:main:27 - futures  1000PEPEUSDT
+2026-07-06 23:45:43.822 | INFO     | __main__:main:27 - futures  1000RATSUSDT
+2026-07-06 23:45:43.822 | INFO     | __main__:main:27 - futures  1000SATSUSDT
+2026-07-06 23:45:43.822 | INFO     | __main__:main:27 - futures  1000SHIBUSDT
+2026-07-06 23:45:43.822 | INFO     | __main__:main:27 - futures  1000XECUSDT
+2026-07-06 23:45:43.822 | INFO     | __main__:main:27 - futures  1INCHUSDT
+2026-07-06 23:45:43.822 | INFO     | __main__:main:27 - futures  1MBABYDOGEUSDT
+2026-07-06 23:45:43.823 | INFO     | __main__:main:27 - futures  2ZUSDT
+2026-07-06 23:45:43.823 | INFO     | __main__:main:27 - futures  4USDT
+2026-07-06 23:45:43.823 | INFO     | __main__:main:27 - futures  AAOIUSDT
+2026-07-06 23:45:43.823 | INFO     | __main__:main:27 - futures  AAPLUSDT
+2026-07-06 23:45:43.823 | INFO     | __main__:main:27 - futures  AAVEUSDT
+2026-07-07 00:20:52.092 | INFO     | __main__:main:19 - ============================================================
+2026-07-07 00:20:52.093 | INFO     | __main__:main:20 - MarketHunter
+2026-07-07 00:20:52.093 | INFO     | __main__:main:21 - ============================================================
+2026-07-07 00:20:53.690 | INFO     | __main__:main:38 - Loaded symbols: 1094
+2026-07-07 00:20:53.690 | INFO     | services.scanner:scan_many:83 - Scanning 20 symbols...
+2026-07-07 00:20:54.423 | INFO     | services.scanner:scan_many:109 - Signals found: 0
+2026-07-07 00:20:54.424 | INFO     | __main__:main:61 - 
+2026-07-07 00:20:54.424 | INFO     | __main__:main:62 - ============================================================
+2026-07-07 00:20:54.424 | INFO     | __main__:main:66 - No breakout signals found.

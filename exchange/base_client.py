@@ -1,3 +1,9 @@
+"""
+MarketHunter
+
+exchange/base_client.py
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -24,16 +30,22 @@ class BaseClient:
         )
 
     async def close(self) -> None:
+        """Close HTTP client."""
+
         await self.client.aclose()
 
     async def get(
         self,
         endpoint: str,
         params: dict[str, Any] | None = None,
+        base_url: str | None = None,
     ) -> Any:
+        """Universal GET request."""
+
+        url = f"{base_url or self.base_url}{endpoint}"
 
         response = await self.client.get(
-            f"{self.base_url}{endpoint}",
+            url,
             params=params,
         )
 

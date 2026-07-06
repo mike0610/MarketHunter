@@ -1,30 +1,92 @@
+"""
+MarketHunter
+
+app/main.py
+"""
+
+from __future__ import annotations
+
 import asyncio
 
-from exchange.binance_client import BinanceClient
+from services.market_data import MarketDataService
+from services.scanner import Scanner
+from strategies.breakout import BreakoutStrategy
 from utils.logger import logger
 
 
-async def main():
+async def main() -> None:
 
     logger.info("=" * 60)
-    logger.info("MarketHunter started")
+    logger.info("MarketHunter")
     logger.info("=" * 60)
 
-    client = BinanceClient()
+    service = MarketDataService()
 
-    logger.info("Connecting to Binance...")
+    try:
+        #
+        # Binance connection
+        #
 
-    ok = await client.ping()
+        await service.ping()
 
-    logger.info(f"Binance API: {ok}")
+        #
+        # Symbols
+        #
 
-    symbols = await client.get_spot_symbols()
+        symbols = await service.load_symbols()
 
-    logger.info(f"Spot pairs: {len(symbols)}")
+        logger.info("Loaded symbols: {}", len(symbols))
 
-    logger.info(symbols[:10])
+        #
+        # Scanner
+        #
 
-    await client.close()
+        scanner = Scanner(
+            market_data=service,
+            strategy=BreakoutStrategy(),
+            workers=10,
+        )
+
+        #
+        # First test
+        # Поки що скануємо лише перші 20 монет.
+        #
+
+        test_symbols = symbols[:20]
+
+        signals = await scanner.scan_many(
+            test_symbols
+        )
+
+        logger.info("")
+        logger.info("=" * 60)
+
+        if not signals:
+
+            logger.info("No breakout signals found.")
+
+        else:
+
+            logger.success(
+                "Found {} signals",
+                len(signals),
+            )
+
+            for signal in signals:
+
+                logger.success(
+                    "{} | {} | {} | Score={}",
+                    signal.symbol,
+                    signal.market,
+                    signal.direction,
+                    signal.score,
+                )
+
+                for reason in signal.reasons:
+                    logger.info("  • {}", reason)
+
+    finally:
+        await service.close()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,22 @@
+scanner:
+  spot: true
+  futures: true
+
+timeframes:
+  trend: "1d"
+  setup: "4h"
+  entry: "1h"
+
+filters:
+  min_volume_usdt: 20000000
+  min_price: 0.10
+  min_history: 250
+
+score:
+  min_score: 90
+
+telegram:
+  enabled: false
+
+logging:
+  level: INFO

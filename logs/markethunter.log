@@ -1,0 +1,8 @@
+2026-07-06 18:00:41.402 | INFO     | __main__:main:9 - ============================================================
+2026-07-06 18:00:41.402 | INFO     | __main__:main:10 - MarketHunter started
+2026-07-06 18:00:41.403 | INFO     | __main__:main:11 - ============================================================
+2026-07-06 18:00:41.403 | INFO     | __main__:main:13 - None
+2026-07-06 18:03:22.441 | INFO     | __main__:main:9 - ============================================================
+2026-07-06 18:03:22.441 | INFO     | __main__:main:10 - MarketHunter started
+2026-07-06 18:03:22.441 | INFO     | __main__:main:11 - ============================================================
+2026-07-06 18:03:22.451 | INFO     | __main__:main:13 - {'scanner': {'spot': True, 'futures': True}, 'timeframes': {'trend': '1d', 'setup': '4h', 'entry': '1h'}, 'filters': {'min_volume_usdt': 20000000, 'min_price': 0.1, 'min_history': 250}, 'score': {'min_score': 90}, 'telegram': {'enabled': False}, 'logging': {'level': 'INFO'}}

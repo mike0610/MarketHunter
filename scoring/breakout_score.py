@@ -7,13 +7,16 @@ scoring/breakout_score.py
 from __future__ import annotations
 
 from indicators.trend import TrendFilter
+from indicators.volume_filter import VolumeFilter
 from models.market_snapshot import MarketSnapshot
 
 
 class BreakoutScore:
 
     def __init__(self) -> None:
+
         self.trend = TrendFilter()
+        self.volume = VolumeFilter()
 
     def calculate(
         self,
@@ -25,37 +28,23 @@ class BreakoutScore:
         score = 0
         reasons: list[str] = []
 
-        #
-        # Trend
-        #
-
-        if self.trend.bullish(snapshot):
-            score += 25
-            reasons.append("Bullish EMA trend")
-        else:
+        if not self.trend.bullish(snapshot):
             return 0, []
 
-        #
-        # Breakout
-        #
+        score += 25
+        reasons.append("Bullish trend")
 
-        if last.close > snapshot.highest20:
-            score += 35
-            reasons.append("20-day breakout")
-        else:
+        if last.close <= snapshot.highest20:
             return 0, []
 
-        #
-        # Volume
-        #
+        score += 35
+        reasons.append("20-day breakout")
 
-        if last.volume > snapshot.avg_volume20 * 1.5:
+        if self.volume.bullish(snapshot):
             score += 20
-            reasons.append("Volume ×1.5")
-
-        #
-        # ATR
-        #
+            reasons.append(
+                f"Volume x{self.volume.ratio(snapshot):.2f}"
+            )
 
         if last.body > snapshot.atr14:
             score += 20

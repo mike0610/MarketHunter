@@ -7,6 +7,7 @@ scoring/breakout_score.py
 from __future__ import annotations
 
 from indicators.atr_filter import ATRFilter
+from indicators.breakout_filter import BreakoutFilter
 from indicators.trend import TrendFilter
 from indicators.volume_filter import VolumeFilter
 from models.market_snapshot import MarketSnapshot
@@ -17,6 +18,7 @@ class BreakoutScore:
     def __init__(self) -> None:
 
         self.trend = TrendFilter()
+        self.breakout = BreakoutFilter()
         self.volume = VolumeFilter()
         self.atr = ATRFilter()
 
@@ -24,8 +26,6 @@ class BreakoutScore:
         self,
         snapshot: MarketSnapshot,
     ) -> tuple[int, list[str]]:
-
-        last = snapshot.candles[-1]
 
         score = 0
         reasons: list[str] = []
@@ -44,11 +44,13 @@ class BreakoutScore:
         # Breakout
         #
 
-        if last.close <= snapshot.highest20:
+        if not self.breakout.bullish(snapshot):
             return 0, []
 
         score += 35
-        reasons.append("20-day breakout")
+        reasons.append(
+            f"Breakout +{self.breakout.breakout_percent(snapshot):.2f}%"
+        )
 
         #
         # Volume

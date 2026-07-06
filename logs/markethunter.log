@@ -6,3 +6,10 @@
 2026-07-06 18:03:22.441 | INFO     | __main__:main:10 - MarketHunter started
 2026-07-06 18:03:22.441 | INFO     | __main__:main:11 - ============================================================
 2026-07-06 18:03:22.451 | INFO     | __main__:main:13 - {'scanner': {'spot': True, 'futures': True}, 'timeframes': {'trend': '1d', 'setup': '4h', 'entry': '1h'}, 'filters': {'min_volume_usdt': 20000000, 'min_price': 0.1, 'min_history': 250}, 'score': {'min_score': 90}, 'telegram': {'enabled': False}, 'logging': {'level': 'INFO'}}
+2026-07-06 18:11:05.377 | INFO     | __main__:main:9 - ============================================================
+2026-07-06 18:11:05.377 | INFO     | __main__:main:10 - MarketHunter started
+2026-07-06 18:11:05.378 | INFO     | __main__:main:11 - ============================================================
+2026-07-06 18:11:05.473 | INFO     | __main__:main:15 - Connecting to Binance...
+2026-07-06 18:11:05.942 | INFO     | __main__:main:19 - Binance API: True
+2026-07-06 18:11:06.687 | INFO     | __main__:main:23 - Spot pairs: 442
+2026-07-06 18:11:06.687 | INFO     | __main__:main:25 - ['0GUSDT', '1000CATUSDT', '1000CHEEMSUSDT', '1000SATSUSDT', '1INCHUSDT', '1MBABYDOGEUSDT', '2ZUSDT', 'AAVEUSDT', 'ACEUSDT', 'ACHUSDT']

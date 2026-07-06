@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from indicators.atr import atr
 from indicators.moving_average import ema
+from indicators.support_resistance import SupportResistance
 from indicators.volume import average_volume
 from models.candle import Candle
 from models.market_snapshot import MarketSnapshot
@@ -17,6 +18,9 @@ class SnapshotBuilder:
     """
     Builds a MarketSnapshot from historical candles.
     """
+
+    def __init__(self) -> None:
+        self.levels = SupportResistance()
 
     def build(
         self,
@@ -33,33 +37,35 @@ class SnapshotBuilder:
                 f"Expected at least 200, got {len(candles)}."
             )
 
-        ema20_values = ema(candles, 20)
-        ema50_values = ema(candles, 50)
-        ema200_values = ema(candles, 200)
+        ema20 = ema(candles, 20)[-1]
+        ema50 = ema(candles, 50)[-1]
+        ema200 = ema(candles, 200)[-1]
 
-        atr14_values = atr(candles, 14)
+        atr14 = atr(candles, 14)[-1]
 
-        highest20 = max(
-            candle.high
-            for candle in candles[-21:-1]
+        highest20 = self.levels.resistance(
+            candles,
+            lookback=20,
         )
 
-        lowest20 = min(
-            candle.low
-            for candle in candles[-21:-1]
+        lowest20 = self.levels.support(
+            candles,
+            lookback=20,
+        )
+
+        avg_volume20 = average_volume(
+            candles[:-1],
+            period=20,
         )
 
         return MarketSnapshot(
             symbol=symbol,
             candles=candles,
-            ema20=ema20_values[-1],
-            ema50=ema50_values[-1],
-            ema200=ema200_values[-1],
-            atr14=atr14_values[-1],
-            avg_volume20=average_volume(
-                candles[:-1],
-                period=20,
-            ),
+            ema20=ema20,
+            ema50=ema50,
+            ema200=ema200,
+            atr14=atr14,
+            avg_volume20=avg_volume20,
             highest20=highest20,
             lowest20=lowest20,
         )

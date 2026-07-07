@@ -9,6 +9,7 @@ from __future__ import annotations
 from indicators.atr_filter import ATRFilter
 from indicators.bos_filter import BOSFilter
 from indicators.breakout_filter import BreakoutFilter
+from indicators.liquidity_filter import LiquidityFilter
 from indicators.trend import TrendFilter
 from indicators.volume_filter import VolumeFilter
 from models.market_snapshot import MarketSnapshot
@@ -16,7 +17,8 @@ from models.market_snapshot import MarketSnapshot
 
 class BreakoutScore:
     """
-    Scores breakout signals using multiple confirmation filters.
+    Scores breakout signals using confirmation filters.
+    Maximum score: 100
     """
 
     def __init__(self) -> None:
@@ -24,6 +26,7 @@ class BreakoutScore:
         self.trend = TrendFilter()
         self.breakout = BreakoutFilter()
         self.bos = BOSFilter()
+        self.liquidity = LiquidityFilter()
         self.volume = VolumeFilter()
         self.atr = ATRFilter()
 
@@ -39,7 +42,7 @@ class BreakoutScore:
         reasons: list[str] = []
 
         #
-        # Trend
+        # Trend (25)
         #
 
         if not self.trend.bullish(snapshot):
@@ -49,20 +52,20 @@ class BreakoutScore:
         reasons.append("Bullish EMA trend")
 
         #
-        # Breakout
+        # Breakout (30)
         #
 
         if not self.breakout.bullish(snapshot):
             return 0, []
 
-        score += 35
+        score += 30
 
         reasons.append(
             f"Breakout +{self.breakout.breakout_percent(snapshot):.2f}%"
         )
 
         #
-        # Break Of Structure
+        # Break Of Structure (15)
         #
 
         if self.bos.bullish(snapshot):
@@ -79,19 +82,36 @@ class BreakoutScore:
                 reasons.append("Bullish BOS")
 
         #
-        # Volume
+        # Liquidity Sweep (10)
+        #
+
+        if self.liquidity.bullish(snapshot):
+
+            score += 10
+
+            level = self.liquidity.bullish_level(snapshot)
+
+            if level is not None:
+                reasons.append(
+                    f"Liquidity sweep {level:.4f}"
+                )
+            else:
+                reasons.append("Liquidity sweep")
+
+        #
+        # Volume (10)
         #
 
         if self.volume.bullish(snapshot):
 
-            score += 15
+            score += 10
 
             reasons.append(
                 f"Volume x{self.volume.ratio(snapshot):.2f}"
             )
 
         #
-        # ATR
+        # ATR Impulse (10)
         #
 
         if self.atr.bullish(snapshot):

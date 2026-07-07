@@ -1,9 +1,13 @@
 """
 MarketHunter
 
-Research Engine
+Module:
+Research Trade Model
 
-Virtual research trade model.
+Responsibilities:
+- Store virtual trade state.
+- Calculate virtual PnL and R-multiple.
+- Track trade lifecycle and candle processing state.
 """
 
 from __future__ import annotations
@@ -27,8 +31,8 @@ class ResearchTrade:
     """
     Virtual trade created from a MarketHunter signal.
 
-    The trade never sends an order to an exchange.
-    It only tracks how the idea would perform on real market data.
+    This model never sends orders to Binance or any other exchange.
+    It stores how a signal would perform on real market candles.
     """
 
     id: str
@@ -60,18 +64,19 @@ class ResearchTrade:
 
     profit_amount: float = 0.0
     profit_percent: float = 0.0
-
-    # Realized result in R-multiples.
-    # Example: TP at 2R => rr = 2.0; SL => rr = -1.0.
     rr: float = 0.0
 
     max_profit_percent: float = 0.0
     max_drawdown_percent: float = 0.0
 
+    active_candles: int = 0
+    max_active_candles: int = 30
+    last_processed_candle_at: datetime | None = None
+
     @property
     def is_open(self) -> bool:
         """
-        Return True while the trade is waiting for entry or active.
+        Return True while trade waits for entry or is active.
         """
 
         return self.status in {
@@ -81,28 +86,32 @@ class ResearchTrade:
 
     def is_long(self) -> bool:
         """
-        Return True for LONG trade.
+        Return True for a LONG trade.
         """
 
         return self.direction.upper() == "LONG"
 
     def is_short(self) -> bool:
         """
-        Return True for SHORT trade.
+        Return True for a SHORT trade.
         """
 
         return self.direction.upper() == "SHORT"
 
     def activate(
         self,
-        opened_at: datetime | None = None,
+        opened_at: datetime,
     ) -> None:
         """
-        Activate a trade after market price reaches entry.
+        Activate the virtual trade at its planned entry price.
         """
 
+        if self.status != TradeStatus.WAITING_ENTRY:
+            return
+
         self.status = TradeStatus.ACTIVE
-        self.opened_at = opened_at or utc_now()
+        self.opened_at = opened_at
+        self.last_processed_candle_at = opened_at
 
     def update_extremes(
         self,
@@ -110,56 +119,59 @@ class ResearchTrade:
         low: float,
     ) -> None:
         """
-        Track best and worst excursion while the trade is active.
+        Update maximum favorable and adverse excursion.
         """
 
         if self.status != TradeStatus.ACTIVE:
             return
 
         if self.is_long():
-            max_profit = (
+            current_profit = (
                 (high - self.entry_price)
                 / self.entry_price
             ) * 100
 
-            max_drawdown = (
+            current_drawdown = (
                 (low - self.entry_price)
                 / self.entry_price
             ) * 100
 
         else:
-            max_profit = (
+            current_profit = (
                 (self.entry_price - low)
                 / self.entry_price
             ) * 100
 
-            max_drawdown = (
+            current_drawdown = (
                 (self.entry_price - high)
                 / self.entry_price
             ) * 100
 
         self.max_profit_percent = max(
             self.max_profit_percent,
-            max_profit,
+            current_profit,
         )
 
         self.max_drawdown_percent = min(
             self.max_drawdown_percent,
-            max_drawdown,
+            current_drawdown,
         )
 
     def close(
         self,
         price: float,
         reason: str,
-        closed_at: datetime | None = None,
+        closed_at: datetime,
     ) -> None:
         """
-        Close trade at a virtual price and calculate final result.
+        Close virtual trade and calculate realized PnL.
         """
 
+        if self.status != TradeStatus.ACTIVE:
+            return
+
         self.status = TradeStatus.CLOSED
-        self.closed_at = closed_at or utc_now()
+        self.closed_at = closed_at
         self.close_reason = reason
 
         if self.is_long():
@@ -193,10 +205,10 @@ class ResearchTrade:
     def expire(
         self,
         price: float,
-        closed_at: datetime | None = None,
+        closed_at: datetime,
     ) -> None:
         """
-        Mark a trade as expired when it did not hit TP or SL in time.
+        Close an active trade that exceeded its candle lifetime.
         """
 
         self.close(
@@ -205,4 +217,5 @@ class ResearchTrade:
             closed_at=closed_at,
         )
 
-        self.status = TradeStatus.EXPIRED
+        if self.status == TradeStatus.CLOSED:
+            self.status = TradeStatus.EXPIRED

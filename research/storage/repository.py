@@ -1,9 +1,13 @@
 """
 MarketHunter
 
-Research Engine
+Module:
+Research Repository
 
-SQLite repository for virtual research trades.
+Responsibilities:
+- Persist virtual research trades in SQLite.
+- Restore trades from SQLite into ResearchTrade objects.
+- Migrate early MVP database schemas safely.
 """
 
 from __future__ import annotations
@@ -20,17 +24,13 @@ from research.models.trade_status import TradeStatus
 
 class ResearchRepository:
     """
-    Persists ResearchTrade objects in SQLite.
-
-    Other modules must work through this repository instead of
-    directly calling sqlite3.connect().
+    SQLite repository for virtual ResearchTrade records.
     """
 
     def __init__(
         self,
         path: str = "research.db",
     ) -> None:
-
         database_path = Path(path)
 
         database_path.parent.mkdir(
@@ -56,11 +56,10 @@ class ResearchRepository:
 
     def create_schema(self) -> None:
         """
-        Create the base table for virtual trades.
+        Create database table for virtual research trades.
         """
 
         with self._lock, self.connection:
-
             self.connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS research_trades (
@@ -87,14 +86,17 @@ class ResearchRepository:
                     profit_percent REAL NOT NULL DEFAULT 0.0,
                     rr REAL NOT NULL DEFAULT 0.0,
                     max_profit_percent REAL NOT NULL DEFAULT 0.0,
-                    max_drawdown_percent REAL NOT NULL DEFAULT 0.0
+                    max_drawdown_percent REAL NOT NULL DEFAULT 0.0,
+                    active_candles INTEGER NOT NULL DEFAULT 0,
+                    max_active_candles INTEGER NOT NULL DEFAULT 30,
+                    last_processed_candle_at TEXT
                 )
                 """
             )
 
     def migrate_schema(self) -> None:
         """
-        Add missing columns for databases created by older MVP versions.
+        Add fields missing from databases created by earlier MVP builds.
         """
 
         required_columns = {
@@ -116,23 +118,29 @@ class ResearchRepository:
             "max_drawdown_percent": (
                 "max_drawdown_percent REAL NOT NULL DEFAULT 0.0"
             ),
+            "active_candles": (
+                "active_candles INTEGER NOT NULL DEFAULT 0"
+            ),
+            "max_active_candles": (
+                "max_active_candles INTEGER NOT NULL DEFAULT 30"
+            ),
+            "last_processed_candle_at": (
+                "last_processed_candle_at TEXT"
+            ),
         }
 
         with self._lock, self.connection:
-
             rows = self.connection.execute(
                 "PRAGMA table_info(research_trades)"
             ).fetchall()
 
-            existing = {
+            existing_columns = {
                 row["name"]
                 for row in rows
             }
 
             for name, definition in required_columns.items():
-
-                if name not in existing:
-
+                if name not in existing_columns:
                     self.connection.execute(
                         f"""
                         ALTER TABLE research_trades
@@ -145,11 +153,10 @@ class ResearchRepository:
         trade: ResearchTrade,
     ) -> None:
         """
-        Insert or update a virtual trade.
+        Insert or update one virtual trade.
         """
 
         with self._lock, self.connection:
-
             self.connection.execute(
                 """
                 INSERT INTO research_trades (
@@ -176,11 +183,14 @@ class ResearchRepository:
                     profit_percent,
                     rr,
                     max_profit_percent,
-                    max_drawdown_percent
+                    max_drawdown_percent,
+                    active_candles,
+                    max_active_candles,
+                    last_processed_candle_at
                 )
                 VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     signal_id = excluded.signal_id,
@@ -204,7 +214,12 @@ class ResearchRepository:
                     profit_percent = excluded.profit_percent,
                     rr = excluded.rr,
                     max_profit_percent = excluded.max_profit_percent,
-                    max_drawdown_percent = excluded.max_drawdown_percent
+                    max_drawdown_percent = excluded.max_drawdown_percent,
+                    active_candles = excluded.active_candles,
+                    max_active_candles = excluded.max_active_candles,
+                    last_processed_candle_at = (
+                        excluded.last_processed_candle_at
+                    )
                 """,
                 (
                     trade.id,
@@ -242,6 +257,13 @@ class ResearchRepository:
                     trade.rr,
                     trade.max_profit_percent,
                     trade.max_drawdown_percent,
+                    trade.active_candles,
+                    trade.max_active_candles,
+                    (
+                        trade.last_processed_candle_at.isoformat()
+                        if trade.last_processed_candle_at
+                        else None
+                    ),
                 ),
             )
 
@@ -250,11 +272,10 @@ class ResearchRepository:
         trade_id: str,
     ) -> ResearchTrade | None:
         """
-        Return one trade by ID.
+        Return one virtual trade by ID.
         """
 
         with self._lock:
-
             row = self.connection.execute(
                 """
                 SELECT *
@@ -273,11 +294,10 @@ class ResearchRepository:
         self,
     ) -> list[ResearchTrade]:
         """
-        Return all virtual trades, newest first.
+        Return all trades, newest first.
         """
 
         with self._lock:
-
             rows = self.connection.execute(
                 """
                 SELECT *
@@ -299,7 +319,6 @@ class ResearchRepository:
         """
 
         with self._lock:
-
             rows = self.connection.execute(
                 """
                 SELECT *
@@ -326,11 +345,10 @@ class ResearchRepository:
         direction: str,
     ) -> bool:
         """
-        Prevent duplicate open virtual trades from repeated scans.
+        Return True when an equivalent open research trade exists.
         """
 
         with self._lock:
-
             row = self.connection.execute(
                 """
                 SELECT id
@@ -359,7 +377,7 @@ class ResearchRepository:
         row: sqlite3.Row,
     ) -> ResearchTrade:
         """
-        Convert SQLite row into a ResearchTrade object.
+        Convert SQLite row into ResearchTrade.
         """
 
         return ResearchTrade(
@@ -399,6 +417,17 @@ class ResearchRepository:
             max_drawdown_percent=row[
                 "max_drawdown_percent"
             ],
+            active_candles=row["active_candles"],
+            max_active_candles=row[
+                "max_active_candles"
+            ],
+            last_processed_candle_at=(
+                datetime.fromisoformat(
+                    row["last_processed_candle_at"]
+                )
+                if row["last_processed_candle_at"]
+                else None
+            ),
         )
 
     def close(self) -> None:

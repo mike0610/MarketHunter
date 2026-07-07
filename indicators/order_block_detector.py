@@ -1,7 +1,13 @@
 """
 MarketHunter
 
-indicators/order_block_detector.py
+Module:
+Order Block Detector
+
+Responsibilities:
+- Detect bullish and bearish order blocks.
+- Preserve source candle and impulse data.
+- Use Market Structure as a directional filter.
 """
 
 from __future__ import annotations
@@ -15,18 +21,28 @@ from structure.market_structure_engine import (
 
 class OrderBlockDetector:
     """
-    Detect bullish and bearish Order Blocks using
-    Market Structure Engine.
+    Detects bullish and bearish order blocks.
+
+    A bullish order block is the last bearish candle before
+    an upward displacement. A bearish order block is the last
+    bullish candle before a downward displacement.
     """
 
-    def __init__(self) -> None:
+    MIN_CANDLES = 3
 
+    def __init__(self) -> None:
         self.structure = MarketStructureEngine()
 
     def bullish(
         self,
         candles: list[Candle],
     ) -> list[OrderBlock]:
+        """
+        Return bullish order blocks for a bullish market structure.
+        """
+
+        if len(candles) < self.MIN_CANDLES:
+            return []
 
         market = self.structure.analyze(candles)
 
@@ -35,29 +51,35 @@ class OrderBlockDetector:
 
         blocks: list[OrderBlock] = []
 
-        for i in range(len(candles) - 2):
+        for index in range(len(candles) - 2):
+            source = candles[index]
+            impulse_first = candles[index + 1]
+            impulse_second = candles[index + 2]
 
-            candle = candles[i]
-
-            #
-            # Last bearish candle before impulse
-            #
-
-            if not candle.bearish:
+            if not source.bearish:
                 continue
 
-            if candles[i + 1].close <= candle.high:
+            if impulse_first.close <= source.high:
                 continue
 
             blocks.append(
-
                 OrderBlock(
                     bullish=True,
-                    high=candle.high,
-                    low=candle.low,
-                    candle_index=i,
+                    candle_index=index,
+                    open=source.open,
+                    high=source.high,
+                    low=source.low,
+                    close=source.close,
+                    impulse_high=max(
+                        impulse_first.high,
+                        impulse_second.high,
+                    ),
+                    impulse_low=min(
+                        source.low,
+                        impulse_first.low,
+                        impulse_second.low,
+                    ),
                 )
-
             )
 
         return blocks
@@ -66,6 +88,12 @@ class OrderBlockDetector:
         self,
         candles: list[Candle],
     ) -> list[OrderBlock]:
+        """
+        Return bearish order blocks for a bearish market structure.
+        """
+
+        if len(candles) < self.MIN_CANDLES:
+            return []
 
         market = self.structure.analyze(candles)
 
@@ -74,29 +102,35 @@ class OrderBlockDetector:
 
         blocks: list[OrderBlock] = []
 
-        for i in range(len(candles) - 2):
+        for index in range(len(candles) - 2):
+            source = candles[index]
+            impulse_first = candles[index + 1]
+            impulse_second = candles[index + 2]
 
-            candle = candles[i]
-
-            #
-            # Last bullish candle before sell impulse
-            #
-
-            if not candle.bullish:
+            if not source.bullish:
                 continue
 
-            if candles[i + 1].close >= candle.low:
+            if impulse_first.close >= source.low:
                 continue
 
             blocks.append(
-
                 OrderBlock(
                     bullish=False,
-                    high=candle.high,
-                    low=candle.low,
-                    candle_index=i,
+                    candle_index=index,
+                    open=source.open,
+                    high=source.high,
+                    low=source.low,
+                    close=source.close,
+                    impulse_high=max(
+                        source.high,
+                        impulse_first.high,
+                        impulse_second.high,
+                    ),
+                    impulse_low=min(
+                        impulse_first.low,
+                        impulse_second.low,
+                    ),
                 )
-
             )
 
         return blocks
@@ -105,6 +139,9 @@ class OrderBlockDetector:
         self,
         candles: list[Candle],
     ) -> OrderBlock | None:
+        """
+        Return the newest bullish order block.
+        """
 
         blocks = self.bullish(candles)
 
@@ -114,6 +151,9 @@ class OrderBlockDetector:
         self,
         candles: list[Candle],
     ) -> OrderBlock | None:
+        """
+        Return the newest bearish order block.
+        """
 
         blocks = self.bearish(candles)
 

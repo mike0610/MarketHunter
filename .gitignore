@@ -1,0 +1,13 @@
+
+# Local MarketHunter data
+data/*.db
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local diagnostics
+debug_sources.txt
+filter_sources.txt
+core_sources.txt
+architecture_sources.txt

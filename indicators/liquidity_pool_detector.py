@@ -1,7 +1,13 @@
 """
 MarketHunter
 
-indicators/liquidity_pool_detector.py
+Module:
+Liquidity Pool Detector
+
+Responsibilities:
+- Detect equal highs as buy-side liquidity.
+- Detect equal lows as sell-side liquidity.
+- Use Market Structure as a directional filter.
 """
 
 from __future__ import annotations
@@ -15,115 +21,140 @@ from structure.market_structure_engine import (
 
 class LiquidityPoolDetector:
     """
-    Detect liquidity pools from market structure.
+    Detects liquidity pools from repeated equal highs and equal lows.
     """
 
-    def __init__(self) -> None:
+    MIN_TOUCHES = 2
+    TOLERANCE_RATIO = 0.002
 
+    def __init__(self) -> None:
         self.structure = MarketStructureEngine()
 
     def bullish(
         self,
         candles: list[Candle],
     ) -> list[LiquidityPool]:
+        """
+        Detect buy-side liquidity above equal highs.
+
+        The pool itself is marked bullish=False because equal highs
+        represent buy-side liquidity above price.
+        """
+
+        if len(candles) < self.MIN_TOUCHES:
+            return []
 
         market = self.structure.analyze(candles)
 
         if not market.bullish:
             return []
 
-        pools: list[LiquidityPool] = []
+        if (
+            market.last_high is None
+            or market.dealing_high is None
+            or market.dealing_low is None
+        ):
+            return []
 
-        tolerance = (
+        dealing_range = (
             market.dealing_high
             - market.dealing_low
-        ) * 0.002
+        )
 
-        highs = []
+        if dealing_range <= 0:
+            return []
 
-        for i, candle in enumerate(candles):
+        tolerance = (
+            dealing_range
+            * self.TOLERANCE_RATIO
+        )
 
-            if abs(
-                candle.high
-                - market.last_high
-            ) <= tolerance:
+        touches = [
+            (index, candle.high)
+            for index, candle in enumerate(candles)
+            if abs(candle.high - market.last_high)
+            <= tolerance
+        ]
 
-                highs.append(
-                    (
-                        i,
-                        candle.high,
-                    )
-                )
+        if len(touches) < self.MIN_TOUCHES:
+            return []
 
-        if len(highs) >= 2:
-
-            pools.append(
-
-                LiquidityPool(
-                    bullish=False,
-                    level=market.last_high,
-                    first_index=highs[0][0],
-                    last_index=highs[-1][0],
-                    touches=len(highs),
-                )
-
+        return [
+            LiquidityPool(
+                bullish=False,
+                level=market.last_high,
+                first_index=touches[0][0],
+                second_index=touches[-1][0],
+                touches=len(touches),
             )
-
-        return pools
+        ]
 
     def bearish(
         self,
         candles: list[Candle],
     ) -> list[LiquidityPool]:
+        """
+        Detect sell-side liquidity below equal lows.
+
+        The pool itself is marked bullish=True because equal lows
+        represent sell-side liquidity below price.
+        """
+
+        if len(candles) < self.MIN_TOUCHES:
+            return []
 
         market = self.structure.analyze(candles)
 
         if not market.bearish:
             return []
 
-        pools: list[LiquidityPool] = []
+        if (
+            market.last_low is None
+            or market.dealing_high is None
+            or market.dealing_low is None
+        ):
+            return []
 
-        tolerance = (
+        dealing_range = (
             market.dealing_high
             - market.dealing_low
-        ) * 0.002
+        )
 
-        lows = []
+        if dealing_range <= 0:
+            return []
 
-        for i, candle in enumerate(candles):
+        tolerance = (
+            dealing_range
+            * self.TOLERANCE_RATIO
+        )
 
-            if abs(
-                candle.low
-                - market.last_low
-            ) <= tolerance:
+        touches = [
+            (index, candle.low)
+            for index, candle in enumerate(candles)
+            if abs(candle.low - market.last_low)
+            <= tolerance
+        ]
 
-                lows.append(
-                    (
-                        i,
-                        candle.low,
-                    )
-                )
+        if len(touches) < self.MIN_TOUCHES:
+            return []
 
-        if len(lows) >= 2:
-
-            pools.append(
-
-                LiquidityPool(
-                    bullish=True,
-                    level=market.last_low,
-                    first_index=lows[0][0],
-                    last_index=lows[-1][0],
-                    touches=len(lows),
-                )
-
+        return [
+            LiquidityPool(
+                bullish=True,
+                level=market.last_low,
+                first_index=touches[0][0],
+                second_index=touches[-1][0],
+                touches=len(touches),
             )
-
-        return pools
+        ]
 
     def latest_bullish(
         self,
         candles: list[Candle],
     ) -> LiquidityPool | None:
+        """
+        Return the newest sell-side liquidity pool.
+        """
 
         pools = self.bullish(candles)
 
@@ -133,6 +164,9 @@ class LiquidityPoolDetector:
         self,
         candles: list[Candle],
     ) -> LiquidityPool | None:
+        """
+        Return the newest buy-side liquidity pool.
+        """
 
         pools = self.bearish(candles)
 

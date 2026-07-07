@@ -8,10 +8,13 @@ Responsibilities:
 - Calculate probability.
 - Calculate risk parameters.
 - Create virtual research trades.
+- Limit research-trade creation per scan.
 - Filter elite signals for presentation.
 """
 
 from __future__ import annotations
+
+from loguru import logger
 
 from pipeline.context import SignalContext
 from pipeline.handler import SignalHandler
@@ -22,11 +25,7 @@ from risk.risk_manager import RiskManager
 
 class ProbabilityHandler(SignalHandler):
     """
-    Calculates probability for every candidate signal.
-
-    This handler does not reject signals. Rejection is performed later
-    by EliteSignalHandler, while ResearchTradeHandler may still record
-    medium-probability candidates for empirical statistics.
+    Calculate probability for every candidate signal.
     """
 
     def __init__(
@@ -40,7 +39,7 @@ class ProbabilityHandler(SignalHandler):
         context: SignalContext,
     ) -> None:
         """
-        Add probability result to the signal context and metadata.
+        Add probability result to signal context and metadata.
         """
 
         result = self.engine.evaluate(
@@ -64,7 +63,7 @@ class ProbabilityHandler(SignalHandler):
 
 class RiskHandler(SignalHandler):
     """
-    Calculates entry, stop loss, take profit and position parameters.
+    Calculate entry, Stop Loss, Take Profit and risk parameters.
     """
 
     def __init__(
@@ -151,11 +150,10 @@ class RiskHandler(SignalHandler):
 
 class ResearchTradeHandler(SignalHandler):
     """
-    Creates virtual trades for signals accepted into the research sample.
+    Create virtual trades for research-qualified signals.
 
-    Research threshold is intentionally lower than elite threshold.
-    This allows MarketHunter to collect outcome statistics while still
-    showing only high-confidence signals to the user.
+    Research threshold remains lower than elite threshold. This captures
+    useful empirical data without showing medium-quality signals as elite.
     """
 
     def __init__(
@@ -163,6 +161,7 @@ class ResearchTradeHandler(SignalHandler):
         manager: ResearchManager,
         minimum_probability: int = 40,
         notional: float = 100.0,
+        maximum_new_trades_per_cycle: int = 5,
     ) -> None:
         if not 0 <= minimum_probability <= 100:
             raise ValueError(
@@ -174,16 +173,25 @@ class ResearchTradeHandler(SignalHandler):
                 "Virtual trade notional must be greater than zero."
             )
 
+        if maximum_new_trades_per_cycle <= 0:
+            raise ValueError(
+                "Maximum new trades per cycle must be greater than zero."
+            )
+
         self.manager = manager
         self.minimum_probability = minimum_probability
         self.notional = notional
+        self.maximum_new_trades_per_cycle = (
+            maximum_new_trades_per_cycle
+        )
+        self.created_trades_this_cycle = 0
 
     async def handle(
         self,
         context: SignalContext,
     ) -> None:
         """
-        Create one virtual trade when signal meets research threshold.
+        Create one research trade when probability and limits allow it.
         """
 
         if context.probability is None:
@@ -201,13 +209,30 @@ class ResearchTradeHandler(SignalHandler):
         probability = context.probability.probability
 
         if probability < self.minimum_probability:
-            context.metadata["research_skipped"] = (
-                f"Probability {probability}% is below research "
-                f"threshold {self.minimum_probability}%."
+            self._skip(
+                context=context,
+                reason=(
+                    f"Probability {probability}% is below research "
+                    f"threshold {self.minimum_probability}%."
+                ),
             )
             return
 
-        trade = self.manager.create_from_signal(
+        if (
+            self.created_trades_this_cycle
+            >= self.maximum_new_trades_per_cycle
+        ):
+            self._skip(
+                context=context,
+                reason=(
+                    "Research cycle limit reached: "
+                    f"{self.created_trades_this_cycle}/"
+                    f"{self.maximum_new_trades_per_cycle}."
+                ),
+            )
+            return
+
+        result = self.manager.create_from_signal(
             signal=context.signal,
             entry_price=context.risk.entry,
             stop_loss=context.risk.stop_loss,
@@ -216,25 +241,56 @@ class ResearchTradeHandler(SignalHandler):
             notional=self.notional,
         )
 
-        if trade is None:
-            context.metadata["research_skipped"] = (
-                "Duplicate open virtual trade."
+        if not result.created:
+            self._skip(
+                context=context,
+                reason=(
+                    result.reason
+                    or "Virtual trade was not created."
+                ),
             )
             return
 
+        trade = result.trade
+
+        if trade is None:
+            self._skip(
+                context=context,
+                reason="Virtual trade was not created.",
+            )
+            return
+
+        self.created_trades_this_cycle += 1
         context.research_trade = trade
 
         context.signal.metadata["research_trade_id"] = (
             trade.id
         )
 
+    @staticmethod
+    def _skip(
+        context: SignalContext,
+        reason: str,
+    ) -> None:
+        """
+        Store and log the reason a research trade was skipped.
+        """
+
+        context.metadata["research_skipped"] = reason
+
+        context.signal.metadata["research_skipped"] = reason
+
+        logger.debug(
+            "{} {} research trade skipped: {}",
+            context.signal.symbol,
+            context.signal.strategy,
+            reason,
+        )
+
 
 class EliteSignalHandler(SignalHandler):
     """
-    Leaves only high-probability signals in Scanner output.
-
-    It runs after ResearchTradeHandler, so medium-probability signals
-    can still be stored as virtual research trades.
+    Leave only high-probability signals in Scanner output.
     """
 
     def __init__(

@@ -7,6 +7,7 @@ Research Repository
 Responsibilities:
 - Persist virtual research trades in SQLite.
 - Restore trades from SQLite into ResearchTrade objects.
+- Provide open-trade counters and duplicate checks.
 - Migrate early MVP database schemas safely.
 """
 
@@ -26,6 +27,11 @@ class ResearchRepository:
     """
     SQLite repository for virtual ResearchTrade records.
     """
+
+    OPEN_STATUSES = (
+        TradeStatus.WAITING_ENTRY.value,
+        TradeStatus.ACTIVE.value,
+    )
 
     def __init__(
         self,
@@ -361,16 +367,92 @@ class ResearchRepository:
                 WHERE status IN (?, ?)
                 ORDER BY created_at ASC
                 """,
-                (
-                    TradeStatus.WAITING_ENTRY.value,
-                    TradeStatus.ACTIVE.value,
-                ),
+                self.OPEN_STATUSES,
             ).fetchall()
 
         return [
             self._row_to_trade(row)
             for row in rows
         ]
+
+    def count_open_trades(
+        self,
+    ) -> int:
+        """
+        Return the total count of waiting and active virtual trades.
+        """
+
+        with self._lock:
+            row = self.connection.execute(
+                """
+                SELECT COUNT(*) AS trade_count
+                FROM research_trades
+                WHERE status IN (?, ?)
+                """,
+                self.OPEN_STATUSES,
+            ).fetchone()
+
+        return int(row["trade_count"])
+
+    def count_open_trades_for_symbol(
+        self,
+        symbol: str,
+    ) -> int:
+        """
+        Return count of open virtual trades for one symbol.
+
+        The limit applies across all strategies, directions and timeframes.
+        """
+
+        with self._lock:
+            row = self.connection.execute(
+                """
+                SELECT COUNT(*) AS trade_count
+                FROM research_trades
+                WHERE UPPER(symbol) = UPPER(?)
+                  AND status IN (?, ?)
+                """,
+                (
+                    symbol,
+                    *self.OPEN_STATUSES,
+                ),
+            ).fetchone()
+
+        return int(row["trade_count"])
+
+    def has_open_direction_trade(
+        self,
+        symbol: str,
+        timeframe: str,
+        direction: str,
+    ) -> bool:
+        """
+        Return True for an open matching symbol, timeframe and direction.
+
+        Strategy is intentionally excluded from this check. Five strategies
+        reporting the same LONG setup must not create five research trades.
+        """
+
+        with self._lock:
+            row = self.connection.execute(
+                """
+                SELECT id
+                FROM research_trades
+                WHERE UPPER(symbol) = UPPER(?)
+                  AND timeframe = ?
+                  AND UPPER(direction) = UPPER(?)
+                  AND status IN (?, ?)
+                LIMIT 1
+                """,
+                (
+                    symbol,
+                    timeframe,
+                    direction,
+                    *self.OPEN_STATUSES,
+                ),
+            ).fetchone()
+
+        return row is not None
 
     def has_open_trade(
         self,
@@ -380,32 +462,19 @@ class ResearchRepository:
         direction: str,
     ) -> bool:
         """
-        Return True when an equivalent open research trade exists.
+        Compatibility method for older callers.
+
+        Strategy is deliberately ignored. Duplicate control now operates on
+        symbol, timeframe and direction only.
         """
 
-        with self._lock:
-            row = self.connection.execute(
-                """
-                SELECT id
-                FROM research_trades
-                WHERE symbol = ?
-                  AND timeframe = ?
-                  AND strategy = ?
-                  AND direction = ?
-                  AND status IN (?, ?)
-                LIMIT 1
-                """,
-                (
-                    symbol,
-                    timeframe,
-                    strategy,
-                    direction,
-                    TradeStatus.WAITING_ENTRY.value,
-                    TradeStatus.ACTIVE.value,
-                ),
-            ).fetchone()
+        _ = strategy
 
-        return row is not None
+        return self.has_open_direction_trade(
+            symbol=symbol,
+            timeframe=timeframe,
+            direction=direction,
+        )
 
     def _row_to_trade(
         self,

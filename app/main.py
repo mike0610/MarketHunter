@@ -5,11 +5,10 @@ Module:
 Application Entry Point
 
 Responsibilities:
-- Configure MarketHunter dependencies.
 - Monitor existing virtual research trades.
-- Build the signal pipeline.
-- Run Scanner.
-- Store research-qualified signals as virtual trades.
+- Select liquid USDT perpetual Futures contracts.
+- Scan one configured timeframe.
+- Create virtual research trades for qualified signals.
 - Show only elite signals in Scanner output.
 """
 
@@ -51,8 +50,12 @@ from strategies.premium_discount import PremiumDiscountStrategy
 
 DATABASE_PATH = "data/research.db"
 
+SCAN_TIMEFRAME = "1h"
+SCAN_CANDLE_LIMIT = 500
 SCAN_SYMBOL_LIMIT = 20
 SCANNER_WORKERS = 10
+
+MINIMUM_FUTURES_QUOTE_VOLUME_USDT = 10_000_000.0
 
 RESEARCH_MINIMUM_PROBABILITY = 40
 ELITE_MINIMUM_PROBABILITY = 80
@@ -60,7 +63,6 @@ ELITE_MINIMUM_PROBABILITY = 80
 VIRTUAL_ACCOUNT_SIZE_USDT = 1_000.0
 RISK_PER_TRADE_PERCENT = 1.0
 TARGET_RISK_REWARD = 2.0
-
 VIRTUAL_TRADE_NOTIONAL_USDT = 100.0
 
 MONITOR_CANDLE_LIMIT = 120
@@ -70,7 +72,7 @@ def build_pipeline(
     repository: ResearchRepository,
 ) -> SignalPipeline:
     """
-    Create the standard MarketHunter signal pipeline.
+    Create the MarketHunter signal pipeline.
     """
 
     probability_engine = ProbabilityEngine()
@@ -107,7 +109,7 @@ async def monitor_open_trades(
     market_data: MarketDataService,
 ) -> None:
     """
-    Process all existing virtual trades using completed Binance candles.
+    Update all waiting and active virtual trades.
     """
 
     service = ResearchMonitorService(
@@ -165,19 +167,40 @@ async def main() -> None:
             market_data=market_data,
         )
 
-        pipeline = build_pipeline(repository)
+        symbols = await market_data.load_liquid_futures_symbols(
+            min_quote_volume_usdt=(
+                MINIMUM_FUTURES_QUOTE_VOLUME_USDT
+            ),
+            max_symbols=SCAN_SYMBOL_LIMIT,
+        )
 
-        symbols = await market_data.load_symbols()
+        if not symbols:
+            logger.warning(
+                "No liquid USDT perpetual Futures symbols found."
+            )
+            return
 
         logger.info(
-            "Loaded symbols: {}",
+            "Loaded liquid perpetual Futures: {}",
             len(symbols),
+        )
+
+        logger.info(
+            "Scanner | Timeframe: {} | Candles: {} | "
+            "Min 24h quote volume: {:.0f} USDT",
+            SCAN_TIMEFRAME,
+            SCAN_CANDLE_LIMIT,
+            MINIMUM_FUTURES_QUOTE_VOLUME_USDT,
         )
 
         logger.info(
             "Research threshold: {}% | Elite threshold: {}%",
             RESEARCH_MINIMUM_PROBABILITY,
             ELITE_MINIMUM_PROBABILITY,
+        )
+
+        pipeline = build_pipeline(
+            repository=repository,
         )
 
         trades_before = len(
@@ -200,10 +223,12 @@ async def main() -> None:
             ],
             workers=SCANNER_WORKERS,
             pipeline=pipeline,
+            timeframe=SCAN_TIMEFRAME,
+            candle_limit=SCAN_CANDLE_LIMIT,
         )
 
         elite_signals = await scanner.scan_many(
-            symbols[:SCAN_SYMBOL_LIMIT],
+            symbols,
         )
 
         trades = repository.list_all()
@@ -242,10 +267,11 @@ async def main() -> None:
             )
 
             logger.info(
-                "[{}] {} {} {} | Score: {} | Probability: {}%",
+                "[{}] {} {} {} {} | Score: {} | Probability: {}%",
                 signal.strategy,
                 signal.market.upper(),
                 signal.symbol,
+                signal.timeframe,
                 signal.direction,
                 signal.score,
                 probability,

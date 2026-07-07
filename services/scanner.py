@@ -5,10 +5,10 @@ Module:
 Market Scanner
 
 Responsibilities:
-- Load market candles.
+- Load candles for one configured timeframe.
 - Build a market snapshot.
 - Run all strategies for a symbol.
-- Optionally send every detected signal through SignalPipeline.
+- Send candidate signals through SignalPipeline.
 """
 
 from __future__ import annotations
@@ -31,11 +31,9 @@ class Scanner:
     """
     Scans markets using multiple strategies.
 
-    Scanner is responsible only for finding candidate signals.
-
-    When a SignalPipeline is provided, every candidate signal is passed
-    through additional stages such as probability validation, risk
-    calculation, research-trade creation, notifications, and more.
+    Each signal receives the Scanner timeframe before it enters
+    SignalPipeline. Research trades therefore use the same interval
+    that produced the original signal.
     """
 
     def __init__(
@@ -44,16 +42,32 @@ class Scanner:
         strategies: list[BaseStrategy],
         workers: int = 10,
         pipeline: SignalPipeline | None = None,
+        timeframe: str = "1h",
+        candle_limit: int = 500,
     ) -> None:
         """
         Initialize scanner dependencies.
         """
+
+        normalized_timeframe = timeframe.strip()
+
+        if not normalized_timeframe:
+            raise ValueError(
+                "Scanner timeframe cannot be empty."
+            )
+
+        if candle_limit < 200:
+            raise ValueError(
+                "Scanner candle limit must be at least 200."
+            )
 
         self.market_data = market_data
         self.strategies = strategies
         self.snapshot_builder = SnapshotBuilder()
         self.pool = WorkerPool(workers)
         self.pipeline = pipeline
+        self.timeframe = normalized_timeframe
+        self.candle_limit = candle_limit
 
     async def scan_symbol(
         self,
@@ -61,13 +75,14 @@ class Scanner:
     ) -> list[Signal]:
         """
         Scan one market symbol using every configured strategy.
-
-        Returns only accepted signals. A signal rejected by the optional
-        pipeline is not returned in the final result.
         """
 
         try:
-            candles = await self.market_data.load_candles(symbol)
+            candles = await self.market_data.load_candles(
+                symbol=symbol,
+                interval=self.timeframe,
+                limit=self.candle_limit,
+            )
 
             if len(candles) < 200:
                 logger.debug(
@@ -100,6 +115,7 @@ class Scanner:
                     continue
 
                 signal.market = symbol.market
+                signal.timeframe = self.timeframe
 
                 processed_signal = await self._process_signal(
                     signal=signal,
@@ -130,8 +146,9 @@ class Scanner:
         """
 
         logger.info(
-            "Scanning {} symbols using {} strategies...",
+            "Scanning {} {} symbols using {} strategies...",
             len(symbols),
+            self.timeframe,
             len(self.strategies),
         )
 
@@ -169,9 +186,6 @@ class Scanner:
     ) -> Signal | None:
         """
         Send a candidate signal through the optional pipeline.
-
-        When no pipeline is configured, the original signal is returned
-        unchanged. This keeps Scanner usable for simple scans and tests.
         """
 
         if self.pipeline is None:

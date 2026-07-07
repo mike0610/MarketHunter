@@ -8,6 +8,7 @@ Responsibilities:
 - Provide virtual research trades for Dashboard.
 - Provide details for one virtual trade.
 - Provide aggregate research statistics.
+- Provide persisted continuous worker status.
 """
 
 from __future__ import annotations
@@ -16,13 +17,16 @@ import math
 from collections.abc import Iterator
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 
 from research.models.trade import ResearchTrade
 from research.models.trade_status import TradeStatus
 from research.statistics import ResearchStatistics
-from research.storage.repository import ResearchRepository
+from research.storage.repository import (
+    ResearchRepository,
+    WorkerStatus,
+)
 
 
 DATABASE_PATH = "data/research.db"
@@ -151,6 +155,63 @@ class ResearchStatisticsResponse(BaseModel):
     profit_factor: float | None
 
 
+class WorkerStatusResponse(BaseModel):
+    """
+    Persisted state of the continuous MarketHunter worker.
+    """
+
+    state: str
+    cycle_number: int
+
+    last_cycle_started_at: datetime | None
+    last_cycle_finished_at: datetime | None
+    next_cycle_at: datetime | None
+
+    last_error: str | None
+    updated_at: datetime | None
+
+    @classmethod
+    def from_status(
+        cls,
+        status: WorkerStatus,
+    ) -> "WorkerStatusResponse":
+        """
+        Convert repository worker status into API response.
+        """
+
+        return cls(
+            state=status.state,
+            cycle_number=status.cycle_number,
+            last_cycle_started_at=(
+                status.last_cycle_started_at
+            ),
+            last_cycle_finished_at=(
+                status.last_cycle_finished_at
+            ),
+            next_cycle_at=status.next_cycle_at,
+            last_error=status.last_error,
+            updated_at=status.updated_at,
+        )
+
+    @classmethod
+    def not_started(
+        cls,
+    ) -> "WorkerStatusResponse":
+        """
+        Return a valid API response before first worker launch.
+        """
+
+        return cls(
+            state="not_started",
+            cycle_number=0,
+            last_cycle_started_at=None,
+            last_cycle_finished_at=None,
+            next_cycle_at=None,
+            last_error=None,
+            updated_at=None,
+        )
+
+
 def get_repository() -> Iterator[ResearchRepository]:
     """
     Open one short-lived SQLite connection per API request.
@@ -164,6 +225,29 @@ def get_repository() -> Iterator[ResearchRepository]:
         yield repository
     finally:
         repository.close()
+
+
+@router.get(
+    "/worker-status",
+    response_model=WorkerStatusResponse,
+)
+def get_worker_status(
+    repository: ResearchRepository = Depends(
+        get_repository,
+    ),
+) -> WorkerStatusResponse:
+    """
+    Return current persisted state of the MarketHunter worker.
+    """
+
+    status = repository.get_worker_status()
+
+    if status is None:
+        return WorkerStatusResponse.not_started()
+
+    return WorkerStatusResponse.from_status(
+        status=status,
+    )
 
 
 @router.get(
@@ -310,6 +394,8 @@ def get_research_trade(
     )
 
     if trade is None:
+        from fastapi import HTTPException
+
         raise HTTPException(
             status_code=404,
             detail=(
@@ -341,6 +427,8 @@ def _normalize_status(
     }
 
     if normalized not in allowed_statuses:
+        from fastapi import HTTPException
+
         allowed = ", ".join(
             sorted(allowed_statuses)
         )

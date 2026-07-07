@@ -38,6 +38,7 @@ import {
     getResearchStatistics,
     getResearchTrade,
     getResearchTrades,
+    getWorkerStatus,
 } from "../api/researchApi";
 
 
@@ -92,6 +93,34 @@ function getStatusColor(status) {
     };
 
     return colors[status] || "default";
+}
+
+
+function getWorkerStateLabel(state) {
+    const labels = {
+        not_started: "Не запускався",
+        starting: "Запускається",
+        running: "Виконує цикл",
+        waiting: "Очікує наступного циклу",
+        error: "Помилка",
+        stopped: "Зупинений",
+    };
+
+    return labels[state] || state || "—";
+}
+
+
+function getWorkerStateColor(state) {
+    const colors = {
+        not_started: "default",
+        starting: "info",
+        running: "info",
+        waiting: "success",
+        error: "error",
+        stopped: "warning",
+    };
+
+    return colors[state] || "default";
 }
 
 
@@ -199,6 +228,162 @@ function StatisticCard({
 }
 
 
+function WorkerMetric({
+    label,
+    value,
+}) {
+    return (
+        <Box
+            sx={{
+                minWidth: 155,
+            }}
+        >
+            <Typography
+                variant="body2"
+                color="text.secondary"
+            >
+                {label}
+            </Typography>
+
+            <Typography
+                variant="body1"
+                fontWeight="medium"
+                sx={{
+                    mt: 0.5,
+                }}
+            >
+                {value}
+            </Typography>
+        </Box>
+    );
+}
+
+
+function WorkerStatusPanel({
+    workerStatus,
+    statistics,
+}) {
+    const state = workerStatus?.state || "not_started";
+
+    return (
+        <Paper
+            elevation={0}
+            sx={{
+                p: 2,
+                mb: 3,
+                border: 1,
+                borderColor: "divider",
+            }}
+        >
+            <Stack
+                direction={{
+                    xs: "column",
+                    md: "row",
+                }}
+                justifyContent="space-between"
+                alignItems={{
+                    xs: "flex-start",
+                    md: "center",
+                }}
+                spacing={2}
+                sx={{
+                    mb: 2,
+                }}
+            >
+                <Box>
+                    <Typography
+                        variant="h6"
+                        fontWeight="bold"
+                    >
+                        Статус воркера
+                    </Typography>
+
+                    <Typography
+                        variant="body2"
+                        color="text.secondary"
+                        sx={{
+                            mt: 0.5,
+                        }}
+                    >
+                        Цикл №{workerStatus?.cycle_number ?? 0}
+                    </Typography>
+                </Box>
+
+                <Chip
+                    label={getWorkerStateLabel(state)}
+                    color={getWorkerStateColor(state)}
+                />
+            </Stack>
+
+            <Stack
+                direction="row"
+                flexWrap="wrap"
+                gap={3}
+            >
+                <WorkerMetric
+                    label="Останній цикл"
+                    value={formatDate(
+                        workerStatus?.last_cycle_finished_at,
+                    )}
+                />
+
+                <WorkerMetric
+                    label="Наступний запуск"
+                    value={formatDate(
+                        workerStatus?.next_cycle_at,
+                    )}
+                />
+
+                <WorkerMetric
+                    label="Очікують входу"
+                    value={statistics?.waiting_entry ?? "—"}
+                />
+
+                <WorkerMetric
+                    label="Активні угоди"
+                    value={statistics?.active ?? "—"}
+                />
+
+                <WorkerMetric
+                    label="Оновлено"
+                    value={formatDate(
+                        workerStatus?.updated_at,
+                    )}
+                />
+            </Stack>
+
+            {state === "not_started" && (
+                <Alert
+                    severity="info"
+                    sx={{
+                        mt: 2,
+                    }}
+                >
+                    Воркер ще не запускався. Запусти
+                    {" "}
+                    <strong>python -m app.worker</strong>
+                    {" "}
+                    у окремому терміналі.
+                </Alert>
+            )}
+
+            {workerStatus?.last_error && (
+                <Alert
+                    severity="error"
+                    sx={{
+                        mt: 2,
+                    }}
+                >
+                    Остання помилка воркера:
+                    {" "}
+                    {workerStatus.last_error}
+                </Alert>
+            )}
+        </Paper>
+    );
+}
+
+
 function DetailRow({
     label,
     value,
@@ -232,6 +417,9 @@ function DetailRow({
 
 export default function Research() {
     const [statistics, setStatistics] = useState(null);
+    const [workerStatus, setWorkerStatus] =
+        useState(null);
+
     const [trades, setTrades] = useState([]);
 
     const [status, setStatus] = useState("");
@@ -255,6 +443,7 @@ export default function Research() {
                 const [
                     statisticsData,
                     tradesData,
+                    workerStatusData,
                 ] = await Promise.all([
                     getResearchStatistics(),
                     getResearchTrades({
@@ -262,15 +451,20 @@ export default function Research() {
                         symbol,
                         limit: 100,
                     }),
+                    getWorkerStatus(),
                 ]);
 
                 setStatistics(statisticsData);
                 setTrades(tradesData.trades);
+                setWorkerStatus(workerStatusData);
             } catch (requestError) {
                 const message =
-                    requestError.response?.data?.detail ||
-                    requestError.message ||
-                    "Не вдалося завантажити дані Research API.";
+                    requestError.response?.data?.detail
+                    || requestError.message
+                    || (
+                        "Не вдалося завантажити "
+                        + "дані Research API."
+                    );
 
                 setError(message);
             } finally {
@@ -298,9 +492,9 @@ export default function Research() {
             setSelectedTrade(trade);
         } catch (requestError) {
             const message =
-                requestError.response?.data?.detail ||
-                requestError.message ||
-                "Не вдалося завантажити деталі угоди.";
+                requestError.response?.data?.detail
+                || requestError.message
+                || "Не вдалося завантажити деталі угоди.";
 
             setError(message);
         } finally {
@@ -371,6 +565,11 @@ export default function Research() {
                 </Alert>
             )}
 
+            <WorkerStatusPanel
+                workerStatus={workerStatus}
+                statistics={statistics}
+            />
+
             <Stack
                 direction="row"
                 flexWrap="wrap"
@@ -387,8 +586,8 @@ export default function Research() {
                 <StatisticCard
                     label="Очікують входу"
                     value={
-                        statistics?.waiting_entry ??
-                        "—"
+                        statistics?.waiting_entry
+                        ?? "—"
                     }
                     color="warning.main"
                 />
@@ -402,7 +601,8 @@ export default function Research() {
                 <StatisticCard
                     label="Завершені"
                     value={
-                        statistics?.completed ?? "—"
+                        statistics?.completed
+                        ?? "—"
                     }
                     color="success.main"
                 />
@@ -557,9 +757,7 @@ export default function Research() {
                                     Створено
                                 </TableCell>
 
-                                <TableCell
-                                    align="right"
-                                >
+                                <TableCell align="right">
                                     Деталі
                                 </TableCell>
                             </TableRow>
@@ -582,121 +780,119 @@ export default function Research() {
                                 </TableRow>
                             )}
 
-                            {!loading &&
-                                trades.length === 0 && (
-                                    <TableRow>
-                                        <TableCell
-                                            colSpan={11}
-                                            align="center"
-                                            sx={{
-                                                py: 5,
-                                            }}
-                                        >
-                                            Немає угод за
-                                            вибраними фільтрами.
-                                        </TableCell>
-                                    </TableRow>
-                                )}
-
-                            {!loading &&
-                                trades.map((trade) => (
-                                    <TableRow
-                                        hover
-                                        key={trade.id}
+                            {!loading
+                                && trades.length === 0 && (
+                                <TableRow>
+                                    <TableCell
+                                        colSpan={11}
+                                        align="center"
+                                        sx={{
+                                            py: 5,
+                                        }}
                                     >
-                                        <TableCell>
-                                            <Typography
-                                                fontWeight="bold"
-                                            >
-                                                {trade.symbol}
-                                            </Typography>
-                                        </TableCell>
+                                        Немає угод за
+                                        вибраними фільтрами.
+                                    </TableCell>
+                                </TableRow>
+                            )}
 
-                                        <TableCell>
-                                            {trade.strategy}
-                                        </TableCell>
-
-                                        <TableCell>
-                                            <Chip
-                                                size="small"
-                                                label={
-                                                    trade.direction
-                                                }
-                                                color={
-                                                    trade.direction ===
-                                                    "LONG"
-                                                        ? "success"
-                                                        : "error"
-                                                }
-                                            />
-                                        </TableCell>
-
-                                        <TableCell>
-                                            {trade.timeframe}
-                                        </TableCell>
-
-                                        <TableCell>
-                                            {trade.probability}%
-                                        </TableCell>
-
-                                        <TableCell>
-                                            {formatPrice(
-                                                trade.entry_price,
-                                            )}
-                                        </TableCell>
-
-                                        <TableCell>
-                                            {formatPrice(
-                                                trade.stop_loss,
-                                            )}
-                                        </TableCell>
-
-                                        <TableCell>
-                                            {formatPrice(
-                                                trade.take_profit,
-                                            )}
-                                        </TableCell>
-
-                                        <TableCell>
-                                            <Chip
-                                                size="small"
-                                                label={getStatusLabel(
-                                                    trade.status,
-                                                )}
-                                                color={getStatusColor(
-                                                    trade.status,
-                                                )}
-                                            />
-                                        </TableCell>
-
-                                        <TableCell>
-                                            {formatDate(
-                                                trade.created_at,
-                                            )}
-                                        </TableCell>
-
-                                        <TableCell
-                                            align="right"
+                            {!loading
+                                && trades.map((trade) => (
+                                <TableRow
+                                    hover
+                                    key={trade.id}
+                                >
+                                    <TableCell>
+                                        <Typography
+                                            fontWeight="bold"
                                         >
-                                            <Button
-                                                size="small"
-                                                startIcon={
-                                                    <VisibilityIcon />
-                                                }
-                                                onClick={() => {
-                                                    void handleOpenTrade(
-                                                        trade.id,
-                                                    );
-                                                }}
-                                                disabled={
-                                                    detailLoading
-                                                }
-                                            >
-                                                Відкрити
-                                            </Button>
-                                        </TableCell>
-                                    </TableRow>
-                                ))}
+                                            {trade.symbol}
+                                        </Typography>
+                                    </TableCell>
+
+                                    <TableCell>
+                                        {trade.strategy}
+                                    </TableCell>
+
+                                    <TableCell>
+                                        <Chip
+                                            size="small"
+                                            label={
+                                                trade.direction
+                                            }
+                                            color={
+                                                trade.direction
+                                                === "LONG"
+                                                    ? "success"
+                                                    : "error"
+                                            }
+                                        />
+                                    </TableCell>
+
+                                    <TableCell>
+                                        {trade.timeframe}
+                                    </TableCell>
+
+                                    <TableCell>
+                                        {trade.probability}%
+                                    </TableCell>
+
+                                    <TableCell>
+                                        {formatPrice(
+                                            trade.entry_price,
+                                        )}
+                                    </TableCell>
+
+                                    <TableCell>
+                                        {formatPrice(
+                                            trade.stop_loss,
+                                        )}
+                                    </TableCell>
+
+                                    <TableCell>
+                                        {formatPrice(
+                                            trade.take_profit,
+                                        )}
+                                    </TableCell>
+
+                                    <TableCell>
+                                        <Chip
+                                            size="small"
+                                            label={getStatusLabel(
+                                                trade.status,
+                                            )}
+                                            color={getStatusColor(
+                                                trade.status,
+                                            )}
+                                        />
+                                    </TableCell>
+
+                                    <TableCell>
+                                        {formatDate(
+                                            trade.created_at,
+                                        )}
+                                    </TableCell>
+
+                                    <TableCell align="right">
+                                        <Button
+                                            size="small"
+                                            startIcon={
+                                                <VisibilityIcon />
+                                            }
+                                            onClick={() => {
+                                                void handleOpenTrade(
+                                                    trade.id,
+                                                );
+                                            }}
+                                            disabled={
+                                                detailLoading
+                                            }
+                                        >
+                                            Відкрити
+                                        </Button>
+                                    </TableCell>
+                                </TableRow>
+                            ))}
                         </TableBody>
                     </Table>
                 </TableContainer>
@@ -710,7 +906,10 @@ export default function Research() {
             >
                 <DialogTitle>
                     {selectedTrade
-                        ? `${selectedTrade.symbol} — ${selectedTrade.direction}`
+                        ? (
+                            `${selectedTrade.symbol} — `
+                            + selectedTrade.direction
+                        )
                         : "Деталі угоди"}
                 </DialogTitle>
 
@@ -776,7 +975,9 @@ export default function Research() {
 
                                 <DetailRow
                                     label="Ймовірність"
-                                    value={`${selectedTrade.probability}%`}
+                                    value={
+                                        `${selectedTrade.probability}%`
+                                    }
                                 />
 
                                 <DetailRow
@@ -876,8 +1077,8 @@ export default function Research() {
                                 <DetailRow
                                     label="Причина закриття"
                                     value={
-                                        selectedTrade.close_reason ||
-                                        "—"
+                                        selectedTrade.close_reason
+                                        || "—"
                                     }
                                 />
                             </Box>
@@ -894,8 +1095,7 @@ export default function Research() {
                                     Причини сигналу
                                 </Typography>
 
-                                {selectedTrade.reasons.length ===
-                                0 ? (
+                                {selectedTrade.reasons.length === 0 ? (
                                     <Typography
                                         variant="body2"
                                         color="text.secondary"
@@ -910,7 +1110,9 @@ export default function Research() {
                                                 index,
                                             ) => (
                                                 <Typography
-                                                    key={`${reason}-${index}`}
+                                                    key={
+                                                        `${reason}-${index}`
+                                                    }
                                                     variant="body2"
                                                 >
                                                     • {reason}

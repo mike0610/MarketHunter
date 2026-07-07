@@ -7,6 +7,7 @@ Research Repository
 Responsibilities:
 - Persist virtual research trades in SQLite.
 - Restore trades from SQLite into ResearchTrade objects.
+- Persist continuous worker status in SQLite.
 - Provide open-trade counters and duplicate checks.
 - Migrate early MVP database schemas safely.
 """
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from threading import RLock
@@ -23,9 +25,27 @@ from research.models.trade import ResearchTrade
 from research.models.trade_status import TradeStatus
 
 
+@dataclass(slots=True)
+class WorkerStatus:
+    """
+    Persisted state of the continuous MarketHunter worker.
+    """
+
+    state: str
+    cycle_number: int
+
+    last_cycle_started_at: datetime | None
+    last_cycle_finished_at: datetime | None
+    next_cycle_at: datetime | None
+
+    last_error: str | None
+    updated_at: datetime
+
+
 class ResearchRepository:
     """
-    SQLite repository for virtual ResearchTrade records.
+    SQLite repository for virtual ResearchTrade records
+    and continuous worker status.
     """
 
     OPEN_STATUSES = (
@@ -62,7 +82,7 @@ class ResearchRepository:
 
     def create_schema(self) -> None:
         """
-        Create database table for virtual research trades.
+        Create SQLite tables used by the research engine.
         """
 
         with self._lock, self.connection:
@@ -96,6 +116,21 @@ class ResearchRepository:
                     active_candles INTEGER NOT NULL DEFAULT 0,
                     max_active_candles INTEGER NOT NULL DEFAULT 30,
                     last_processed_candle_at TEXT
+                )
+                """
+            )
+
+            self.connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS worker_status (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    state TEXT NOT NULL,
+                    cycle_number INTEGER NOT NULL DEFAULT 0,
+                    last_cycle_started_at TEXT,
+                    last_cycle_finished_at TEXT,
+                    next_cycle_at TEXT,
+                    last_error TEXT,
+                    updated_at TEXT NOT NULL
                 )
                 """
             )
@@ -308,6 +343,117 @@ class ResearchRepository:
                 payload,
             )
 
+    def save_worker_status(
+        self,
+        *,
+        state: str,
+        cycle_number: int,
+        last_cycle_started_at: datetime | None,
+        last_cycle_finished_at: datetime | None,
+        next_cycle_at: datetime | None,
+        last_error: str | None,
+        updated_at: datetime,
+    ) -> None:
+        """
+        Insert or update the single persisted worker-status record.
+        """
+
+        normalized_state = state.strip().lower()
+
+        if not normalized_state:
+            raise ValueError(
+                "Worker state cannot be empty."
+            )
+
+        if cycle_number < 0:
+            raise ValueError(
+                "Worker cycle number cannot be negative."
+            )
+
+        payload = {
+            "state": normalized_state,
+            "cycle_number": cycle_number,
+            "last_cycle_started_at": (
+                last_cycle_started_at.isoformat()
+                if last_cycle_started_at
+                else None
+            ),
+            "last_cycle_finished_at": (
+                last_cycle_finished_at.isoformat()
+                if last_cycle_finished_at
+                else None
+            ),
+            "next_cycle_at": (
+                next_cycle_at.isoformat()
+                if next_cycle_at
+                else None
+            ),
+            "last_error": last_error,
+            "updated_at": updated_at.isoformat(),
+        }
+
+        with self._lock, self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO worker_status (
+                    id,
+                    state,
+                    cycle_number,
+                    last_cycle_started_at,
+                    last_cycle_finished_at,
+                    next_cycle_at,
+                    last_error,
+                    updated_at
+                )
+                VALUES (
+                    1,
+                    :state,
+                    :cycle_number,
+                    :last_cycle_started_at,
+                    :last_cycle_finished_at,
+                    :next_cycle_at,
+                    :last_error,
+                    :updated_at
+                )
+                ON CONFLICT(id) DO UPDATE SET
+                    state = excluded.state,
+                    cycle_number = excluded.cycle_number,
+                    last_cycle_started_at = (
+                        excluded.last_cycle_started_at
+                    ),
+                    last_cycle_finished_at = (
+                        excluded.last_cycle_finished_at
+                    ),
+                    next_cycle_at = excluded.next_cycle_at,
+                    last_error = excluded.last_error,
+                    updated_at = excluded.updated_at
+                """,
+                payload,
+            )
+
+    def get_worker_status(
+        self,
+    ) -> WorkerStatus | None:
+        """
+        Return the latest persisted continuous-worker state.
+        """
+
+        with self._lock:
+            row = self.connection.execute(
+                """
+                SELECT *
+                FROM worker_status
+                WHERE id = 1
+                """
+            ).fetchone()
+
+        if row is None:
+            return None
+
+        return self._row_to_worker_status(
+            row=row,
+        )
+
     def get_by_id(
         self,
         trade_id: str,
@@ -379,7 +525,7 @@ class ResearchRepository:
         self,
     ) -> int:
         """
-        Return the total count of waiting and active virtual trades.
+        Return total count of waiting and active virtual trades.
         """
 
         with self._lock:
@@ -531,6 +677,44 @@ class ResearchRepository:
                 )
                 if row["last_processed_candle_at"]
                 else None
+            ),
+        )
+
+    def _row_to_worker_status(
+        self,
+        row: sqlite3.Row,
+    ) -> WorkerStatus:
+        """
+        Convert SQLite worker-status row into WorkerStatus.
+        """
+
+        return WorkerStatus(
+            state=row["state"],
+            cycle_number=int(row["cycle_number"]),
+            last_cycle_started_at=(
+                datetime.fromisoformat(
+                    row["last_cycle_started_at"]
+                )
+                if row["last_cycle_started_at"]
+                else None
+            ),
+            last_cycle_finished_at=(
+                datetime.fromisoformat(
+                    row["last_cycle_finished_at"]
+                )
+                if row["last_cycle_finished_at"]
+                else None
+            ),
+            next_cycle_at=(
+                datetime.fromisoformat(
+                    row["next_cycle_at"]
+                )
+                if row["next_cycle_at"]
+                else None
+            ),
+            last_error=row["last_error"],
+            updated_at=datetime.fromisoformat(
+                row["updated_at"]
             ),
         )
 

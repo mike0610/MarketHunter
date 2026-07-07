@@ -8,10 +8,21 @@ from __future__ import annotations
 
 import asyncio
 
+from loguru import logger
+
 from services.market_data import MarketDataService
 from services.scanner import Scanner
+
 from strategies.breakout import BreakoutStrategy
-from utils.logger import logger
+from strategies.false_breakout import FalseBreakoutStrategy
+from strategies.compression import CompressionStrategy
+from strategies.choch import CHoCHStrategy
+from strategies.fvg import FVGStrategy
+from strategies.order_block import OrderBlockStrategy
+from strategies.liquidity_pool import LiquidityPoolStrategy
+from strategies.mitigation import MitigationStrategy
+from strategies.breaker import BreakerStrategy
+from strategies.premium_discount import PremiumDiscountStrategy
 
 
 async def main() -> None:
@@ -20,73 +31,75 @@ async def main() -> None:
     logger.info("MarketHunter")
     logger.info("=" * 60)
 
-    service = MarketDataService()
+    market_data = MarketDataService()
 
-    try:
-        #
-        # Binance connection
-        #
+    await market_data.ping()
 
-        await service.ping()
+    symbols = await market_data.load_symbols()
 
-        #
-        # Symbols
-        #
+    logger.info(
+        "Loaded symbols: {}",
+        len(symbols),
+    )
 
-        symbols = await service.load_symbols()
+    scanner = Scanner(
+        market_data=market_data,
+        strategies=[
+            BreakoutStrategy(),
+            FalseBreakoutStrategy(),
+            CompressionStrategy(),
+            CHoCHStrategy(),
+            FVGStrategy(),
+            OrderBlockStrategy(),
+            LiquidityPoolStrategy(),
+            MitigationStrategy(),
+            BreakerStrategy(),
+            PremiumDiscountStrategy(),
+        ],
+        workers=10,
+    )
 
-        logger.info("Loaded symbols: {}", len(symbols))
+    signals = await scanner.scan_many(
+        symbols[:20],
+    )
 
-        #
-        # Scanner
-        #
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info(
+        "Signals found: {}",
+        len(signals),
+    )
+    logger.info("=" * 60)
 
-        scanner = Scanner(
-            market_data=service,
-            strategy=BreakoutStrategy(),
-            workers=10,
+    if not signals:
+
+        logger.info(
+            "No signals found."
         )
 
-        #
-        # First test
-        # Поки що скануємо лише перші 20 монет.
-        #
+    else:
 
-        test_symbols = symbols[:20]
+        for signal in signals:
 
-        signals = await scanner.scan_many(
-            test_symbols
-        )
-
-        logger.info("")
-        logger.info("=" * 60)
-
-        if not signals:
-
-            logger.info("No breakout signals found.")
-
-        else:
-
-            logger.success(
-                "Found {} signals",
-                len(signals),
+            logger.info(
+                "[{}] {} {} {} Score:{}",
+                signal.strategy,
+                signal.market.upper(),
+                signal.symbol,
+                signal.direction,
+                signal.score,
             )
 
-            for signal in signals:
+            for reason in signal.reasons:
 
-                logger.success(
-                    "{} | {} | {} | Score={}",
-                    signal.symbol,
-                    signal.market,
-                    signal.direction,
-                    signal.score,
+                logger.info(
+                    "    • {}",
+                    reason,
                 )
 
-                for reason in signal.reasons:
-                    logger.info("  • {}", reason)
+            logger.info("-" * 60)
 
-    finally:
-        await service.close()
+    await market_data.close()
 
 
 if __name__ == "__main__":

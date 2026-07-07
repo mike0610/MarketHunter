@@ -6,8 +6,10 @@ indicators/bos_detector.py
 
 from __future__ import annotations
 
-from indicators.pivot_detector import PivotDetector
-from models.candle import Candle
+from models.market_snapshot import MarketSnapshot
+from structure.market_structure_engine import (
+    MarketStructureEngine,
+)
 
 
 class BOSDetector:
@@ -16,72 +18,42 @@ class BOSDetector:
     """
 
     def __init__(self) -> None:
-        self.pivots = PivotDetector()
+
+        self.engine = MarketStructureEngine()
 
     def bullish(
         self,
-        candles: list[Candle],
+        snapshot: MarketSnapshot,
     ) -> bool:
-        """
-        Bullish BOS.
-        """
 
-        if len(candles) < 20:
-            return False
-
-        swing = self.pivots.last_swing_high(
-            candles[:-1],
+        structure = self.engine.analyze(
+            snapshot.candles,
         )
 
-        if swing is None:
-            return False
-
-        return candles[-1].close > swing.high
+        return (
+            structure.bos
+            and structure.bullish
+        )
 
     def bearish(
         self,
-        candles: list[Candle],
+        snapshot: MarketSnapshot,
     ) -> bool:
-        """
-        Bearish BOS.
-        """
 
-        if len(candles) < 20:
-            return False
-
-        swing = self.pivots.last_swing_low(
-            candles[:-1],
+        structure = self.engine.analyze(
+            snapshot.candles,
         )
 
-        if swing is None:
-            return False
+        return (
+            structure.bos
+            and structure.bearish
+        )
 
-        return candles[-1].close < swing.low
-
-    def bullish_level(
+    def structure(
         self,
-        candles: list[Candle],
-    ) -> float | None:
+        snapshot: MarketSnapshot,
+    ):
 
-        swing = self.pivots.last_swing_high(
-            candles[:-1],
+        return self.engine.analyze(
+            snapshot.candles,
         )
-
-        if swing is None:
-            return None
-
-        return swing.high
-
-    def bearish_level(
-        self,
-        candles: list[Candle],
-    ) -> float | None:
-
-        swing = self.pivots.last_swing_low(
-            candles[:-1],
-        )
-
-        if swing is None:
-            return None
-
-        return swing.low

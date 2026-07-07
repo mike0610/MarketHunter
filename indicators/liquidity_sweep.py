@@ -6,92 +6,88 @@ indicators/liquidity_sweep.py
 
 from __future__ import annotations
 
-from indicators.pivot_detector import PivotDetector
 from models.candle import Candle
+from structure.market_structure_engine import (
+    MarketStructureEngine,
+)
 
 
 class LiquiditySweepDetector:
     """
-    Detects liquidity sweeps.
+    Detects liquidity sweeps using Market Structure Engine.
     """
 
     def __init__(self) -> None:
-        self.pivots = PivotDetector()
+
+        self.structure = MarketStructureEngine()
 
     def bullish(
         self,
         candles: list[Candle],
     ) -> bool:
-        """
-        Bullish liquidity sweep.
-        """
 
-        if len(candles) < 20:
+        market = self.structure.analyze(candles)
+
+        if not market.bullish:
+            return False
+
+        if len(candles) < 3:
             return False
 
         last = candles[-1]
 
-        swing = self.pivots.last_swing_low(
-            candles[:-1],
-        )
-
-        if swing is None:
-            return False
+        #
+        # Sweep previous swing low
+        #
 
         return (
-            last.low < swing.low
-            and last.close > swing.low
+            last.low < market.last_low
+            and last.close > market.last_low
         )
 
     def bearish(
         self,
         candles: list[Candle],
     ) -> bool:
-        """
-        Bearish liquidity sweep.
-        """
 
-        if len(candles) < 20:
+        market = self.structure.analyze(candles)
+
+        if not market.bearish:
+            return False
+
+        if len(candles) < 3:
             return False
 
         last = candles[-1]
 
-        swing = self.pivots.last_swing_high(
-            candles[:-1],
-        )
-
-        if swing is None:
-            return False
+        #
+        # Sweep previous swing high
+        #
 
         return (
-            last.high > swing.high
-            and last.close < swing.high
+            last.high > market.last_high
+            and last.close < market.last_high
         )
 
-    def bullish_level(
+    def sweep_level(
         self,
         candles: list[Candle],
     ) -> float | None:
 
-        swing = self.pivots.last_swing_low(
-            candles[:-1],
-        )
+        market = self.structure.analyze(candles)
 
-        if swing is None:
-            return None
+        last = candles[-1]
 
-        return swing.low
+        if (
+            last.low < market.last_low
+            and last.close > market.last_low
+        ):
+            return market.last_low
 
-    def bearish_level(
-        self,
-        candles: list[Candle],
-    ) -> float | None:
+        if (
+            last.high > market.last_high
+            and last.close < market.last_high
+        ):
+            return market.last_high
 
-        swing = self.pivots.last_swing_high(
-            candles[:-1],
-        )
-
-        if swing is None:
-            return None
-
-        return swing.high
+        return None

@@ -1,13 +1,33 @@
-from pathlib import Path
+"""
+MarketHunter
 
-import yaml
+config/settings.py
+"""
 
-CONFIG_PATH = Path("config.yaml")
+from __future__ import annotations
+
+from dataclasses import dataclass
 
 
-def load_config() -> dict:
-    if not CONFIG_PATH.exists():
-        raise FileNotFoundError("config.yaml not found")
+@dataclass(slots=True)
+class Settings:
 
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    timeframe: str
+
+    workers: int
+
+    min_candles: int
+
+    account_size: float
+
+    risk_percent: float
+
+    rr: float
+
+    min_score: int
+
+    enable_telegram: bool
+
+    live_trading: bool
+
+    use_testnet: bool

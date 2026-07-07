@@ -7,31 +7,38 @@ indicators/trend.py
 from __future__ import annotations
 
 from models.market_snapshot import MarketSnapshot
+from structure.market_structure_engine import (
+    MarketStructureEngine,
+)
 
 
 class TrendFilter:
     """
-    EMA trend filter.
+    Trend filter using Market Structure Engine.
     """
 
-    def bullish(self, snapshot: MarketSnapshot) -> bool:
-        """
-        Bullish trend.
-        """
+    def __init__(self) -> None:
 
-        return (
-            snapshot.ema20
-            > snapshot.ema50
-            > snapshot.ema200
+        self.engine = MarketStructureEngine()
+
+    def bullish(
+        self,
+        snapshot: MarketSnapshot,
+    ) -> bool:
+
+        structure = self.engine.analyze(
+            snapshot.candles,
         )
 
-    def bearish(self, snapshot: MarketSnapshot) -> bool:
-        """
-        Bearish trend.
-        """
+        return structure.bullish
 
-        return (
-            snapshot.ema20
-            < snapshot.ema50
-            < snapshot.ema200
+    def bearish(
+        self,
+        snapshot: MarketSnapshot,
+    ) -> bool:
+
+        structure = self.engine.analyze(
+            snapshot.candles,
         )
+
+        return structure.bearish

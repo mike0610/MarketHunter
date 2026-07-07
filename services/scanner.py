@@ -20,27 +20,27 @@ from strategies.base_strategy import BaseStrategy
 
 class Scanner:
     """
-    Scans markets using the selected strategy.
+    Scans markets using multiple strategies.
     """
 
     def __init__(
         self,
         market_data: MarketDataService,
-        strategy: BaseStrategy,
+        strategies: list[BaseStrategy],
         workers: int = 10,
     ) -> None:
 
         self.market_data = market_data
-        self.strategy = strategy
+        self.strategies = strategies
         self.snapshot_builder = SnapshotBuilder()
         self.pool = WorkerPool(workers)
 
     async def scan_symbol(
         self,
         symbol: MarketSymbol,
-    ) -> Signal | None:
+    ) -> list[Signal]:
         """
-        Scan one symbol.
+        Scan one symbol using all strategies.
         """
 
         try:
@@ -48,19 +48,27 @@ class Scanner:
             candles = await self.market_data.load_candles(symbol)
 
             if len(candles) < 200:
-                return None
+                return []
 
             snapshot = self.snapshot_builder.build(
                 symbol.symbol,
                 candles,
             )
 
-            signal = await self.strategy.analyze(snapshot)
+            signals: list[Signal] = []
 
-            if signal is not None:
+            for strategy in self.strategies:
+
+                signal = await strategy.analyze(snapshot)
+
+                if signal is None:
+                    continue
+
                 signal.market = symbol.market
 
-            return signal
+                signals.append(signal)
+
+            return signals
 
         except Exception as exc:
 
@@ -70,7 +78,7 @@ class Scanner:
                 exc,
             )
 
-            return None
+            return []
 
     async def scan_many(
         self,
@@ -81,8 +89,9 @@ class Scanner:
         """
 
         logger.info(
-            "Scanning {} symbols...",
+            "Scanning {} symbols using {} strategies...",
             len(symbols),
+            len(self.strategies),
         )
 
         tasks = [
@@ -95,11 +104,10 @@ class Scanner:
 
         results = await asyncio.gather(*tasks)
 
-        signals = [
-            signal
-            for signal in results
-            if signal is not None
-        ]
+        signals: list[Signal] = []
+
+        for symbol_signals in results:
+            signals.extend(symbol_signals)
 
         signals.sort(
             key=lambda signal: signal.score,

@@ -156,6 +156,55 @@ class ResearchRepository:
         Insert or update one virtual trade.
         """
 
+        payload = {
+            "id": trade.id,
+            "signal_id": trade.signal_id,
+            "symbol": trade.symbol,
+            "market": trade.market,
+            "timeframe": trade.timeframe,
+            "strategy": trade.strategy,
+            "direction": trade.direction,
+            "entry_price": trade.entry_price,
+            "stop_loss": trade.stop_loss,
+            "take_profit": trade.take_profit,
+            "probability": trade.probability,
+            "score": trade.score,
+            "notional": trade.notional,
+            "reasons": json.dumps(
+                trade.reasons,
+                ensure_ascii=False,
+            ),
+            "status": trade.status.value,
+            "created_at": trade.created_at.isoformat(),
+            "opened_at": (
+                trade.opened_at.isoformat()
+                if trade.opened_at
+                else None
+            ),
+            "closed_at": (
+                trade.closed_at.isoformat()
+                if trade.closed_at
+                else None
+            ),
+            "close_reason": trade.close_reason,
+            "profit_amount": trade.profit_amount,
+            "profit_percent": trade.profit_percent,
+            "rr": trade.rr,
+            "max_profit_percent": trade.max_profit_percent,
+            "max_drawdown_percent": (
+                trade.max_drawdown_percent
+            ),
+            "active_candles": trade.active_candles,
+            "max_active_candles": (
+                trade.max_active_candles
+            ),
+            "last_processed_candle_at": (
+                trade.last_processed_candle_at.isoformat()
+                if trade.last_processed_candle_at
+                else None
+            ),
+        }
+
         with self._lock, self.connection:
             self.connection.execute(
                 """
@@ -189,8 +238,33 @@ class ResearchRepository:
                     last_processed_candle_at
                 )
                 VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    :id,
+                    :signal_id,
+                    :symbol,
+                    :market,
+                    :timeframe,
+                    :strategy,
+                    :direction,
+                    :entry_price,
+                    :stop_loss,
+                    :take_profit,
+                    :probability,
+                    :score,
+                    :notional,
+                    :reasons,
+                    :status,
+                    :created_at,
+                    :opened_at,
+                    :closed_at,
+                    :close_reason,
+                    :profit_amount,
+                    :profit_percent,
+                    :rr,
+                    :max_profit_percent,
+                    :max_drawdown_percent,
+                    :active_candles,
+                    :max_active_candles,
+                    :last_processed_candle_at
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     signal_id = excluded.signal_id,
@@ -214,57 +288,18 @@ class ResearchRepository:
                     profit_percent = excluded.profit_percent,
                     rr = excluded.rr,
                     max_profit_percent = excluded.max_profit_percent,
-                    max_drawdown_percent = excluded.max_drawdown_percent,
+                    max_drawdown_percent = (
+                        excluded.max_drawdown_percent
+                    ),
                     active_candles = excluded.active_candles,
-                    max_active_candles = excluded.max_active_candles,
+                    max_active_candles = (
+                        excluded.max_active_candles
+                    ),
                     last_processed_candle_at = (
                         excluded.last_processed_candle_at
                     )
                 """,
-                (
-                    trade.id,
-                    trade.signal_id,
-                    trade.symbol,
-                    trade.market,
-                    trade.timeframe,
-                    trade.strategy,
-                    trade.direction,
-                    trade.entry_price,
-                    trade.stop_loss,
-                    trade.take_profit,
-                    trade.probability,
-                    trade.score,
-                    trade.notional,
-                    json.dumps(
-                        trade.reasons,
-                        ensure_ascii=False,
-                    ),
-                    trade.status.value,
-                    trade.created_at.isoformat(),
-                    (
-                        trade.opened_at.isoformat()
-                        if trade.opened_at
-                        else None
-                    ),
-                    (
-                        trade.closed_at.isoformat()
-                        if trade.closed_at
-                        else None
-                    ),
-                    trade.close_reason,
-                    trade.profit_amount,
-                    trade.profit_percent,
-                    trade.rr,
-                    trade.max_profit_percent,
-                    trade.max_drawdown_percent,
-                    trade.active_candles,
-                    trade.max_active_candles,
-                    (
-                        trade.last_processed_candle_at.isoformat()
-                        if trade.last_processed_candle_at
-                        else None
-                    ),
-                ),
+                payload,
             )
 
     def get_by_id(

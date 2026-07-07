@@ -1,13 +1,18 @@
 """
 MarketHunter
 
-models/candle.py
+Module:
+Candle Model
+
+Responsibilities:
+- Represent one OHLCV candle.
+- Normalize Binance timestamps to UTC.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 @dataclass(slots=True)
@@ -29,19 +34,28 @@ class Candle:
     taker_buy_quote_volume: float
 
     @classmethod
-    def from_binance(cls, data: list) -> "Candle":
+    def from_binance(
+        cls,
+        data: list,
+    ) -> "Candle":
         """
-        Create Candle from Binance kline.
+        Create UTC-aware Candle from Binance kline data.
         """
 
         return cls(
-            open_time=datetime.fromtimestamp(data[0] / 1000),
+            open_time=datetime.fromtimestamp(
+                data[0] / 1000,
+                tz=timezone.utc,
+            ),
             open=float(data[1]),
             high=float(data[2]),
             low=float(data[3]),
             close=float(data[4]),
             volume=float(data[5]),
-            close_time=datetime.fromtimestamp(data[6] / 1000),
+            close_time=datetime.fromtimestamp(
+                data[6] / 1000,
+                tz=timezone.utc,
+            ),
             quote_volume=float(data[7]),
             trades=int(data[8]),
             taker_buy_base_volume=float(data[9]),
@@ -50,32 +64,54 @@ class Candle:
 
     @property
     def body(self) -> float:
-        """Candle body size."""
+        """
+        Candle body size.
+        """
 
         return abs(self.close - self.open)
 
     @property
     def range(self) -> float:
-        """High-Low range."""
+        """
+        High-low range.
+        """
 
         return self.high - self.low
 
     @property
     def bullish(self) -> bool:
-        """Green candle."""
+        """
+        Return True for a green candle.
+        """
 
         return self.close > self.open
 
     @property
     def bearish(self) -> bool:
-        """Red candle."""
+        """
+        Return True for a red candle.
+        """
 
         return self.close < self.open
 
     @property
     def upper_wick(self) -> float:
-        return self.high - max(self.open, self.close)
+        """
+        Upper candle wick size.
+        """
+
+        return self.high - max(
+            self.open,
+            self.close,
+        )
 
     @property
     def lower_wick(self) -> float:
-        return min(self.open, self.close) - self.low
+        """
+        Lower candle wick size.
+        """
+
+        return min(
+            self.open,
+            self.close,
+        ) - self.low

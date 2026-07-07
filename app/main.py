@@ -6,6 +6,7 @@ Application Entry Point
 
 Responsibilities:
 - Configure MarketHunter dependencies.
+- Monitor existing virtual research trades.
 - Build the signal pipeline.
 - Run Scanner.
 - Store research-qualified signals as virtual trades.
@@ -26,7 +27,11 @@ from pipeline.handlers import (
 )
 from pipeline.signal_pipeline import SignalPipeline
 from probability.probability_engine import ProbabilityEngine
+from research.binance_candle_loader import (
+    BinanceTradeCandleLoader,
+)
 from research.manager import ResearchManager
+from research.monitor_service import ResearchMonitorService
 from research.statistics import ResearchStatistics
 from research.storage.repository import ResearchRepository
 from risk.risk_manager import RiskManager
@@ -58,15 +63,14 @@ TARGET_RISK_REWARD = 2.0
 
 VIRTUAL_TRADE_NOTIONAL_USDT = 100.0
 
+MONITOR_CANDLE_LIMIT = 120
+
 
 def build_pipeline(
     repository: ResearchRepository,
 ) -> SignalPipeline:
     """
     Create the standard MarketHunter signal pipeline.
-
-    Research trades are created for probability >= 40%.
-    Elite signals returned by Scanner require probability >= 80%.
     """
 
     probability_engine = ProbabilityEngine()
@@ -98,9 +102,49 @@ def build_pipeline(
     )
 
 
+async def monitor_open_trades(
+    repository: ResearchRepository,
+    market_data: MarketDataService,
+) -> None:
+    """
+    Process all existing virtual trades using completed Binance candles.
+    """
+
+    service = ResearchMonitorService(
+        repository=repository,
+    )
+
+    candle_loader = BinanceTradeCandleLoader(
+        market_data=market_data,
+        limit=MONITOR_CANDLE_LIMIT,
+    )
+
+    result = await service.run_once(
+        candle_loader=candle_loader,
+    )
+
+    logger.info(
+        "Monitor | Open: {} | Checked: {} | Activated: {} | "
+        "TP: {} | SL: {} | Expired: {} | Skipped: {}",
+        result.open_trades,
+        result.monitored_trades,
+        result.activated,
+        result.closed_tp,
+        result.closed_sl,
+        result.expired,
+        result.skipped_without_candles,
+    )
+
+    for error in result.errors:
+        logger.warning(
+            "Monitor error: {}",
+            error,
+        )
+
+
 async def main() -> None:
     """
-    Run one MarketHunter research scan.
+    Run one MarketHunter research cycle.
     """
 
     logger.info("=" * 60)
@@ -114,9 +158,14 @@ async def main() -> None:
     market_data = MarketDataService()
 
     try:
-        pipeline = build_pipeline(repository)
-
         await market_data.ping()
+
+        await monitor_open_trades(
+            repository=repository,
+            market_data=market_data,
+        )
+
+        pipeline = build_pipeline(repository)
 
         symbols = await market_data.load_symbols()
 

@@ -6,8 +6,9 @@ Research Monitor Service
 
 Responsibilities:
 - Load all open virtual trades.
-- Process only completed and new market candles.
-- Delegate lifecycle changes to TradeMonitor.
+- Process only completed market candles.
+- Process only candles closed after virtual trade creation.
+- Delegate lifecycle updates to TradeMonitor.
 - Return a transparent monitoring summary.
 """
 
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 from models.candle import Candle
 from research.models.trade import ResearchTrade
@@ -43,16 +44,17 @@ class MonitorRunResult:
     closed_sl: int = 0
     expired: int = 0
     skipped_without_candles: int = 0
-    errors: list[str] = field(default_factory=list)
+    errors: list[str] = field(
+        default_factory=list,
+    )
 
 
 class ResearchMonitorService:
     """
-    Monitors all open virtual trades.
+    Monitors all waiting-entry and active virtual trades.
 
-    On the first monitoring cycle for a trade, only the latest completed
-    candle is processed. This prevents accidental replay of historical
-    candles that existed before the virtual trade was created.
+    On the first run, only candles closed after trade creation are used.
+    This prevents a new trade from replaying historical price action.
     """
 
     def __init__(
@@ -71,10 +73,12 @@ class ResearchMonitorService:
         now: datetime | None = None,
     ) -> MonitorRunResult:
         """
-        Process all waiting-entry and active virtual trades once.
+        Process all open virtual trades once.
         """
 
-        run_time = now or datetime.now()
+        run_time = now or datetime.now(
+            timezone.utc,
+        )
 
         result = MonitorRunResult()
 
@@ -122,7 +126,8 @@ class ResearchMonitorService:
 
             except Exception as exc:
                 result.errors.append(
-                    f"{trade.symbol} {trade.strategy}: {exc}"
+                    f"{trade.symbol} "
+                    f"{trade.strategy}: {exc}"
                 )
 
         return result
@@ -133,17 +138,19 @@ class ResearchMonitorService:
         now: datetime,
     ) -> list[Candle]:
         """
-        Keep candles that are already closed and sort them by close time.
+        Return completed candles ordered by close time.
         """
+
+        now_utc = self._utc_time(now)
 
         return sorted(
             [
                 candle
                 for candle in candles
-                if self._naive_time(candle.close_time)
-                <= self._naive_time(now)
+                if self._utc_time(candle.close_time)
+                <= now_utc
             ],
-            key=lambda candle: self._naive_time(
+            key=lambda candle: self._utc_time(
                 candle.close_time
             ),
         )
@@ -154,26 +161,35 @@ class ResearchMonitorService:
         candles: list[Candle],
     ) -> list[Candle]:
         """
-        Return candles that were not processed for this trade yet.
+        Return unprocessed candles valid for this trade.
 
-        A newly created trade receives only the latest completed candle.
-        Later cycles receive every candle newer than the saved timestamp.
+        A first monitor cycle may replay multiple candles only when they
+        closed after the virtual trade was created.
         """
 
         if not candles:
             return []
 
         if trade.last_processed_candle_at is None:
-            return candles[-1:]
+            created_at = self._utc_time(
+                trade.created_at,
+            )
 
-        last_time = self._naive_time(
-            trade.last_processed_candle_at
+            return [
+                candle
+                for candle in candles
+                if self._utc_time(candle.close_time)
+                > created_at
+            ]
+
+        last_time = self._utc_time(
+            trade.last_processed_candle_at,
         )
 
         return [
             candle
             for candle in candles
-            if self._naive_time(candle.close_time)
+            if self._utc_time(candle.close_time)
             > last_time
         ]
 
@@ -185,12 +201,14 @@ class ResearchMonitorService:
         close_reason: str | None,
     ) -> None:
         """
-        Add lifecycle changes to the run summary.
+        Add lifecycle changes to the monitoring summary.
         """
 
         if (
-            previous_status == TradeStatus.WAITING_ENTRY
-            and current_status == TradeStatus.ACTIVE
+            previous_status
+            == TradeStatus.WAITING_ENTRY
+            and current_status
+            == TradeStatus.ACTIVE
         ):
             result.activated += 1
 
@@ -205,11 +223,18 @@ class ResearchMonitorService:
             result.expired += 1
 
     @staticmethod
-    def _naive_time(
+    def _utc_time(
         value: datetime,
     ) -> datetime:
         """
-        Normalize aware and naive datetimes for safe comparison.
+        Convert naive or aware time into timezone-aware UTC time.
         """
 
-        return value.replace(tzinfo=None)
+        if value.tzinfo is None:
+            return value.replace(
+                tzinfo=timezone.utc,
+            )
+
+        return value.astimezone(
+            timezone.utc,
+        )

@@ -7,7 +7,7 @@ Tests for ResearchMonitorService.
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from models.candle import Candle
 from research.models.trade import ResearchTrade
@@ -43,7 +43,9 @@ class MemoryRepository:
         self.saved.append(trade)
 
 
-class ResearchMonitorServiceTests(unittest.IsolatedAsyncioTestCase):
+class ResearchMonitorServiceTests(
+    unittest.IsolatedAsyncioTestCase,
+):
     """
     Tests one-cycle monitoring behavior.
     """
@@ -56,6 +58,7 @@ class ResearchMonitorServiceTests(unittest.IsolatedAsyncioTestCase):
             0,
             0,
             0,
+            tzinfo=timezone.utc,
         )
 
     def candle(
@@ -66,7 +69,7 @@ class ResearchMonitorServiceTests(unittest.IsolatedAsyncioTestCase):
         close: float,
     ) -> Candle:
         """
-        Create deterministic one-minute candle.
+        Create deterministic UTC one-minute candle.
         """
 
         open_time = self.start + timedelta(
@@ -93,6 +96,7 @@ class ResearchMonitorServiceTests(unittest.IsolatedAsyncioTestCase):
 
     def long_trade(
         self,
+        created_at: datetime | None = None,
     ) -> ResearchTrade:
         """
         Create a standard waiting LONG trade.
@@ -111,16 +115,21 @@ class ResearchMonitorServiceTests(unittest.IsolatedAsyncioTestCase):
             take_profit=110.0,
             probability=45,
             score=80.0,
+            created_at=created_at or self.start,
         )
 
-    async def test_first_cycle_uses_only_latest_candle(
+    async def test_first_cycle_uses_only_post_creation_candles(
         self,
     ) -> None:
         """
-        Historical candles must not replay into a new trade.
+        Candles closed before or at creation time must be ignored.
         """
 
-        trade = self.long_trade()
+        trade = self.long_trade(
+            created_at=self.start + timedelta(
+                minutes=1,
+            ),
+        )
 
         repository = MemoryRepository(
             trades=[trade],
@@ -154,21 +163,26 @@ class ResearchMonitorServiceTests(unittest.IsolatedAsyncioTestCase):
 
         result = await service.run_once(
             candle_loader=candle_loader,
-            now=self.start + timedelta(minutes=10),
+            now=self.start + timedelta(
+                minutes=10,
+            ),
         )
 
         self.assertEqual(
             result.monitored_trades,
             1,
         )
+
         self.assertEqual(
             result.activated,
             0,
         )
+
         self.assertEqual(
             trade.status,
             TradeStatus.WAITING_ENTRY,
         )
+
         self.assertEqual(
             trade.last_processed_candle_at,
             latest_without_entry.close_time,
@@ -178,10 +192,14 @@ class ResearchMonitorServiceTests(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """
-        A waiting trade activates first, then closes on a later TP candle.
+        Waiting trade activates first, then closes on later TP candle.
         """
 
-        trade = self.long_trade()
+        trade = self.long_trade(
+            created_at=self.start - timedelta(
+                minutes=1,
+            ),
+        )
 
         repository = MemoryRepository(
             trades=[trade],
@@ -205,13 +223,16 @@ class ResearchMonitorServiceTests(unittest.IsolatedAsyncioTestCase):
 
         first_result = await service.run_once(
             candle_loader=entry_loader,
-            now=self.start + timedelta(minutes=10),
+            now=self.start + timedelta(
+                minutes=10,
+            ),
         )
 
         self.assertEqual(
             first_result.activated,
             1,
         )
+
         self.assertEqual(
             trade.status,
             TradeStatus.ACTIVE,
@@ -234,21 +255,26 @@ class ResearchMonitorServiceTests(unittest.IsolatedAsyncioTestCase):
 
         second_result = await service.run_once(
             candle_loader=tp_loader,
-            now=self.start + timedelta(minutes=10),
+            now=self.start + timedelta(
+                minutes=10,
+            ),
         )
 
         self.assertEqual(
             second_result.closed_tp,
             1,
         )
+
         self.assertEqual(
             trade.status,
             TradeStatus.CLOSED,
         )
+
         self.assertEqual(
             trade.close_reason,
             "TP",
         )
+
         self.assertAlmostEqual(
             trade.profit_percent,
             10.0,
@@ -285,17 +311,21 @@ class ResearchMonitorServiceTests(unittest.IsolatedAsyncioTestCase):
 
         result = await service.run_once(
             candle_loader=candle_loader,
-            now=self.start + timedelta(minutes=5),
+            now=self.start + timedelta(
+                minutes=5,
+            ),
         )
 
         self.assertEqual(
             result.monitored_trades,
             0,
         )
+
         self.assertEqual(
             result.skipped_without_candles,
             1,
         )
+
         self.assertEqual(
             trade.status,
             TradeStatus.WAITING_ENTRY,

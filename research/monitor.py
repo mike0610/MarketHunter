@@ -3,11 +3,7 @@ MarketHunter
 
 Research Engine
 
-Module:
-Trade Monitor
-
-Version:
-0.2
+Tracks virtual trades against real market candles.
 """
 
 from __future__ import annotations
@@ -20,7 +16,11 @@ from research.storage.repository import ResearchRepository
 
 class TradeMonitor:
     """
-    Monitors virtual trades against real candles.
+    Updates one virtual trade using a newly completed candle.
+
+    Conservative rule:
+    if TP and SL are both inside the same candle,
+    the trade closes at SL first.
     """
 
     def __init__(
@@ -35,28 +35,42 @@ class TradeMonitor:
         trade: ResearchTrade,
         candle: Candle,
     ) -> ResearchTrade:
+        """
+        Update entry, TP, SL and excursion statistics.
+        """
 
         if trade.status == TradeStatus.WAITING_ENTRY:
 
             if self._entry_hit(trade, candle):
-                trade.activate()
+                trade.activate(
+                    opened_at=candle.open_time,
+                )
 
         if trade.status != TradeStatus.ACTIVE:
             self.repository.save(trade)
             return trade
 
-        self._update_extremes(trade, candle)
+        trade.update_extremes(
+            high=candle.high,
+            low=candle.low,
+        )
 
+        # Conservative and reproducible backtest rule:
+        # SL wins if TP and SL are hit inside the same candle.
         if self._stop_hit(trade, candle):
+
             trade.close(
-                trade.stop_loss,
-                "SL",
+                price=trade.stop_loss,
+                reason="SL",
+                closed_at=candle.close_time,
             )
 
         elif self._take_profit_hit(trade, candle):
+
             trade.close(
-                trade.take_profit,
-                "TP",
+                price=trade.take_profit,
+                reason="TP",
+                closed_at=candle.close_time,
             )
 
         self.repository.save(trade)
@@ -68,9 +82,14 @@ class TradeMonitor:
         trade: ResearchTrade,
         candle: Candle,
     ) -> bool:
+        """
+        Return True when candle touches entry level.
+        """
 
         return (
-            candle.low <= trade.entry_price <= candle.high
+            candle.low
+            <= trade.entry_price
+            <= candle.high
         )
 
     def _stop_hit(
@@ -78,6 +97,9 @@ class TradeMonitor:
         trade: ResearchTrade,
         candle: Candle,
     ) -> bool:
+        """
+        Return True when stop loss is touched.
+        """
 
         if trade.is_long():
             return candle.low <= trade.stop_loss
@@ -89,48 +111,11 @@ class TradeMonitor:
         trade: ResearchTrade,
         candle: Candle,
     ) -> bool:
+        """
+        Return True when take profit is touched.
+        """
 
         if trade.is_long():
             return candle.high >= trade.take_profit
 
         return candle.low <= trade.take_profit
-
-    def _update_extremes(
-        self,
-        trade: ResearchTrade,
-        candle: Candle,
-    ) -> None:
-
-        if trade.is_long():
-
-            max_profit = (
-                (candle.high - trade.entry_price)
-                / trade.entry_price
-            ) * 100
-
-            max_drawdown = (
-                (candle.low - trade.entry_price)
-                / trade.entry_price
-            ) * 100
-
-        else:
-
-            max_profit = (
-                (trade.entry_price - candle.low)
-                / trade.entry_price
-            ) * 100
-
-            max_drawdown = (
-                (trade.entry_price - candle.high)
-                / trade.entry_price
-            ) * 100
-
-        trade.max_profit_percent = max(
-            trade.max_profit_percent,
-            max_profit,
-        )
-
-        trade.max_drawdown_percent = min(
-            trade.max_drawdown_percent,
-            max_drawdown,
-        )

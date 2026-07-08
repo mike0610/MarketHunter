@@ -217,30 +217,6 @@ class ResearchTradeHandler(SignalHandler):
 
         probability = context.probability.probability
 
-        if probability < self.minimum_probability:
-            self._skip(
-                context=context,
-                reason=(
-                    f"Probability {probability}% is below research "
-                    f"threshold {self.minimum_probability}%."
-                ),
-            )
-            return
-
-        if (
-            self.created_trades_this_cycle
-            >= self.maximum_new_trades_per_cycle
-        ):
-            self._skip(
-                context=context,
-                reason=(
-                    "Research cycle limit reached: "
-                    f"{self.created_trades_this_cycle}/"
-                    f"{self.maximum_new_trades_per_cycle}."
-                ),
-            )
-            return
-
         snapshot = getattr(
             context,
             "snapshot",
@@ -280,6 +256,30 @@ class ResearchTradeHandler(SignalHandler):
                     ),
                 )
                 return
+
+        if probability < self.minimum_probability:
+            self._skip(
+                context=context,
+                reason=(
+                    f"Probability {probability}% is below research "
+                    f"threshold {self.minimum_probability}%."
+                ),
+            )
+            return
+
+        if (
+            self.created_trades_this_cycle
+            >= self.maximum_new_trades_per_cycle
+        ):
+            self._skip(
+                context=context,
+                reason=(
+                    "Research cycle limit reached: "
+                    f"{self.created_trades_this_cycle}/"
+                    f"{self.maximum_new_trades_per_cycle}."
+                ),
+            )
+            return
 
         result = self.manager.create_from_signal(
             signal=context.signal,

@@ -580,7 +580,9 @@ class ResearchTradeHandler(SignalHandler):
             "Bullish CHoCH",
             "Bearish CHoCH",
             "Bullish Liquidity Sweep",
+            "Bullish Liquidity Buildup Sweep",
             "Bearish Liquidity Sweep",
+            "Bearish Liquidity Buildup Sweep",
             "Double Bottom",
             "Double Top",
         }

@@ -1986,6 +1986,7 @@ export default function Research() {
                                     setScanRejectionFilter(
                                         event.target.value,
                                     );
+                                    setScanConflictFilter("all");
                                 }}
                             >
                                 <MenuItem value="all">
@@ -2025,6 +2026,30 @@ export default function Research() {
                                 </MenuItem>
                             </Select>
                         </FormControl>
+
+                        <Button
+                            variant="outlined"
+                            onClick={() => {
+                                setScanStatusFilter("all");
+                                setScanDirectionFilter("all");
+                                setScanRejectionFilter("all");
+                                setScanConflictFilter("all");
+                            }}
+                            disabled={
+                                scanStatusFilter === "all"
+                                && scanDirectionFilter === "all"
+                                && scanRejectionFilter === "all"
+                                && scanConflictFilter === "all"
+                            }
+                            sx={{
+                                minWidth: {
+                                    xs: "100%",
+                                    sm: 140,
+                                },
+                            }}
+                        >
+                            Reset filters
+                        </Button>
                     </Stack>
                 </Stack>
 
@@ -2207,6 +2232,7 @@ export default function Research() {
                         )}
                         onClick={() => {
                             setScanRejectionFilter("research_threshold");
+                            setScanConflictFilter("all");
                         }}
                         active={scanRejectionFilter === "research_threshold"}
                     />
@@ -2219,6 +2245,7 @@ export default function Research() {
                         )}
                         onClick={() => {
                             setScanRejectionFilter("elite_threshold");
+                            setScanConflictFilter("all");
                         }}
                         active={scanRejectionFilter === "elite_threshold"}
                     />
@@ -2231,6 +2258,7 @@ export default function Research() {
                         )}
                         onClick={() => {
                             setScanRejectionFilter("open_trade");
+                            setScanConflictFilter("all");
                         }}
                         active={scanRejectionFilter === "open_trade"}
                     />
@@ -2243,6 +2271,7 @@ export default function Research() {
                         )}
                         onClick={() => {
                             setScanRejectionFilter("cycle_limit");
+                            setScanConflictFilter("all");
                         }}
                         active={scanRejectionFilter === "cycle_limit"}
                     />
@@ -2252,6 +2281,7 @@ export default function Research() {
                         value={formatNumber(scanRiskRejectedCount, 0)}
                         onClick={() => {
                             setScanRejectionFilter("risk");
+                            setScanConflictFilter("all");
                         }}
                         active={scanRejectionFilter === "risk"}
                     />
@@ -2261,6 +2291,7 @@ export default function Research() {
                         value={formatNumber(scanOtherRejectedCount, 0)}
                         onClick={() => {
                             setScanRejectionFilter("other");
+                            setScanConflictFilter("all");
                         }}
                         active={scanRejectionFilter === "other"}
                     />

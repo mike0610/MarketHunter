@@ -20,6 +20,7 @@ from pipeline.context import SignalContext
 from pipeline.handler import SignalHandler
 from probability.probability_engine import ProbabilityEngine
 from research.setup.support_resistance import SupportResistanceDetector
+from research.setup.reaction_quality import ReactionQualityDetector
 from research.manager import ResearchManager
 from risk.risk_manager import RiskManager
 
@@ -193,6 +194,7 @@ class ResearchTradeHandler(SignalHandler):
             min_touches=1,
             max_zones=12,
         )
+        self.reaction_quality = ReactionQualityDetector()
         self.created_trades_this_cycle = 0
 
     async def handle(
@@ -253,6 +255,38 @@ class ResearchTradeHandler(SignalHandler):
                     reason=(
                         "Research trade blocked by target quality: "
                         f"{target_assessment.summary}"
+                    ),
+                )
+                return
+
+        if snapshot is not None and candles:
+            reaction_assessment = self.reaction_quality.assess(
+                snapshot=snapshot,
+                direction=context.signal.direction,
+            )
+
+            context.signal.metadata["reaction_confirmed"] = (
+                reaction_assessment.confirmed
+            )
+            context.signal.metadata["reaction_score"] = (
+                reaction_assessment.score
+            )
+            context.signal.metadata["reaction_reasons"] = (
+                reaction_assessment.reasons
+            )
+            context.signal.metadata["reaction_summary"] = (
+                reaction_assessment.summary
+            )
+            context.signal.metadata["reaction_atr_body_ratio"] = (
+                reaction_assessment.atr_body_ratio
+            )
+
+            if not reaction_assessment.confirmed:
+                self._skip(
+                    context=context,
+                    reason=(
+                        "Research trade blocked by reaction quality: "
+                        f"{reaction_assessment.summary}"
                     ),
                 )
                 return

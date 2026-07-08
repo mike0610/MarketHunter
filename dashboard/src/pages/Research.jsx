@@ -1913,15 +1913,9 @@ export default function Research() {
                 }}
             >
                 <Stack
-                    direction={{
-                        xs: "column",
-                        lg: "row",
-                    }}
-                    justifyContent="space-between"
-                    alignItems={{
-                        xs: "flex-start",
-                        lg: "center",
-                    }}
+                    direction="column"
+                    justifyContent="flex-start"
+                    alignItems="stretch"
                     spacing={2}
                     sx={{
                         mb: 2,
@@ -1954,11 +1948,11 @@ export default function Research() {
                             sm: "row",
                         }}
                         spacing={1.5}
+                        useFlexGap
+                        flexWrap="wrap"
+                        justifyContent="flex-start"
                         sx={{
-                            width: {
-                                xs: "100%",
-                                lg: "auto",
-                            },
+                            width: "100%",
                             alignItems: {
                                 xs: "stretch",
                                 sm: "center",

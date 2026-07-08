@@ -19,6 +19,7 @@ from loguru import logger
 from pipeline.context import SignalContext
 from pipeline.handler import SignalHandler
 from probability.probability_engine import ProbabilityEngine
+from research.setup.support_resistance import SupportResistanceDetector
 from research.manager import ResearchManager
 from risk.risk_manager import RiskManager
 
@@ -185,6 +186,13 @@ class ResearchTradeHandler(SignalHandler):
         self.maximum_new_trades_per_cycle = (
             maximum_new_trades_per_cycle
         )
+        self.target_rr = 3.0
+        self.support_resistance = SupportResistanceDetector(
+            lookback_candles=160,
+            pivot_window=2,
+            min_touches=1,
+            max_zones=12,
+        )
         self.created_trades_this_cycle = 0
 
     async def handle(
@@ -232,6 +240,46 @@ class ResearchTradeHandler(SignalHandler):
                 ),
             )
             return
+
+        snapshot = getattr(
+            context,
+            "snapshot",
+            None,
+        )
+        candles = getattr(
+            snapshot,
+            "candles",
+            None,
+        )
+
+        if candles:
+            target_assessment = (
+                self.support_resistance.assess_rr_target(
+                    candles,
+                    direction=context.signal.direction,
+                    entry_price=context.risk.entry,
+                    stop_loss=context.risk.stop_loss,
+                    target_rr=self.target_rr,
+                )
+            )
+
+            context.signal.metadata["target_rr"] = self.target_rr
+            context.signal.metadata["target_clear"] = (
+                target_assessment.target_clear
+            )
+            context.signal.metadata["target_summary"] = (
+                target_assessment.summary
+            )
+
+            if not target_assessment.target_clear:
+                self._skip(
+                    context=context,
+                    reason=(
+                        "Research trade blocked by target quality: "
+                        f"{target_assessment.summary}"
+                    ),
+                )
+                return
 
         result = self.manager.create_from_signal(
             signal=context.signal,

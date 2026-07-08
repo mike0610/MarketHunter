@@ -132,13 +132,14 @@ async def monitor_open_trades(
 
     logger.info(
         "Monitor | Open: {} | Checked: {} | Activated: {} | "
-        "TP: {} | SL: {} | Expired: {} | Skipped: {}",
+        "TP: {} | SL: {} | Expired: {} | Candidate: {} | Skipped: {}",
         result.open_trades,
         result.monitored_trades,
         result.activated,
         result.closed_tp,
         result.closed_sl,
         result.expired,
+        result.revalidated_to_candidate,
         result.skipped_without_candles,
     )
 

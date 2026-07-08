@@ -292,6 +292,25 @@ class ResearchTradeHandler(SignalHandler):
                 )
                 return
 
+        parabolic_reason = self._parabolic_extension_reason(
+            context,
+        )
+
+        if parabolic_reason is not None:
+            context.signal.metadata["parabolic_extension_blocked"] = True
+            context.signal.metadata["parabolic_extension_summary"] = (
+                parabolic_reason
+            )
+
+            self._skip(
+                context=context,
+                reason=(
+                    "Research trade blocked by parabolic extension: "
+                    f"{parabolic_reason}"
+                ),
+            )
+            return
+
         reaction_bonus = 0
 
         if reaction_assessment is not None:
@@ -387,6 +406,147 @@ class ResearchTradeHandler(SignalHandler):
 
         context.signal.metadata["research_trade_id"] = (
             trade.id
+        )
+
+    @staticmethod
+    def _parabolic_extension_reason(
+        context,
+    ) -> str | None:
+        snapshot = getattr(
+            context,
+            "snapshot",
+            None,
+        )
+
+        if snapshot is None:
+            return None
+
+        candles = getattr(
+            snapshot,
+            "candles",
+            None,
+        )
+
+        if not candles or len(candles) < 30:
+            return None
+
+        atr = float(
+            getattr(
+                snapshot,
+                "atr14",
+                0.0,
+            )
+            or 0.0
+        )
+
+        ema20 = float(
+            getattr(
+                snapshot,
+                "ema20",
+                0.0,
+            )
+            or 0.0
+        )
+
+        if atr <= 0 or ema20 <= 0:
+            return None
+
+        direction = context.signal.direction.strip().upper()
+        close = candles[-1].close
+        lookback_close = candles[-21].close
+
+        if lookback_close <= 0:
+            return None
+
+        recent = candles[-5:]
+
+        if direction == "SHORT":
+            recent_move_percent = (
+                (lookback_close - close)
+                / lookback_close
+                * 100
+            )
+            ema_distance_percent = (
+                (ema20 - close)
+                / ema20
+                * 100
+            )
+            ema_distance_atr = (
+                (ema20 - close)
+                / atr
+            )
+            recent_high = max(
+                candle.high
+                for candle in recent
+            )
+            has_pullback = recent_high >= (
+                ema20 - atr
+            )
+
+        else:
+            direction = "LONG"
+            recent_move_percent = (
+                (close - lookback_close)
+                / lookback_close
+                * 100
+            )
+            ema_distance_percent = (
+                (close - ema20)
+                / ema20
+                * 100
+            )
+            ema_distance_atr = (
+                (close - ema20)
+                / atr
+            )
+            recent_low = min(
+                candle.low
+                for candle in recent
+            )
+            has_pullback = recent_low <= (
+                ema20 + atr
+            )
+
+        context.signal.metadata["parabolic_recent_move_percent"] = (
+            round(
+                recent_move_percent,
+                4,
+            )
+        )
+        context.signal.metadata["parabolic_ema_distance_percent"] = (
+            round(
+                ema_distance_percent,
+                4,
+            )
+        )
+        context.signal.metadata["parabolic_ema_distance_atr"] = (
+            round(
+                ema_distance_atr,
+                4,
+            )
+        )
+        context.signal.metadata["parabolic_has_pullback"] = (
+            has_pullback
+        )
+
+        if recent_move_percent < 18.0:
+            return None
+
+        if ema_distance_percent < 8.0:
+            return None
+
+        if ema_distance_atr < 2.5:
+            return None
+
+        if has_pullback:
+            return None
+
+        return (
+            f"{direction} is extended after a "
+            f"{recent_move_percent:.2f}% move over 20 candles, "
+            f"{ema_distance_percent:.2f}% / "
+            f"{ema_distance_atr:.2f} ATR away from EMA20, "
+            "without a pullback/retest."
         )
 
     @staticmethod

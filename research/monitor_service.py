@@ -22,6 +22,7 @@ from models.candle import Candle
 from research.models.trade import ResearchTrade
 from research.models.trade_status import TradeStatus
 from research.monitor import TradeMonitor
+from research.setup.support_resistance import SupportResistanceDetector
 from research.storage.repository import ResearchRepository
 
 
@@ -44,6 +45,7 @@ class MonitorRunResult:
     closed_sl: int = 0
     expired: int = 0
     skipped_without_candles: int = 0
+    revalidated_to_candidate: int = 0
     errors: list[str] = field(
         default_factory=list,
     )
@@ -61,10 +63,22 @@ class ResearchMonitorService:
         self,
         repository: ResearchRepository,
         monitor: TradeMonitor | None = None,
+        target_rr: float = 3.0,
+        support_resistance: SupportResistanceDetector | None = None,
     ) -> None:
         self.repository = repository
         self.monitor = monitor or TradeMonitor(
             repository=repository,
+        )
+        self.target_rr = target_rr
+        self.support_resistance = (
+            support_resistance
+            or SupportResistanceDetector(
+                lookback_candles=160,
+                pivot_window=2,
+                min_touches=1,
+                max_zones=12,
+            )
         )
 
     async def run_once(
@@ -94,6 +108,16 @@ class ResearchMonitorService:
                     candles=candles,
                     now=run_time,
                 )
+
+                if (
+                    trade.status == TradeStatus.WAITING_ENTRY
+                    and not self._waiting_entry_still_valid(
+                        trade=trade,
+                        candles=completed_candles,
+                    )
+                ):
+                    result.revalidated_to_candidate += 1
+                    continue
 
                 new_candles = self._new_candles(
                     trade=trade,
@@ -131,6 +155,40 @@ class ResearchMonitorService:
                 )
 
         return result
+
+    def _waiting_entry_still_valid(
+        self,
+        *,
+        trade: ResearchTrade,
+        candles: list[Candle],
+    ) -> bool:
+        if not candles:
+            return True
+
+        assessment = self.support_resistance.assess_rr_target(
+            candles,
+            direction=trade.direction,
+            entry_price=trade.entry_price,
+            stop_loss=trade.stop_loss,
+            target_rr=self.target_rr,
+        )
+
+        if assessment.target_clear:
+            return True
+
+        reason = (
+            "WAITING_ENTRY_REVALIDATION_FAILED: "
+            f"{assessment.summary}"
+        )
+
+        trade.move_to_candidate(
+            reason=reason,
+            processed_at=candles[-1].close_time,
+        )
+
+        self.repository.save(trade)
+
+        return False
 
     def _completed_candles(
         self,

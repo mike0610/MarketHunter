@@ -98,6 +98,24 @@ class ResearchTrade:
 
         return self.direction.upper() == "SHORT"
 
+    def move_to_candidate(
+        self,
+        reason: str,
+        processed_at: datetime | None = None,
+    ) -> None:
+        """
+        Move waiting trade back to watchlist/candidate state.
+        """
+
+        if self.status != TradeStatus.WAITING_ENTRY:
+            return
+
+        self.status = TradeStatus.CANDIDATE
+        self.close_reason = reason
+
+        if processed_at is not None:
+            self.last_processed_candle_at = processed_at
+
     def activate(
         self,
         opened_at: datetime,

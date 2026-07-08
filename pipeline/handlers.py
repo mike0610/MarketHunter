@@ -43,7 +43,8 @@ class ProbabilityHandler(SignalHandler):
         """
 
         result = self.engine.evaluate(
-            context.snapshot,
+            snapshot=context.snapshot,
+            direction=context.signal.direction,
         )
 
         context.probability = result

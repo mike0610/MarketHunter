@@ -40,46 +40,71 @@ class ProbabilityEngine:
         self,
         snapshot: MarketSnapshot,
         mtf_score: int = 0,
+        direction: str = "LONG",
     ) -> ProbabilityResult:
 
         score = 0
 
         reasons: list[str] = []
 
-        if self.trend.bullish(snapshot):
+        normalized_direction = direction.strip().upper()
+
+        if normalized_direction == "SHORT":
+            trend_confirmed = self.trend.bearish(snapshot)
+            bos_confirmed = self.bos.bearish(snapshot)
+            choch_confirmed = self.choch.bearish(snapshot)
+            breakout_confirmed = self.breakout.bearish(snapshot)
+            order_block_confirmed = self.order_block.bearish(snapshot)
+            fvg_confirmed = self.fvg.bearish(snapshot)
+            liquidity_confirmed = self.liquidity.bearish(snapshot)
+
+            reason_prefix = "Bearish "
+
+        else:
+            trend_confirmed = self.trend.bullish(snapshot)
+            bos_confirmed = self.bos.bullish(snapshot)
+            choch_confirmed = self.choch.bullish(snapshot)
+            breakout_confirmed = self.breakout.bullish(snapshot)
+            order_block_confirmed = self.order_block.bullish(snapshot)
+            fvg_confirmed = self.fvg.bullish(snapshot)
+            liquidity_confirmed = self.liquidity.bullish(snapshot)
+
+            reason_prefix = ""
+
+        if trend_confirmed:
 
             score += ProbabilityWeights.TREND
-            reasons.append("Trend")
+            reasons.append(f"{reason_prefix}Trend")
 
-        if self.bos.bullish(snapshot):
+        if bos_confirmed:
 
             score += ProbabilityWeights.BOS
-            reasons.append("BOS")
+            reasons.append(f"{reason_prefix}BOS")
 
-        if self.choch.bullish(snapshot):
+        if choch_confirmed:
 
             score += ProbabilityWeights.CHOCH
-            reasons.append("CHoCH")
+            reasons.append(f"{reason_prefix}CHoCH")
 
-        if self.breakout.bullish(snapshot):
+        if breakout_confirmed:
 
             score += ProbabilityWeights.BREAKOUT
-            reasons.append("Breakout")
+            reasons.append(f"{reason_prefix}Breakout")
 
-        if self.order_block.bullish(snapshot):
+        if order_block_confirmed:
 
             score += ProbabilityWeights.ORDER_BLOCK
-            reasons.append("Order Block")
+            reasons.append(f"{reason_prefix}Order Block")
 
-        if self.fvg.bullish(snapshot):
+        if fvg_confirmed:
 
             score += ProbabilityWeights.FVG
-            reasons.append("FVG")
+            reasons.append(f"{reason_prefix}FVG")
 
-        if self.liquidity.bullish(snapshot):
+        if liquidity_confirmed:
 
             score += ProbabilityWeights.LIQUIDITY
-            reasons.append("Liquidity")
+            reasons.append(f"{reason_prefix}Liquidity")
 
         regime = self.regime.analyze(snapshot)
 

@@ -593,6 +593,15 @@ function normalizeJournalEntry(raw, index = 0) {
         metadata,
         conflict,
         rejectCategory,
+        researchQualified: Number(raw?.probability ?? metadata?.probability ?? 0) >= 40,
+        researchBlocked: (
+            Number(raw?.probability ?? metadata?.probability ?? 0) >= 40
+            && (
+                rejectCategory === "open_trade"
+                || rejectCategory === "cycle_limit"
+                || rejectCategory === "duplicate"
+            )
+        ),
         status: normalizeSignalStatus(
             raw?.status
             ?? raw?.signal_status
@@ -873,6 +882,19 @@ function ScanGroupCard({
                             label={conflictOutcomeLabel(
                                 firstConflict.outcome,
                             )}
+                        />
+                    )}
+
+                    {item.researchQualified && (
+                        <Chip
+                            size="small"
+                            color={item.researchBlocked ? "info" : "success"}
+                            variant={item.researchBlocked ? "outlined" : "filled"}
+                            label={
+                                item.researchBlocked
+                                    ? "Research blocked"
+                                    : "Research-qualified"
+                            }
                         />
                     )}
 
@@ -1409,6 +1431,8 @@ export default function Research() {
                             items: [],
                             conflictItems: [],
                             rejectCategories: [],
+                            researchQualified: false,
+                            researchBlocked: false,
                         },
                     );
                 }
@@ -1442,6 +1466,14 @@ export default function Research() {
                     group.rejectCategories.push(
                         item.rejectCategory,
                     );
+                }
+
+                if (item.researchQualified) {
+                    group.researchQualified = true;
+                }
+
+                if (item.researchBlocked) {
+                    group.researchBlocked = true;
                 }
 
                 if (
@@ -1609,6 +1641,24 @@ export default function Research() {
     const scanOtherRejectedCount = useMemo(
         () => normalizedScanEntries.filter(
             (item) => item.rejectCategory === "other",
+        ).length,
+        [
+            normalizedScanEntries,
+        ],
+    );
+
+    const scanResearchQualifiedCount = useMemo(
+        () => normalizedScanEntries.filter(
+            (item) => item.researchQualified,
+        ).length,
+        [
+            normalizedScanEntries,
+        ],
+    );
+
+    const scanResearchBlockedCount = useMemo(
+        () => normalizedScanEntries.filter(
+            (item) => item.researchBlocked,
         ).length,
         [
             normalizedScanEntries,

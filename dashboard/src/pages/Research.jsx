@@ -1770,6 +1770,14 @@ export default function Research() {
                     "#root": {
                         overflowX: "hidden",
                     },
+                    ".MuiSelect-select": {
+                        fontSize: "0.9rem",
+                        paddingTop: "9px",
+                        paddingBottom: "9px",
+                    },
+                    ".MuiMenuItem-root": {
+                        fontSize: "0.9rem",
+                    },
                 }}
             />
 
@@ -1979,7 +1987,7 @@ export default function Research() {
                             sx={{
                                 minWidth: {
                                     xs: "100%",
-                                    sm: 170,
+                                    sm: 135,
                                 },
                             }}
                         >
@@ -2018,7 +2026,7 @@ export default function Research() {
                             sx={{
                                 minWidth: {
                                     xs: "100%",
-                                    sm: 170,
+                                    sm: 135,
                                 },
                             }}
                         >
@@ -2049,7 +2057,7 @@ export default function Research() {
                             sx={{
                                 minWidth: {
                                     xs: "100%",
-                                    sm: 210,
+                                    sm: 175,
                                 },
                             }}
                         >
@@ -2105,7 +2113,7 @@ export default function Research() {
                             sx={{
                                 minWidth: {
                                     xs: "100%",
-                                    sm: 190,
+                                    sm: 165,
                                 },
                             }}
                         >
@@ -2152,13 +2160,14 @@ export default function Research() {
                                 height: 40,
                                 minHeight: 40,
                                 whiteSpace: "nowrap",
+                                fontSize: "0.82rem",
                                 alignSelf: {
                                     xs: "stretch",
                                     sm: "center",
                                 },
                                 minWidth: {
                                     xs: "100%",
-                                    sm: 140,
+                                    sm: 115,
                                 },
                             }}
                         >

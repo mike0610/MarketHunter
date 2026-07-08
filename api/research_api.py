@@ -1111,7 +1111,7 @@ def _build_market_symbol(
     """
 
     normalized_symbol = symbol.strip().upper()
-    normalized_market = market.strip().upper()
+    normalized_market = market.strip().lower()
 
     known_quote_assets = [
         "FDUSD",

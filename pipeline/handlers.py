@@ -1,4 +1,4 @@
-"""
+﻿"""
 MarketHunter
 
 Module:
@@ -291,10 +291,6 @@ class ResearchTradeHandler(SignalHandler):
 class EliteSignalHandler(SignalHandler):
     """
     Mark only high-probability signals as elite.
-
-    Non-elite signals are rejected from Scanner elite output, but their
-    journal status can still become "research" when ResearchTradeHandler
-    created a virtual research trade earlier in the pipeline.
     """
 
     def __init__(
@@ -313,12 +309,7 @@ class EliteSignalHandler(SignalHandler):
         context: SignalContext,
     ) -> None:
         """
-        Mark elite signals and preserve research-threshold reasons.
-
-        If a signal is below elite threshold, it must not appear in Scanner
-        elite output. However, when ResearchTradeHandler already skipped it
-        for a better reason, for example below research threshold or cycle
-        limit, that reason should stay visible in the scan journal.
+        Mark elite signals without rejecting valid research trades.
         """
 
         if context.probability is None:
@@ -345,12 +336,15 @@ class EliteSignalHandler(SignalHandler):
         context.signal.metadata["elite_signal"] = False
         context.signal.metadata["elite_skipped"] = elite_skipped
 
+        if context.research_trade is not None:
+            return
+
         research_skipped = (
             context.metadata.get("research_skipped")
             or context.signal.metadata.get("research_skipped")
         )
 
-        if context.research_trade is None and research_skipped:
+        if research_skipped:
             context.reject(
                 str(research_skipped)
             )

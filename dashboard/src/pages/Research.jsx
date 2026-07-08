@@ -417,50 +417,95 @@ function conflictOutcomeColor(value) {
 function rejectionCategory(value) {
     const reason = String(value || "").toLowerCase();
 
+    if (!reason) {
+        return "";
+    }
+
     if (reason.includes("direction conflict")) {
         return "conflict";
     }
 
     if (
         reason.includes("probability")
-        && reason.includes("threshold")
+        && reason.includes("below research")
     ) {
-        return "probability";
+        return "research_threshold";
+    }
+
+    if (
+        reason.includes("probability")
+        && reason.includes("below elite")
+    ) {
+        return "elite_threshold";
+    }
+
+    if (reason.includes("research cycle limit")) {
+        return "cycle_limit";
+    }
+
+    if (reason.includes("open trade already exists")) {
+        return "open_trade";
+    }
+
+    if (
+        reason.includes("duplicate")
+        || reason.includes("already tracked")
+    ) {
+        return "duplicate";
     }
 
     if (reason.includes("risk")) {
         return "risk";
     }
 
-    if (
-        reason.includes("duplicate")
-        || reason.includes("already")
-    ) {
-        return "duplicate";
-    }
-
-    if (reason) {
-        return "other";
-    }
-
-    return "";
+    return "other";
 }
 
 
 function rejectionCategoryLabel(value) {
     switch (String(value || "")) {
         case "conflict":
-            return "Conflict resolver";
-        case "probability":
-            return "Probability threshold";
+            return "Direction conflict";
+        case "research_threshold":
+            return "Research threshold";
+        case "elite_threshold":
+            return "Elite threshold";
+        case "open_trade":
+            return "Open trade exists";
+        case "cycle_limit":
+            return "Cycle limit";
         case "risk":
-            return "Risk filter";
+            return "Risk error";
         case "duplicate":
-            return "Duplicate / already tracked";
+            return "Duplicate";
         case "other":
-            return "Інша причина";
+            return "Other rejected";
         default:
             return "";
+    }
+}
+
+
+function rejectionCategoryColor(value) {
+    switch (String(value || "")) {
+        case "conflict":
+            return "warning";
+        case "research_threshold":
+            return "default";
+        case "elite_threshold":
+            return "info";
+        case "open_trade":
+            return "primary";
+        case "cycle_limit":
+            return "secondary";
+        case "risk":
+            return "error";
+        case "duplicate":
+            return "primary";
+        case "other":
+            return "default";
+        default:
+            return "default";
     }
 }
 
@@ -1041,6 +1086,7 @@ function ScanGroupCard({
                             key={`${item.key}-reject-${category}`}
                             size="small"
                             variant="outlined"
+                            color={rejectionCategoryColor(category)}
                             label={rejectionCategoryLabel(category)}
                         />
                     ))}
@@ -1493,9 +1539,54 @@ export default function Research() {
         ],
     );
 
-    const scanProbabilityRejectedCount = useMemo(
+    const scanResearchThresholdRejectedCount = useMemo(
         () => normalizedScanEntries.filter(
-            (item) => item.rejectCategory === "probability",
+            (item) => item.rejectCategory === "research_threshold",
+        ).length,
+        [
+            normalizedScanEntries,
+        ],
+    );
+
+    const scanEliteThresholdRejectedCount = useMemo(
+        () => normalizedScanEntries.filter(
+            (item) => item.rejectCategory === "elite_threshold",
+        ).length,
+        [
+            normalizedScanEntries,
+        ],
+    );
+
+    const scanOpenTradeRejectedCount = useMemo(
+        () => normalizedScanEntries.filter(
+            (item) => item.rejectCategory === "open_trade",
+        ).length,
+        [
+            normalizedScanEntries,
+        ],
+    );
+
+    const scanCycleLimitRejectedCount = useMemo(
+        () => normalizedScanEntries.filter(
+            (item) => item.rejectCategory === "cycle_limit",
+        ).length,
+        [
+            normalizedScanEntries,
+        ],
+    );
+
+    const scanRiskRejectedCount = useMemo(
+        () => normalizedScanEntries.filter(
+            (item) => item.rejectCategory === "risk",
+        ).length,
+        [
+            normalizedScanEntries,
+        ],
+    );
+
+    const scanOtherRejectedCount = useMemo(
+        () => normalizedScanEntries.filter(
+            (item) => item.rejectCategory === "other",
         ).length,
         [
             normalizedScanEntries,
@@ -1970,7 +2061,7 @@ export default function Research() {
                         gridTemplateColumns: {
                             xs: "1fr",
                             sm: "repeat(2, minmax(0, 1fr))",
-                            lg: "repeat(5, minmax(0, 1fr))",
+                            lg: "repeat(4, minmax(0, 1fr))",
                         },
                         mb: 2,
                     }}
@@ -1994,10 +2085,60 @@ export default function Research() {
                         label="Mixed conflict"
                         value={formatNumber(scanConflictMixedCount, 0)}
                     />
+                </Box>
+
+                <Box
+                    sx={{
+                        display: "grid",
+                        gap: 2,
+                        gridTemplateColumns: {
+                            xs: "1fr",
+                            sm: "repeat(2, minmax(0, 1fr))",
+                            lg: "repeat(6, minmax(0, 1fr))",
+                        },
+                        mb: 2,
+                    }}
+                >
+                    <InfoStat
+                        label="Research threshold"
+                        value={formatNumber(
+                            scanResearchThresholdRejectedCount,
+                            0,
+                        )}
+                    />
 
                     <InfoStat
-                        label="Probability rejected"
-                        value={formatNumber(scanProbabilityRejectedCount, 0)}
+                        label="Elite threshold"
+                        value={formatNumber(
+                            scanEliteThresholdRejectedCount,
+                            0,
+                        )}
+                    />
+
+                    <InfoStat
+                        label="Open trade exists"
+                        value={formatNumber(
+                            scanOpenTradeRejectedCount,
+                            0,
+                        )}
+                    />
+
+                    <InfoStat
+                        label="Cycle limit"
+                        value={formatNumber(
+                            scanCycleLimitRejectedCount,
+                            0,
+                        )}
+                    />
+
+                    <InfoStat
+                        label="Risk error"
+                        value={formatNumber(scanRiskRejectedCount, 0)}
+                    />
+
+                    <InfoStat
+                        label="Other rejected"
+                        value={formatNumber(scanOtherRejectedCount, 0)}
                     />
                 </Box>
 

@@ -1882,6 +1882,10 @@ export default function Research() {
                                 xs: "100%",
                                 lg: "auto",
                             },
+                            alignItems: {
+                                xs: "stretch",
+                                sm: "center",
+                            },
                         }}
                     >
                         <Chip
@@ -2029,6 +2033,7 @@ export default function Research() {
 
                         <Button
                             variant="outlined"
+                            size="small"
                             onClick={() => {
                                 setScanStatusFilter("all");
                                 setScanDirectionFilter("all");
@@ -2042,6 +2047,13 @@ export default function Research() {
                                 && scanConflictFilter === "all"
                             }
                             sx={{
+                                height: 40,
+                                minHeight: 40,
+                                whiteSpace: "nowrap",
+                                alignSelf: {
+                                    xs: "stretch",
+                                    sm: "center",
+                                },
                                 minWidth: {
                                     xs: "100%",
                                     sm: 140,

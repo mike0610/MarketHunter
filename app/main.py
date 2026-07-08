@@ -1,4 +1,4 @@
-"""
+﻿"""
 MarketHunter
 
 Module:
@@ -62,7 +62,7 @@ SCANNER_WORKERS = 10
 
 MINIMUM_FUTURES_QUOTE_VOLUME_USDT = 10_000_000.0
 
-RESEARCH_MINIMUM_PROBABILITY = 40
+RESEARCH_MINIMUM_PROBABILITY = 60
 ELITE_MINIMUM_PROBABILITY = 80
 
 VIRTUAL_ACCOUNT_SIZE_USDT = 1_000.0
@@ -155,7 +155,7 @@ async def main() -> None:
     """
 
     logger.info("=" * 60)
-    logger.info("MarketHunter — Research Engine MVP")
+    logger.info("MarketHunter вЂ” Research Engine MVP")
     logger.info("=" * 60)
 
     repository = ResearchRepository(
@@ -355,7 +355,7 @@ async def main() -> None:
 
             for reason in signal.reasons:
                 logger.info(
-                    "    • {}",
+                    "    вЂў {}",
                     reason,
                 )
 

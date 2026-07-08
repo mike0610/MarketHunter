@@ -1257,6 +1257,7 @@ export default function Research() {
 
     const [scanStatusFilter, setScanStatusFilter] = useState("all");
     const [scanDirectionFilter, setScanDirectionFilter] = useState("all");
+    const [scanRejectionFilter, setScanRejectionFilter] = useState("all");
 
     const [dialogOpen, setDialogOpen] = useState(false);
     const [dialogLoading, setDialogLoading] = useState(false);
@@ -1475,13 +1476,25 @@ export default function Research() {
     );
 
     const filteredGroupedSignals = useMemo(
-        () => groupedScanEntries.filter((item) => (
-            scanDirectionFilter === "all"
-            || item.direction === scanDirectionFilter
-        )),
+        () => groupedScanEntries.filter((item) => {
+            const directionMatches = (
+                scanDirectionFilter === "all"
+                || item.direction === scanDirectionFilter
+            );
+
+            const rejectionMatches = (
+                scanRejectionFilter === "all"
+                || safeArray(item.rejectCategories).includes(
+                    scanRejectionFilter,
+                )
+            );
+
+            return directionMatches && rejectionMatches;
+        }),
         [
             groupedScanEntries,
             scanDirectionFilter,
+            scanRejectionFilter,
         ],
     );
 
@@ -1945,6 +1958,61 @@ export default function Research() {
 
                                 <MenuItem value="SHORT">
                                     SHORT
+                                </MenuItem>
+                            </Select>
+                        </FormControl>
+
+                        <FormControl
+                            size="small"
+                            sx={{
+                                minWidth: {
+                                    xs: "100%",
+                                    sm: 210,
+                                },
+                            }}
+                        >
+                            <Select
+                                value={scanRejectionFilter}
+                                onChange={(event) => {
+                                    setScanRejectionFilter(
+                                        event.target.value,
+                                    );
+                                }}
+                            >
+                                <MenuItem value="all">
+                                    Причина відхилення
+                                </MenuItem>
+
+                                <MenuItem value="conflict">
+                                    Direction conflict
+                                </MenuItem>
+
+                                <MenuItem value="research_threshold">
+                                    Research threshold
+                                </MenuItem>
+
+                                <MenuItem value="elite_threshold">
+                                    Elite threshold
+                                </MenuItem>
+
+                                <MenuItem value="open_trade">
+                                    Open trade exists
+                                </MenuItem>
+
+                                <MenuItem value="cycle_limit">
+                                    Cycle limit
+                                </MenuItem>
+
+                                <MenuItem value="risk">
+                                    Risk error
+                                </MenuItem>
+
+                                <MenuItem value="duplicate">
+                                    Duplicate
+                                </MenuItem>
+
+                                <MenuItem value="other">
+                                    Other rejected
                                 </MenuItem>
                             </Select>
                         </FormControl>

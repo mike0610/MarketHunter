@@ -1281,6 +1281,7 @@ export default function Research() {
     const [scanDirectionFilter, setScanDirectionFilter] = useState("all");
     const [scanRejectionFilter, setScanRejectionFilter] = useState("all");
     const [scanConflictFilter, setScanConflictFilter] = useState("all");
+    const [scanResearchFilter, setScanResearchFilter] = useState("all");
 
     const [dialogOpen, setDialogOpen] = useState(false);
     const [dialogLoading, setDialogLoading] = useState(false);
@@ -1529,13 +1530,31 @@ export default function Research() {
                 )
             );
 
-            return directionMatches && rejectionMatches && conflictMatches;
+            const researchMatches = (
+                scanResearchFilter === "all"
+                || (
+                    scanResearchFilter === "qualified"
+                    && item.researchQualified
+                )
+                || (
+                    scanResearchFilter === "blocked"
+                    && item.researchBlocked
+                )
+            );
+
+            return (
+                directionMatches
+                && rejectionMatches
+                && conflictMatches
+                && researchMatches
+            );
         }),
         [
             groupedScanEntries,
             scanDirectionFilter,
             scanRejectionFilter,
             scanConflictFilter,
+            scanResearchFilter,
         ],
     );
 
@@ -2081,6 +2100,37 @@ export default function Research() {
                             </Select>
                         </FormControl>
 
+                        <FormControl
+                            size="small"
+                            sx={{
+                                minWidth: {
+                                    xs: "100%",
+                                    sm: 190,
+                                },
+                            }}
+                        >
+                            <Select
+                                value={scanResearchFilter}
+                                onChange={(event) => {
+                                    setScanResearchFilter(
+                                        event.target.value,
+                                    );
+                                }}
+                            >
+                                <MenuItem value="all">
+                                    Research стан
+                                </MenuItem>
+
+                                <MenuItem value="qualified">
+                                    Research-qualified
+                                </MenuItem>
+
+                                <MenuItem value="blocked">
+                                    Research blocked
+                                </MenuItem>
+                            </Select>
+                        </FormControl>
+
                         <Button
                             variant="outlined"
                             size="small"
@@ -2089,12 +2139,14 @@ export default function Research() {
                                 setScanDirectionFilter("all");
                                 setScanRejectionFilter("all");
                                 setScanConflictFilter("all");
+                                setScanResearchFilter("all");
                             }}
                             disabled={
                                 scanStatusFilter === "all"
                                 && scanDirectionFilter === "all"
                                 && scanRejectionFilter === "all"
                                 && scanConflictFilter === "all"
+                                && scanResearchFilter === "all"
                             }
                             sx={{
                                 height: 40,

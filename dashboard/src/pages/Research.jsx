@@ -2173,6 +2173,10 @@ export default function Research() {
                             scanResearchThresholdRejectedCount,
                             0,
                         )}
+                        onClick={() => {
+                            setScanRejectionFilter("research_threshold");
+                        }}
+                        active={scanRejectionFilter === "research_threshold"}
                     />
 
                     <InfoStat
@@ -2181,6 +2185,10 @@ export default function Research() {
                             scanEliteThresholdRejectedCount,
                             0,
                         )}
+                        onClick={() => {
+                            setScanRejectionFilter("elite_threshold");
+                        }}
+                        active={scanRejectionFilter === "elite_threshold"}
                     />
 
                     <InfoStat
@@ -2189,6 +2197,10 @@ export default function Research() {
                             scanOpenTradeRejectedCount,
                             0,
                         )}
+                        onClick={() => {
+                            setScanRejectionFilter("open_trade");
+                        }}
+                        active={scanRejectionFilter === "open_trade"}
                     />
 
                     <InfoStat
@@ -2197,16 +2209,28 @@ export default function Research() {
                             scanCycleLimitRejectedCount,
                             0,
                         )}
+                        onClick={() => {
+                            setScanRejectionFilter("cycle_limit");
+                        }}
+                        active={scanRejectionFilter === "cycle_limit"}
                     />
 
                     <InfoStat
                         label="Risk error"
                         value={formatNumber(scanRiskRejectedCount, 0)}
+                        onClick={() => {
+                            setScanRejectionFilter("risk");
+                        }}
+                        active={scanRejectionFilter === "risk"}
                     />
 
                     <InfoStat
                         label="Other rejected"
                         value={formatNumber(scanOtherRejectedCount, 0)}
+                        onClick={() => {
+                            setScanRejectionFilter("other");
+                        }}
+                        active={scanRejectionFilter === "other"}
                     />
                 </Box>
 

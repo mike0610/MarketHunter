@@ -290,7 +290,11 @@ class ResearchTradeHandler(SignalHandler):
 
 class EliteSignalHandler(SignalHandler):
     """
-    Leave only high-probability signals in Scanner output.
+    Mark only high-probability signals as elite.
+
+    Non-elite signals are rejected from Scanner elite output, but their
+    journal status can still become "research" when ResearchTradeHandler
+    created a virtual research trade earlier in the pipeline.
     """
 
     def __init__(
@@ -309,7 +313,12 @@ class EliteSignalHandler(SignalHandler):
         context: SignalContext,
     ) -> None:
         """
-        Reject a signal from elite output when its probability is low.
+        Mark elite signals and preserve research-threshold reasons.
+
+        If a signal is below elite threshold, it must not appear in Scanner
+        elite output. However, when ResearchTradeHandler already skipped it
+        for a better reason, for example below research threshold or cycle
+        limit, that reason should stay visible in the scan journal.
         """
 
         if context.probability is None:
@@ -320,11 +329,33 @@ class EliteSignalHandler(SignalHandler):
 
         probability = context.probability.probability
 
-        if probability < self.minimum_probability:
+        if probability >= self.minimum_probability:
+            context.metadata["elite_signal"] = True
+            context.signal.metadata["elite_signal"] = True
+            return
+
+        elite_skipped = (
+            f"Probability {probability}% is below elite "
+            f"threshold {self.minimum_probability}%."
+        )
+
+        context.metadata["elite_signal"] = False
+        context.metadata["elite_skipped"] = elite_skipped
+
+        context.signal.metadata["elite_signal"] = False
+        context.signal.metadata["elite_skipped"] = elite_skipped
+
+        research_skipped = (
+            context.metadata.get("research_skipped")
+            or context.signal.metadata.get("research_skipped")
+        )
+
+        if context.research_trade is None and research_skipped:
             context.reject(
-                f"Probability {probability}% is below elite "
-                f"threshold {self.minimum_probability}%."
+                str(research_skipped)
             )
             return
 
-        context.metadata["elite_signal"] = True
+        context.reject(
+            elite_skipped
+        )

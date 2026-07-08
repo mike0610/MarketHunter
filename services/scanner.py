@@ -8,6 +8,7 @@ Responsibilities:
 - Load candles for one configured timeframe.
 - Build a market snapshot.
 - Run all strategies for a symbol.
+- Resolve LONG/SHORT direction conflicts per symbol.
 - Send candidate signals through SignalPipeline.
 - Persist every candidate signal into scan journal when enabled.
 """
@@ -15,6 +16,9 @@ Responsibilities:
 from __future__ import annotations
 
 import asyncio
+
+from dataclasses import dataclass
+from dataclasses import field
 
 from loguru import logger
 
@@ -31,6 +35,19 @@ from services.worker_pool import WorkerPool
 from strategies.base_strategy import BaseStrategy
 
 
+@dataclass
+class SignalDecision:
+    """
+    Scanner-level decision for a raw strategy signal.
+    """
+
+    signal: Signal
+    rejected_reason: str | None = None
+    metadata: dict[str, object] = field(
+        default_factory=dict,
+    )
+
+
 class Scanner:
     """
     Scans markets using multiple strategies.
@@ -38,7 +55,16 @@ class Scanner:
     Each signal receives the Scanner timeframe before it enters
     SignalPipeline. Research trades therefore use the same interval
     that produced the original signal.
+
+    Direction conflict resolver:
+    - If one symbol has only LONG or only SHORT candidates, keep normal flow.
+    - If one symbol has both LONG and SHORT candidates, compare total scores.
+    - If the score gap is too small, reject both directions as mixed conflict.
+    - If one direction is clearly stronger, keep that direction and reject
+      the weaker direction before it reaches the pipeline.
     """
+
+    CONFLICT_MIN_SCORE_DELTA = 15.0
 
     def __init__(
         self,
@@ -118,21 +144,24 @@ class Scanner:
             )
             return []
 
-        signals: list[Signal] = []
+        raw_signals = await self._collect_raw_signals(
+            symbol=symbol,
+            snapshot=snapshot,
+        )
 
-        for strategy in self.strategies:
+        decisions = self._resolve_direction_conflicts(
+            raw_signals,
+        )
+
+        accepted_signals: list[Signal] = []
+
+        for decision in decisions:
             try:
-                signal = await strategy.analyze(snapshot)
-
-                if signal is None:
-                    continue
-
-                signal.market = symbol.market
-                signal.timeframe = self.timeframe
-
                 context = await self._process_signal(
-                    signal=signal,
+                    signal=decision.signal,
                     snapshot=snapshot,
+                    metadata=decision.metadata,
+                    rejected_reason=decision.rejected_reason,
                 )
 
                 self._record_signal_context(
@@ -141,24 +170,27 @@ class Scanner:
 
                 if not context.accepted:
                     logger.debug(
-                        "{} {} rejected by pipeline: {}",
-                        signal.symbol,
-                        signal.strategy,
+                        "{} {} {} rejected: {}",
+                        context.signal.symbol,
+                        context.signal.strategy,
+                        context.signal.direction,
                         context.rejected_reason,
                     )
                     continue
 
-                signals.append(context.signal)
+                accepted_signals.append(
+                    context.signal,
+                )
 
             except Exception as exc:
                 logger.warning(
-                    "{} -> strategy {} failed: {}",
+                    "{} -> signal {} failed during processing: {}",
                     symbol.symbol,
-                    strategy.__class__.__name__,
+                    decision.signal.strategy,
                     exc,
                 )
 
-        return signals
+        return accepted_signals
 
     async def scan_many(
         self,
@@ -202,19 +234,252 @@ class Scanner:
 
         return signals
 
+    async def _collect_raw_signals(
+        self,
+        symbol: MarketSymbol,
+        snapshot: object,
+    ) -> list[Signal]:
+        """
+        Run all strategies for one symbol before pipeline processing.
+        """
+
+        raw_signals: list[Signal] = []
+
+        for strategy in self.strategies:
+            try:
+                signal = await strategy.analyze(snapshot)
+
+                if signal is None:
+                    continue
+
+                signal.market = symbol.market
+                signal.timeframe = self.timeframe
+
+                raw_signals.append(
+                    signal,
+                )
+
+            except Exception as exc:
+                logger.warning(
+                    "{} -> strategy {} failed: {}",
+                    symbol.symbol,
+                    strategy.__class__.__name__,
+                    exc,
+                )
+
+        return raw_signals
+
+    def _resolve_direction_conflicts(
+        self,
+        signals: list[Signal],
+    ) -> list[SignalDecision]:
+        """
+        Resolve LONG/SHORT conflicts before pipeline processing.
+        """
+
+        if not signals:
+            return []
+
+        long_signals = [
+            signal
+            for signal in signals
+            if self._signal_direction(signal) == "LONG"
+        ]
+
+        short_signals = [
+            signal
+            for signal in signals
+            if self._signal_direction(signal) == "SHORT"
+        ]
+
+        if not long_signals or not short_signals:
+            return [
+                SignalDecision(
+                    signal=signal,
+                )
+                for signal in signals
+            ]
+
+        long_score = self._total_score(
+            long_signals,
+        )
+
+        short_score = self._total_score(
+            short_signals,
+        )
+
+        score_delta = abs(
+            long_score - short_score,
+        )
+
+        symbol = signals[0].symbol
+
+        base_metadata = {
+            "direction_conflict": True,
+            "conflict_symbol": symbol,
+            "conflict_long_score": long_score,
+            "conflict_short_score": short_score,
+            "conflict_score_delta": score_delta,
+            "conflict_min_score_delta": self.CONFLICT_MIN_SCORE_DELTA,
+            "conflict_long_signal_count": len(long_signals),
+            "conflict_short_signal_count": len(short_signals),
+        }
+
+        if score_delta < self.CONFLICT_MIN_SCORE_DELTA:
+            reason = (
+                "Direction conflict: mixed LONG/SHORT setup "
+                f"for {symbol}. LONG score {long_score:.1f}, "
+                f"SHORT score {short_score:.1f}, delta "
+                f"{score_delta:.1f} below required "
+                f"{self.CONFLICT_MIN_SCORE_DELTA:.1f}."
+            )
+
+            logger.info(
+                "{} direction conflict rejected as mixed | "
+                "LONG: {} | SHORT: {} | Delta: {}",
+                symbol,
+                long_score,
+                short_score,
+                score_delta,
+            )
+
+            return [
+                self._build_conflict_decision(
+                    signal=signal,
+                    rejected_reason=reason,
+                    metadata={
+                        **base_metadata,
+                        "conflict_resolution": "mixed_rejected",
+                        "conflict_winner_direction": "",
+                        "conflict_signal_outcome": "mixed_rejected",
+                    },
+                    reason_to_add=(
+                        "Direction conflict: mixed LONG/SHORT setup"
+                    ),
+                )
+                for signal in signals
+            ]
+
+        if long_score > short_score:
+            winner_direction = "LONG"
+            loser_direction = "SHORT"
+            winner_score = long_score
+            loser_score = short_score
+        else:
+            winner_direction = "SHORT"
+            loser_direction = "LONG"
+            winner_score = short_score
+            loser_score = long_score
+
+        logger.info(
+            "{} direction conflict resolved | Winner: {} | "
+            "LONG: {} | SHORT: {} | Delta: {}",
+            symbol,
+            winner_direction,
+            long_score,
+            short_score,
+            score_delta,
+        )
+
+        decisions: list[SignalDecision] = []
+
+        for signal in signals:
+            direction = self._signal_direction(
+                signal,
+            )
+
+            if direction == winner_direction:
+                decisions.append(
+                    self._build_conflict_decision(
+                        signal=signal,
+                        rejected_reason=None,
+                        metadata={
+                            **base_metadata,
+                            "conflict_resolution": "winner_selected",
+                            "conflict_winner_direction": winner_direction,
+                            "conflict_signal_outcome": "winner",
+                        },
+                        reason_to_add=(
+                            "Direction conflict resolved: "
+                            f"{winner_direction} stronger than "
+                            f"{loser_direction}"
+                        ),
+                    )
+                )
+                continue
+
+            if direction == loser_direction:
+                reason = (
+                    "Direction conflict: weaker direction rejected "
+                    f"for {symbol}. {winner_direction} score "
+                    f"{winner_score:.1f}, {loser_direction} score "
+                    f"{loser_score:.1f}."
+                )
+
+                decisions.append(
+                    self._build_conflict_decision(
+                        signal=signal,
+                        rejected_reason=reason,
+                        metadata={
+                            **base_metadata,
+                            "conflict_resolution": "loser_rejected",
+                            "conflict_winner_direction": winner_direction,
+                            "conflict_signal_outcome": "loser_rejected",
+                        },
+                        reason_to_add=(
+                            "Direction conflict: weaker direction rejected"
+                        ),
+                    )
+                )
+                continue
+
+            decisions.append(
+                SignalDecision(
+                    signal=signal,
+                    metadata={
+                        **base_metadata,
+                        "conflict_resolution": "ignored_unknown_direction",
+                        "conflict_winner_direction": winner_direction,
+                        "conflict_signal_outcome": "ignored_unknown_direction",
+                    },
+                )
+            )
+
+        return decisions
+
     async def _process_signal(
         self,
         signal: Signal,
         snapshot: object,
+        metadata: dict[str, object] | None = None,
+        rejected_reason: str | None = None,
     ) -> SignalContext:
         """
         Send a candidate signal through the optional pipeline.
+
+        Scanner-level rejected signals are recorded in the scan journal
+        but do not enter the pipeline, so they cannot create research trades.
         """
 
         context = SignalContext(
             signal=signal,
             snapshot=snapshot,
         )
+
+        if metadata:
+            context.metadata.update(
+                metadata,
+            )
+            self._attach_signal_metadata(
+                signal=signal,
+                metadata=metadata,
+            )
+
+        if rejected_reason is not None:
+            context.reject(
+                rejected_reason,
+            )
+            return context
 
         if self.pipeline is None:
             return context
@@ -248,3 +513,120 @@ class Scanner:
                 context.signal.strategy,
                 exc,
             )
+
+    def _build_conflict_decision(
+        self,
+        signal: Signal,
+        rejected_reason: str | None,
+        metadata: dict[str, object],
+        reason_to_add: str,
+    ) -> SignalDecision:
+        """
+        Build one conflict-aware scanner decision.
+        """
+
+        self._add_signal_reason(
+            signal=signal,
+            reason=reason_to_add,
+        )
+
+        return SignalDecision(
+            signal=signal,
+            rejected_reason=rejected_reason,
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def _signal_direction(
+        signal: Signal,
+    ) -> str:
+        """
+        Return normalized signal direction.
+        """
+
+        return str(
+            getattr(
+                signal,
+                "direction",
+                "",
+            )
+        ).strip().upper()
+
+    @staticmethod
+    def _total_score(
+        signals: list[Signal],
+    ) -> float:
+        """
+        Return total score for a list of signals.
+        """
+
+        return sum(
+            Scanner._signal_score(signal)
+            for signal in signals
+        )
+
+    @staticmethod
+    def _signal_score(
+        signal: Signal,
+    ) -> float:
+        """
+        Return numeric signal score.
+        """
+
+        try:
+            return float(
+                getattr(
+                    signal,
+                    "score",
+                    0.0,
+                )
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            return 0.0
+
+    @staticmethod
+    def _attach_signal_metadata(
+        signal: Signal,
+        metadata: dict[str, object],
+    ) -> None:
+        """
+        Attach scanner metadata to the signal if supported.
+        """
+
+        signal_metadata = getattr(
+            signal,
+            "metadata",
+            None,
+        )
+
+        if not isinstance(signal_metadata, dict):
+            return
+
+        signal_metadata.update(
+            metadata,
+        )
+
+    @staticmethod
+    def _add_signal_reason(
+        signal: Signal,
+        reason: str,
+    ) -> None:
+        """
+        Add a reason to a signal if supported.
+        """
+
+        add_reason = getattr(
+            signal,
+            "add_reason",
+            None,
+        )
+
+        if add_reason is None:
+            return
+
+        add_reason(
+            reason,
+        )

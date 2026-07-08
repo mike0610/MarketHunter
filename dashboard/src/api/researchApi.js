@@ -35,6 +35,39 @@ export async function getWorkerStatus() {
     return response.data;
 }
 
+export async function getLatestScan() {
+    const response = await api.get(
+        "/research/latest-scan",
+    );
+
+    return response.data;
+}
+
+export async function getScanRuns(params = {}) {
+    const response = await api.get(
+        "/research/scan-runs",
+        {
+            params: withoutEmptyValues(params),
+        },
+    );
+
+    return response.data;
+}
+
+export async function getScanSignals(
+    scanRunId,
+    params = {},
+) {
+    const response = await api.get(
+        `/research/scan-runs/${scanRunId}/signals`,
+        {
+            params: withoutEmptyValues(params),
+        },
+    );
+
+    return response.data;
+}
+
 export async function getResearchTrades(params = {}) {
     const response = await api.get(
         "/research/trades",

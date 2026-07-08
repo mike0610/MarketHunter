@@ -557,13 +557,31 @@ class Scanner:
         signals: list[Signal],
     ) -> float:
         """
-        Return total score for a list of signals.
+        Return directional conflict score.
+
+        Use the strongest setup as the base and add only a small
+        capped confluence bonus for extra same-direction signals.
+
+        This prevents several weak signals from overpowering one
+        stronger opposite-direction setup.
         """
 
-        return sum(
+        scores = [
             Scanner._signal_score(signal)
             for signal in signals
+        ]
+
+        if not scores:
+            return 0.0
+
+        strongest_score = max(scores)
+
+        confluence_bonus = min(
+            max(len(scores) - 1, 0) * 5.0,
+            15.0,
         )
+
+        return strongest_score + confluence_bonus
 
     @staticmethod
     def _signal_score(

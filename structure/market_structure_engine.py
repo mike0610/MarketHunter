@@ -62,15 +62,21 @@ class MarketStructureEngine:
 
         bos = False
 
-        if state.last_high is not None:
+        if state.trend == "bullish":
 
-            if last_close > state.last_high.price:
+            if (
+                state.last_high is not None
+                and last_close > state.last_high.price
+            ):
 
                 bos = True
 
-        if state.last_low is not None:
+        elif state.trend == "bearish":
 
-            if last_close < state.last_low.price:
+            if (
+                state.last_low is not None
+                and last_close < state.last_low.price
+            ):
 
                 bos = True
 

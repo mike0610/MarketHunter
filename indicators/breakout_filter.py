@@ -23,6 +23,15 @@ class BreakoutFilter:
 
         return last.close > snapshot.highest20
 
+    def bearish(
+        self,
+        snapshot: MarketSnapshot,
+    ) -> bool:
+
+        last = snapshot.candles[-1]
+
+        return last.close < snapshot.lowest20
+
     def breakout_percent(
         self,
         snapshot: MarketSnapshot,

@@ -22,6 +22,10 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from indicators.divergence_detector import (
+    DivergenceSignal,
+    RSIDivergenceDetector,
+)
 from models.market_symbol import MarketSymbol
 from research.models.trade import ResearchTrade
 from research.models.trade_status import TradeStatus
@@ -448,6 +452,51 @@ class SupportResistanceZoneResponse(BaseModel):
         )
 
 
+class SetupDivergenceResponse(BaseModel):
+    """
+    Serializable RSI divergence confirmation.
+    """
+
+    kind: str
+    direction: str
+    oscillator: str
+
+    first_index: int
+    second_index: int
+    bars_between: int
+
+    price_first: float
+    price_second: float
+
+    oscillator_first: float
+    oscillator_second: float
+
+    strength: float
+
+    @classmethod
+    def from_signal(
+        cls,
+        signal: DivergenceSignal,
+    ) -> "SetupDivergenceResponse":
+        """
+        Convert divergence signal into API response.
+        """
+
+        return cls(
+            kind=signal.kind,
+            direction=signal.direction,
+            oscillator=signal.oscillator,
+            first_index=signal.first_index,
+            second_index=signal.second_index,
+            bars_between=signal.bars_between,
+            price_first=signal.price_first,
+            price_second=signal.price_second,
+            oscillator_first=signal.oscillator_first,
+            oscillator_second=signal.oscillator_second,
+            strength=signal.strength,
+        )
+
+
 class TradeSetupResponse(BaseModel):
     """
     Trade setup analysis for chart visualization.
@@ -473,6 +522,10 @@ class TradeSetupResponse(BaseModel):
 
     zones: list[SupportResistanceZoneResponse]
     blocking_zones: list[SupportResistanceZoneResponse]
+
+    divergences: list[SetupDivergenceResponse]
+    latest_bullish_divergence: SetupDivergenceResponse | None
+    latest_bearish_divergence: SetupDivergenceResponse | None
 
 
 def get_repository() -> Iterator[ResearchRepository]:
@@ -895,6 +948,36 @@ async def get_research_trade_setup(
             detail=str(exc),
         ) from exc
 
+    divergence_detector = RSIDivergenceDetector(
+        rsi_period=14,
+        pivot_window=2,
+        min_bars_between=3,
+        max_bars_between=80,
+        min_rsi_delta=2.0,
+    )
+
+    divergences = divergence_detector.detect(
+        candles,
+    )
+
+    latest_bullish_divergence = next(
+        (
+            signal
+            for signal in reversed(divergences)
+            if signal.direction == "LONG"
+        ),
+        None,
+    )
+
+    latest_bearish_divergence = next(
+        (
+            signal
+            for signal in reversed(divergences)
+            if signal.direction == "SHORT"
+        ),
+        None,
+    )
+
     return TradeSetupResponse(
         trade_id=trade.id,
         symbol=trade.symbol,
@@ -917,6 +1000,24 @@ async def get_research_trade_setup(
             SupportResistanceZoneResponse.from_zone(zone)
             for zone in assessment.blocking_zones
         ],
+        divergences=[
+            SetupDivergenceResponse.from_signal(signal)
+            for signal in divergences
+        ],
+        latest_bullish_divergence=(
+            None
+            if latest_bullish_divergence is None
+            else SetupDivergenceResponse.from_signal(
+                latest_bullish_divergence,
+            )
+        ),
+        latest_bearish_divergence=(
+            None
+            if latest_bearish_divergence is None
+            else SetupDivergenceResponse.from_signal(
+                latest_bearish_divergence,
+            )
+        ),
     )
 
 

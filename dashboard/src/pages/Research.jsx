@@ -299,6 +299,172 @@ function normalizeNumberKey(value) {
     return numeric.toFixed(8);
 }
 
+function parseMetadata(value) {
+    if (!value) {
+        return {};
+    }
+
+    if (
+        typeof value === "object"
+        && !Array.isArray(value)
+    ) {
+        return value;
+    }
+
+    if (typeof value !== "string") {
+        return {};
+    }
+
+    try {
+        const parsed = JSON.parse(value);
+
+        if (
+            parsed
+            && typeof parsed === "object"
+            && !Array.isArray(parsed)
+        ) {
+            return parsed;
+        }
+    } catch {
+        return {};
+    }
+
+    return {};
+}
+
+
+function normalizeConflictInfo(metadata) {
+    const source = parseMetadata(metadata);
+
+    if (!source?.direction_conflict) {
+        return {
+            active: false,
+            outcome: "",
+            resolution: "",
+            winnerDirection: "",
+            longScore: null,
+            shortScore: null,
+            scoreDelta: null,
+            minScoreDelta: null,
+            longSignalCount: null,
+            shortSignalCount: null,
+        };
+    }
+
+    return {
+        active: true,
+        outcome: String(
+            source.conflict_signal_outcome || "",
+        ),
+        resolution: String(
+            source.conflict_resolution || "",
+        ),
+        winnerDirection: String(
+            source.conflict_winner_direction || "",
+        ),
+        longScore: source.conflict_long_score ?? null,
+        shortScore: source.conflict_short_score ?? null,
+        scoreDelta: source.conflict_score_delta ?? null,
+        minScoreDelta: source.conflict_min_score_delta ?? null,
+        longSignalCount: source.conflict_long_signal_count ?? null,
+        shortSignalCount: source.conflict_short_signal_count ?? null,
+    };
+}
+
+
+function conflictOutcomeLabel(value) {
+    switch (String(value || "")) {
+        case "winner":
+            return "Переможець напряму";
+        case "loser_rejected":
+            return "Слабший напрям";
+        case "mixed_rejected":
+            return "Змішаний конфлікт";
+        default:
+            return "Conflict resolver";
+    }
+}
+
+
+function conflictResolutionLabel(value) {
+    switch (String(value || "")) {
+        case "winner_selected":
+            return "Обрано сильніший напрям";
+        case "loser_rejected":
+            return "Слабший напрям відхилено";
+        case "mixed_rejected":
+            return "LONG і SHORT рівні — setup пропущено";
+        default:
+            return "Конфлікт напрямів";
+    }
+}
+
+
+function conflictOutcomeColor(value) {
+    switch (String(value || "")) {
+        case "winner":
+            return "success";
+        case "loser_rejected":
+            return "error";
+        case "mixed_rejected":
+            return "warning";
+        default:
+            return "info";
+    }
+}
+
+
+function rejectionCategory(value) {
+    const reason = String(value || "").toLowerCase();
+
+    if (reason.includes("direction conflict")) {
+        return "conflict";
+    }
+
+    if (
+        reason.includes("probability")
+        && reason.includes("threshold")
+    ) {
+        return "probability";
+    }
+
+    if (reason.includes("risk")) {
+        return "risk";
+    }
+
+    if (
+        reason.includes("duplicate")
+        || reason.includes("already")
+    ) {
+        return "duplicate";
+    }
+
+    if (reason) {
+        return "other";
+    }
+
+    return "";
+}
+
+
+function rejectionCategoryLabel(value) {
+    switch (String(value || "")) {
+        case "conflict":
+            return "Conflict resolver";
+        case "probability":
+            return "Probability threshold";
+        case "risk":
+            return "Risk filter";
+        case "duplicate":
+            return "Duplicate / already tracked";
+        case "other":
+            return "Інша причина";
+        default:
+            return "";
+    }
+}
+
+
 
 function buildGroupKey(item) {
     return [
@@ -314,7 +480,10 @@ function buildGroupKey(item) {
 
 
 function normalizeJournalEntry(raw, index = 0) {
-    const metadata = raw?.metadata || raw?.signal?.metadata || {};
+    const metadata = parseMetadata(
+        raw?.metadata || raw?.signal?.metadata || {},
+    );
+
     const risk = raw?.risk || metadata?.risk || {};
 
     const entry = (
@@ -358,6 +527,9 @@ function normalizeJournalEntry(raw, index = 0) {
         || ""
     );
 
+    const conflict = normalizeConflictInfo(metadata);
+    const rejectCategory = rejectionCategory(reason);
+
     return {
         id: raw?.id || raw?.signal_id || `${raw?.symbol || "signal"}-${index}`,
         symbol: raw?.symbol || raw?.signal?.symbol || "—",
@@ -373,6 +545,9 @@ function normalizeJournalEntry(raw, index = 0) {
         takeProfit,
         rr,
         reason,
+        metadata,
+        conflict,
+        rejectCategory,
         status: normalizeSignalStatus(
             raw?.status
             ?? raw?.signal_status
@@ -386,7 +561,6 @@ function normalizeJournalEntry(raw, index = 0) {
         ),
     };
 }
-
 
 function getLatestScanRun(data) {
     return (
@@ -587,6 +761,10 @@ function WorkerStatusPanel({
 function ScanGroupCard({
     item,
 }) {
+    const conflictItems = safeArray(item.conflictItems);
+    const rejectCategories = safeArray(item.rejectCategories);
+    const firstConflict = conflictItems[0] || null;
+
     return (
         <Paper
             variant="outlined"
@@ -640,6 +818,18 @@ function ScanGroupCard({
                         color={signalStatusColor(item.status)}
                         label={signalStatusLabel(item.status)}
                     />
+
+                    {firstConflict && (
+                        <Chip
+                            size="small"
+                            color={conflictOutcomeColor(
+                                firstConflict.outcome,
+                            )}
+                            label={conflictOutcomeLabel(
+                                firstConflict.outcome,
+                            )}
+                        />
+                    )}
 
                     {item.duplicates > 1 && (
                         <Chip
@@ -719,6 +909,144 @@ function ScanGroupCard({
                 />
             </Box>
 
+            {conflictItems.length > 0 && (
+                <Paper
+                    variant="outlined"
+                    sx={{
+                        mt: 1.5,
+                        p: 1.5,
+                        borderRadius: 2,
+                        bgcolor: "rgba(255,255,255,0.02)",
+                    }}
+                >
+                    <Stack
+                        direction="row"
+                        spacing={1}
+                        useFlexGap
+                        flexWrap="wrap"
+                        alignItems="center"
+                        sx={{
+                            mb: 1,
+                        }}
+                    >
+                        <Typography
+                            variant="subtitle2"
+                            fontWeight={700}
+                        >
+                            Conflict resolver
+                        </Typography>
+
+                        {firstConflict && (
+                            <Chip
+                                size="small"
+                                color={conflictOutcomeColor(
+                                    firstConflict.outcome,
+                                )}
+                                label={conflictResolutionLabel(
+                                    firstConflict.resolution,
+                                )}
+                            />
+                        )}
+
+                        {firstConflict?.winnerDirection && (
+                            <Chip
+                                size="small"
+                                variant="outlined"
+                                label={`Winner: ${firstConflict.winnerDirection}`}
+                            />
+                        )}
+                    </Stack>
+
+                    {firstConflict && (
+                        <Box
+                            sx={{
+                                display: "grid",
+                                gap: 1.5,
+                                gridTemplateColumns: {
+                                    xs: "repeat(2, minmax(0, 1fr))",
+                                    md: "repeat(4, minmax(0, 1fr))",
+                                },
+                            }}
+                        >
+                            <InfoStat
+                                label="LONG score"
+                                value={formatNumber(
+                                    firstConflict.longScore,
+                                    1,
+                                )}
+                            />
+
+                            <InfoStat
+                                label="SHORT score"
+                                value={formatNumber(
+                                    firstConflict.shortScore,
+                                    1,
+                                )}
+                            />
+
+                            <InfoStat
+                                label="Delta"
+                                value={formatNumber(
+                                    firstConflict.scoreDelta,
+                                    1,
+                                )}
+                            />
+
+                            <InfoStat
+                                label="Min delta"
+                                value={formatNumber(
+                                    firstConflict.minScoreDelta,
+                                    1,
+                                )}
+                            />
+                        </Box>
+                    )}
+
+                    <Stack
+                        direction="row"
+                        spacing={1}
+                        useFlexGap
+                        flexWrap="wrap"
+                        sx={{
+                            mt: 1,
+                        }}
+                    >
+                        {conflictItems.map((conflict, index) => (
+                            <Chip
+                                key={`${item.key}-conflict-${index}`}
+                                size="small"
+                                variant="outlined"
+                                color={conflictOutcomeColor(
+                                    conflict.outcome,
+                                )}
+                                label={`${conflictOutcomeLabel(conflict.outcome)}: ${item.items[index]?.strategy || "signal"}`}
+                            />
+                        ))}
+                    </Stack>
+                </Paper>
+            )}
+
+            {rejectCategories.length > 0 && (
+                <Stack
+                    direction="row"
+                    spacing={1}
+                    useFlexGap
+                    flexWrap="wrap"
+                    sx={{
+                        mt: 1.5,
+                    }}
+                >
+                    {rejectCategories.map((category) => (
+                        <Chip
+                            key={`${item.key}-reject-${category}`}
+                            size="small"
+                            variant="outlined"
+                            label={rejectionCategoryLabel(category)}
+                        />
+                    ))}
+                </Stack>
+            )}
+
             {item.reason && (
                 <Typography
                     variant="body2"
@@ -734,7 +1062,6 @@ function ScanGroupCard({
         </Paper>
     );
 }
-
 
 function TradeCard({
     trade,
@@ -1032,6 +1359,8 @@ export default function Research() {
                             strategies: [],
                             duplicates: 0,
                             items: [],
+                            conflictItems: [],
+                            rejectCategories: [],
                         },
                     );
                 }
@@ -1050,6 +1379,21 @@ export default function Research() {
 
                 if (!group.reason && item.reason) {
                     group.reason = item.reason;
+                }
+
+                if (item.conflict?.active) {
+                    group.conflictItems.push(
+                        item.conflict,
+                    );
+                }
+
+                if (
+                    item.rejectCategory
+                    && !group.rejectCategories.includes(item.rejectCategory)
+                ) {
+                    group.rejectCategories.push(
+                        item.rejectCategory,
+                    );
                 }
 
                 if (
@@ -1107,6 +1451,51 @@ export default function Research() {
     const scanShortCount = useMemo(
         () => normalizedScanEntries.filter(
             (item) => item.direction === "SHORT",
+        ).length,
+        [
+            normalizedScanEntries,
+        ],
+    );
+
+    const scanConflictCount = useMemo(
+        () => normalizedScanEntries.filter(
+            (item) => item.conflict?.active,
+        ).length,
+        [
+            normalizedScanEntries,
+        ],
+    );
+
+    const scanConflictMixedCount = useMemo(
+        () => normalizedScanEntries.filter(
+            (item) => item.conflict?.outcome === "mixed_rejected",
+        ).length,
+        [
+            normalizedScanEntries,
+        ],
+    );
+
+    const scanConflictWinnerCount = useMemo(
+        () => normalizedScanEntries.filter(
+            (item) => item.conflict?.outcome === "winner",
+        ).length,
+        [
+            normalizedScanEntries,
+        ],
+    );
+
+    const scanConflictLoserCount = useMemo(
+        () => normalizedScanEntries.filter(
+            (item) => item.conflict?.outcome === "loser_rejected",
+        ).length,
+        [
+            normalizedScanEntries,
+        ],
+    );
+
+    const scanProbabilityRejectedCount = useMemo(
+        () => normalizedScanEntries.filter(
+            (item) => item.rejectCategory === "probability",
         ).length,
         [
             normalizedScanEntries,
@@ -1571,6 +1960,44 @@ export default function Research() {
                         value={
                             `${latestScanEntries.length}/${latestScanEntriesTotal}`
                         }
+                    />
+                </Box>
+
+                <Box
+                    sx={{
+                        display: "grid",
+                        gap: 2,
+                        gridTemplateColumns: {
+                            xs: "1fr",
+                            sm: "repeat(2, minmax(0, 1fr))",
+                            lg: "repeat(5, minmax(0, 1fr))",
+                        },
+                        mb: 2,
+                    }}
+                >
+                    <InfoStat
+                        label="Conflict записів"
+                        value={formatNumber(scanConflictCount, 0)}
+                    />
+
+                    <InfoStat
+                        label="Winner"
+                        value={formatNumber(scanConflictWinnerCount, 0)}
+                    />
+
+                    <InfoStat
+                        label="Loser rejected"
+                        value={formatNumber(scanConflictLoserCount, 0)}
+                    />
+
+                    <InfoStat
+                        label="Mixed conflict"
+                        value={formatNumber(scanConflictMixedCount, 0)}
+                    />
+
+                    <InfoStat
+                        label="Probability rejected"
+                        value={formatNumber(scanProbabilityRejectedCount, 0)}
                     />
                 </Box>
 

@@ -1258,6 +1258,7 @@ export default function Research() {
     const [scanStatusFilter, setScanStatusFilter] = useState("all");
     const [scanDirectionFilter, setScanDirectionFilter] = useState("all");
     const [scanRejectionFilter, setScanRejectionFilter] = useState("all");
+    const [scanConflictFilter, setScanConflictFilter] = useState("all");
 
     const [dialogOpen, setDialogOpen] = useState(false);
     const [dialogLoading, setDialogLoading] = useState(false);
@@ -1489,12 +1490,20 @@ export default function Research() {
                 )
             );
 
-            return directionMatches && rejectionMatches;
+            const conflictMatches = (
+                scanConflictFilter === "all"
+                || safeArray(item.conflictItems).some(
+                    (conflict) => conflict?.outcome === scanConflictFilter,
+                )
+            );
+
+            return directionMatches && rejectionMatches && conflictMatches;
         }),
         [
             groupedScanEntries,
             scanDirectionFilter,
             scanRejectionFilter,
+            scanConflictFilter,
         ],
     );
 
@@ -2137,21 +2146,44 @@ export default function Research() {
                     <InfoStat
                         label="Conflict записів"
                         value={formatNumber(scanConflictCount, 0)}
+                        onClick={() => {
+                            setScanRejectionFilter("conflict");
+                            setScanConflictFilter("all");
+                        }}
+                        active={
+                            scanRejectionFilter === "conflict"
+                            && scanConflictFilter === "all"
+                        }
                     />
 
                     <InfoStat
                         label="Winner"
                         value={formatNumber(scanConflictWinnerCount, 0)}
+                        onClick={() => {
+                            setScanRejectionFilter("all");
+                            setScanConflictFilter("winner");
+                        }}
+                        active={scanConflictFilter === "winner"}
                     />
 
                     <InfoStat
                         label="Loser rejected"
                         value={formatNumber(scanConflictLoserCount, 0)}
+                        onClick={() => {
+                            setScanRejectionFilter("all");
+                            setScanConflictFilter("loser_rejected");
+                        }}
+                        active={scanConflictFilter === "loser_rejected"}
                     />
 
                     <InfoStat
                         label="Mixed conflict"
                         value={formatNumber(scanConflictMixedCount, 0)}
+                        onClick={() => {
+                            setScanRejectionFilter("all");
+                            setScanConflictFilter("mixed_rejected");
+                        }}
+                        active={scanConflictFilter === "mixed_rejected"}
                     />
                 </Box>
 

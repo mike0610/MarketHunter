@@ -1,4 +1,11 @@
 import {
+    useCallback,
+    useEffect,
+    useMemo,
+    useState,
+} from "react";
+
+import {
     Alert,
     Box,
     Button,
@@ -11,199 +18,36 @@ import {
     Divider,
     FormControl,
     GlobalStyles,
-    InputLabel,
     MenuItem,
     Paper,
     Select,
     Stack,
-    TextField,
     Typography,
 } from "@mui/material";
 
 import RefreshIcon from "@mui/icons-material/Refresh";
-import VisibilityIcon from "@mui/icons-material/Visibility";
+import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
+import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
 
 import {
-    useCallback,
-    useEffect,
-    useState,
-} from "react";
-
-import {
+    extractApiError,
     getLatestScan,
     getResearchStatistics,
-    getResearchTrade,
     getResearchTrades,
     getScanSignals,
     getWorkerStatus,
+    loadResearchTradeDetails,
 } from "../api/researchApi";
 
 import SetupVisualization from "../components/SetupVisualization";
 
 
-const STATUS_OPTIONS = [
-    {
-        value: "",
-        label: "Усі статуси",
-    },
-    {
-        value: "waiting_entry",
-        label: "Очікує входу",
-    },
-    {
-        value: "active",
-        label: "Активна",
-    },
-    {
-        value: "closed",
-        label: "Закрита",
-    },
-    {
-        value: "expired",
-        label: "Час вийшов",
-    },
-    {
-        value: "candidate",
-        label: "Кандидат",
-    },
-];
-
-const SIGNAL_STATUS_OPTIONS = [
-    {
-        value: "",
-        label: "Усі сигнали",
-    },
-    {
-        value: "research",
-        label: "Research",
-    },
-    {
-        value: "elite",
-        label: "Elite",
-    },
-    {
-        value: "rejected",
-        label: "Rejected",
-    },
-];
-
-
-function getStatusLabel(status) {
-    const labels = {
-        candidate: "Кандидат",
-        waiting_entry: "Очікує входу",
-        active: "Активна",
-        closed: "Закрита",
-        expired: "Час вийшов",
-    };
-
-    return labels[status] || status;
+function safeArray(value) {
+    return Array.isArray(value) ? value : [];
 }
 
 
-function getStatusColor(status) {
-    const colors = {
-        candidate: "default",
-        waiting_entry: "warning",
-        active: "info",
-        closed: "success",
-        expired: "default",
-    };
-
-    return colors[status] || "default";
-}
-
-
-function getSignalStatusLabel(status) {
-    const labels = {
-        rejected: "Відхилено",
-        research: "Research",
-        elite: "Elite",
-    };
-
-    return labels[status] || status || "—";
-}
-
-
-function getSignalStatusColor(status) {
-    const colors = {
-        rejected: "default",
-        research: "warning",
-        elite: "success",
-    };
-
-    return colors[status] || "default";
-}
-
-
-function getWorkerStateLabel(state) {
-    const labels = {
-        not_started: "Не запускався",
-        starting: "Запускається",
-        running: "Виконує цикл",
-        waiting: "Очікує наступного циклу",
-        error: "Помилка",
-        stopped: "Зупинений",
-    };
-
-    return labels[state] || state || "—";
-}
-
-
-function getWorkerStateColor(state) {
-    const colors = {
-        not_started: "default",
-        starting: "info",
-        running: "info",
-        waiting: "success",
-        error: "error",
-        stopped: "warning",
-    };
-
-    return colors[state] || "default";
-}
-
-
-function formatPrice(value) {
-    if (value === null || value === undefined) {
-        return "—";
-    }
-
-    return new Intl.NumberFormat(
-        "uk-UA",
-        {
-            minimumFractionDigits: 0,
-            maximumFractionDigits: 8,
-        },
-    ).format(value);
-}
-
-
-function formatMoney(value) {
-    if (value === null || value === undefined) {
-        return "—";
-    }
-
-    return new Intl.NumberFormat(
-        "uk-UA",
-        {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-        },
-    ).format(value);
-}
-
-
-function formatPercent(value) {
-    if (value === null || value === undefined) {
-        return "—";
-    }
-
-    return `${Number(value).toFixed(2)}%`;
-}
-
-
-function formatDate(value) {
+function formatDateTime(value) {
     if (!value) {
         return "—";
     }
@@ -211,79 +55,379 @@ function formatDate(value) {
     const date = new Date(value);
 
     if (Number.isNaN(date.getTime())) {
-        return value;
+        return "—";
     }
 
     return date.toLocaleString("uk-UA");
 }
 
 
-function getProfitColor(value) {
-    if (value > 0) {
-        return "success.main";
+function formatNumber(value, digits = 2) {
+    if (value === null || value === undefined || value === "") {
+        return "—";
     }
 
-    if (value < 0) {
-        return "error.main";
+    const numeric = Number(value);
+
+    if (!Number.isFinite(numeric)) {
+        return "—";
     }
 
-    return "text.primary";
-}
-
-
-function getSignalReason(signal) {
-    if (signal.status === "elite") {
-        return "Пройшов elite-фільтр";
-    }
-
-    if (signal.status === "research") {
-        return (
-            signal.rejected_reason
-            || "Створено virtual trade"
-        );
-    }
-
-    return (
-        signal.research_skipped
-        || signal.rejected_reason
-        || "—"
+    return numeric.toLocaleString(
+        "uk-UA",
+        {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: digits,
+        },
     );
 }
 
 
-function StatisticCard({
+function formatPrice(value) {
+    if (value === null || value === undefined || value === "") {
+        return "—";
+    }
+
+    const numeric = Number(value);
+
+    if (!Number.isFinite(numeric)) {
+        return "—";
+    }
+
+    return numeric.toLocaleString(
+        "uk-UA",
+        {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 8,
+        },
+    );
+}
+
+
+function normalizeWorkerState(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+
+    if (normalized === "running") {
+        return "running";
+    }
+
+    if (normalized === "waiting") {
+        return "waiting";
+    }
+
+    if (normalized === "failed" || normalized === "error") {
+        return "failed";
+    }
+
+    if (normalized === "stopped") {
+        return "stopped";
+    }
+
+    return "unknown";
+}
+
+
+function workerStateLabel(value) {
+    switch (normalizeWorkerState(value)) {
+        case "running":
+            return "Працює";
+        case "waiting":
+            return "Очікує наступного циклу";
+        case "failed":
+            return "Помилка";
+        case "stopped":
+            return "Зупинений";
+        default:
+            return "Невідомо";
+    }
+}
+
+
+function workerStateColor(value) {
+    switch (normalizeWorkerState(value)) {
+        case "running":
+            return "info";
+        case "waiting":
+            return "success";
+        case "failed":
+            return "error";
+        case "stopped":
+            return "warning";
+        default:
+            return "default";
+    }
+}
+
+
+function normalizeTradeStatus(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+
+    if (normalized === "waiting_entry") {
+        return "waiting_entry";
+    }
+
+    if (normalized === "active") {
+        return "active";
+    }
+
+    if (normalized === "closed") {
+        return "closed";
+    }
+
+    if (normalized === "expired") {
+        return "expired";
+    }
+
+    return "unknown";
+}
+
+
+function tradeStatusLabel(value) {
+    switch (normalizeTradeStatus(value)) {
+        case "waiting_entry":
+            return "Очікує входу";
+        case "active":
+            return "Активна";
+        case "closed":
+            return "Закрита";
+        case "expired":
+            return "Протермінована";
+        default:
+            return "Невідомо";
+    }
+}
+
+
+function tradeStatusColor(value) {
+    switch (normalizeTradeStatus(value)) {
+        case "waiting_entry":
+            return "warning";
+        case "active":
+            return "info";
+        case "closed":
+            return "success";
+        case "expired":
+            return "default";
+        default:
+            return "default";
+    }
+}
+
+
+function normalizeSignalStatus(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+
+    if (normalized === "accepted_research") {
+        return "research";
+    }
+
+    if (normalized === "accepted_elite") {
+        return "elite";
+    }
+
+    if (
+        normalized === "rejected"
+        || normalized === "research"
+        || normalized === "elite"
+        || normalized === "candidate"
+        || normalized === "accepted"
+    ) {
+        return normalized;
+    }
+
+    return "candidate";
+}
+
+
+function signalStatusLabel(value) {
+    switch (normalizeSignalStatus(value)) {
+        case "rejected":
+            return "Відхилено";
+        case "research":
+            return "Research";
+        case "elite":
+            return "Elite";
+        case "accepted":
+            return "Прийнято";
+        case "candidate":
+        default:
+            return "Кандидат";
+    }
+}
+
+
+function signalStatusColor(value) {
+    switch (normalizeSignalStatus(value)) {
+        case "rejected":
+            return "default";
+        case "research":
+            return "info";
+        case "elite":
+            return "success";
+        case "accepted":
+            return "primary";
+        case "candidate":
+        default:
+            return "warning";
+    }
+}
+
+
+function normalizeDirection(value) {
+    return String(value || "LONG").trim().toUpperCase();
+}
+
+
+function directionColor(value) {
+    return normalizeDirection(value) === "SHORT"
+        ? "error"
+        : "success";
+}
+
+
+function normalizeNumberKey(value) {
+    if (value === null || value === undefined || value === "") {
+        return "none";
+    }
+
+    const numeric = Number(value);
+
+    if (!Number.isFinite(numeric)) {
+        return String(value);
+    }
+
+    return numeric.toFixed(8);
+}
+
+
+function buildGroupKey(item) {
+    return [
+        item.symbol,
+        item.direction,
+        item.timeframe,
+        normalizeNumberKey(item.entry),
+        normalizeNumberKey(item.stopLoss),
+        normalizeNumberKey(item.takeProfit),
+        normalizeNumberKey(item.rr),
+    ].join("|");
+}
+
+
+function normalizeJournalEntry(raw, index = 0) {
+    const metadata = raw?.metadata || raw?.signal?.metadata || {};
+    const risk = raw?.risk || metadata?.risk || {};
+
+    const entry = (
+        raw?.entry
+        ?? raw?.entry_price
+        ?? risk?.entry
+        ?? metadata?.entry
+        ?? null
+    );
+
+    const stopLoss = (
+        raw?.stop_loss
+        ?? raw?.sl
+        ?? risk?.stop_loss
+        ?? metadata?.stop_loss
+        ?? null
+    );
+
+    const takeProfit = (
+        raw?.take_profit
+        ?? raw?.tp
+        ?? risk?.take_profit
+        ?? metadata?.take_profit
+        ?? null
+    );
+
+    const rr = (
+        raw?.rr
+        ?? raw?.risk_reward
+        ?? risk?.risk_reward
+        ?? metadata?.risk_reward
+        ?? null
+    );
+
+    const reason = (
+        raw?.research_skipped
+        || raw?.rejected_reason
+        || raw?.reason
+        || raw?.message
+        || raw?.decision_reason
+        || ""
+    );
+
+    return {
+        id: raw?.id || raw?.signal_id || `${raw?.symbol || "signal"}-${index}`,
+        symbol: raw?.symbol || raw?.signal?.symbol || "—",
+        strategy: raw?.strategy || raw?.signal?.strategy || "—",
+        direction: normalizeDirection(
+            raw?.direction || raw?.signal?.direction,
+        ),
+        timeframe: raw?.timeframe || raw?.signal?.timeframe || "—",
+        probability: raw?.probability ?? metadata?.probability ?? null,
+        score: raw?.score ?? raw?.signal?.score ?? null,
+        entry,
+        stopLoss,
+        takeProfit,
+        rr,
+        reason,
+        status: normalizeSignalStatus(
+            raw?.status
+            ?? raw?.signal_status
+            ?? raw?.journal_status,
+        ),
+        createdAt: (
+            raw?.created_at
+            || raw?.started_at
+            || raw?.timestamp
+            || null
+        ),
+    };
+}
+
+
+function getLatestScanRun(data) {
+    return (
+        data?.scan_run
+        || data?.latest_scan
+        || data?.run
+        || null
+    );
+}
+
+
+function MetricCard({
     label,
     value,
-    color = "text.primary",
 }) {
     return (
         <Paper
-            elevation={0}
+            variant="outlined"
             sx={{
                 p: 2,
-                minWidth: {
-                    xs: "100%",
-                    sm: 170,
-                },
-                flex: "1 1 170px",
-                border: 1,
-                borderColor: "divider",
+                borderRadius: 3,
+                minWidth: 0,
+                bgcolor: "rgba(255,255,255,0.02)",
             }}
         >
             <Typography
                 variant="body2"
                 color="text.secondary"
+                sx={{
+                    wordBreak: "break-word",
+                }}
             >
                 {label}
             </Typography>
 
             <Typography
                 variant="h5"
-                fontWeight="bold"
-                color={color}
+                fontWeight={700}
                 sx={{
-                    mt: 0.5,
-                    overflowWrap: "anywhere",
+                    mt: 1,
+                    wordBreak: "break-word",
                 }}
             >
                 {value}
@@ -293,90 +437,38 @@ function StatisticCard({
 }
 
 
-function MetricItem({
+function InfoStat({
     label,
     value,
 }) {
     return (
         <Box
             sx={{
-                minWidth: {
-                    xs: "45%",
-                    sm: 135,
-                },
-                flex: "1 1 135px",
+                minWidth: 0,
             }}
         >
             <Typography
                 variant="body2"
                 color="text.secondary"
+                sx={{
+                    wordBreak: "break-word",
+                }}
             >
                 {label}
             </Typography>
 
             <Typography
                 variant="body1"
-                fontWeight="medium"
+                fontWeight={600}
                 sx={{
                     mt: 0.5,
-                    overflowWrap: "anywhere",
+                    wordBreak: "break-word",
+                    whiteSpace: "normal",
                 }}
             >
                 {value}
             </Typography>
         </Box>
-    );
-}
-
-
-function DetailRow({
-    label,
-    value,
-}) {
-    return (
-        <Box
-            sx={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: 3,
-                py: 0.75,
-            }}
-        >
-            <Typography
-                variant="body2"
-                color="text.secondary"
-            >
-                {label}
-            </Typography>
-
-            <Typography
-                variant="body2"
-                textAlign="right"
-                sx={{
-                    overflowWrap: "anywhere",
-                }}
-            >
-                {value}
-            </Typography>
-        </Box>
-    );
-}
-
-
-function LevelRow({
-    label,
-    value,
-}) {
-    return (
-        <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{
-                overflowWrap: "anywhere",
-            }}
-        >
-            <strong>{label}:</strong> {value}
-        </Typography>
     );
 }
 
@@ -385,121 +477,105 @@ function WorkerStatusPanel({
     workerStatus,
     statistics,
 }) {
-    const state = workerStatus?.state || "not_started";
-
     return (
         <Paper
-            elevation={0}
+            variant="outlined"
             sx={{
-                p: 2,
+                p: 3,
+                borderRadius: 4,
                 mb: 3,
-                border: 1,
-                borderColor: "divider",
-                overflow: "hidden",
+                minWidth: 0,
             }}
         >
             <Stack
                 direction={{
                     xs: "column",
-                    md: "row",
+                    lg: "row",
                 }}
                 justifyContent="space-between"
                 alignItems={{
                     xs: "flex-start",
-                    md: "center",
+                    lg: "center",
                 }}
-                spacing={2}
+                spacing={1.5}
                 sx={{
                     mb: 2,
                 }}
             >
-                <Box>
+                <Box sx={{ minWidth: 0 }}>
                     <Typography
-                        variant="h6"
-                        fontWeight="bold"
+                        variant="h4"
+                        fontWeight={700}
                     >
                         Статус воркера
                     </Typography>
 
                     <Typography
-                        variant="body2"
-                        color="text.secondary"
+                        variant="h6"
                         sx={{
-                            mt: 0.5,
+                            mt: 1,
                         }}
                     >
-                        Цикл №{workerStatus?.cycle_number ?? 0}
+                        Цикл №{workerStatus?.cycle_number ?? "—"}
                     </Typography>
                 </Box>
 
                 <Chip
-                    label={getWorkerStateLabel(state)}
-                    color={getWorkerStateColor(state)}
+                    color={workerStateColor(workerStatus?.state)}
+                    label={workerStateLabel(workerStatus?.state)}
                 />
             </Stack>
 
-            <Stack
-                direction="row"
-                flexWrap="wrap"
-                gap={3}
-                useFlexGap
+            <Box
+                sx={{
+                    display: "grid",
+                    gap: 2,
+                    gridTemplateColumns: {
+                        xs: "1fr",
+                        sm: "repeat(2, minmax(0, 1fr))",
+                        lg: "repeat(5, minmax(0, 1fr))",
+                    },
+                }}
             >
-                <MetricItem
+                <InfoStat
                     label="Останній цикл"
-                    value={formatDate(
+                    value={formatDateTime(
                         workerStatus?.last_cycle_finished_at,
                     )}
                 />
 
-                <MetricItem
+                <InfoStat
                     label="Наступний запуск"
-                    value={formatDate(
+                    value={formatDateTime(
                         workerStatus?.next_cycle_at,
                     )}
                 />
 
-                <MetricItem
+                <InfoStat
                     label="Очікують входу"
-                    value={statistics?.waiting_entry ?? "—"}
+                    value={String(statistics?.waiting_entry ?? "0")}
                 />
 
-                <MetricItem
+                <InfoStat
                     label="Активні угоди"
-                    value={statistics?.active ?? "—"}
+                    value={String(statistics?.active ?? "0")}
                 />
 
-                <MetricItem
+                <InfoStat
                     label="Оновлено"
-                    value={formatDate(
+                    value={formatDateTime(
                         workerStatus?.updated_at,
                     )}
                 />
-            </Stack>
-
-            {state === "not_started" && (
-                <Alert
-                    severity="info"
-                    sx={{
-                        mt: 2,
-                    }}
-                >
-                    Воркер ще не запускався. Запусти
-                    {" "}
-                    <strong>python -m app.worker</strong>
-                    {" "}
-                    у окремому терміналі.
-                </Alert>
-            )}
+            </Box>
 
             {workerStatus?.last_error && (
                 <Alert
-                    severity="error"
+                    severity="warning"
                     sx={{
                         mt: 2,
                     }}
                 >
-                    Остання помилка воркера:
-                    {" "}
                     {workerStatus.last_error}
                 </Alert>
             )}
@@ -508,171 +584,16 @@ function WorkerStatusPanel({
 }
 
 
-function SignalCard({
-    signal,
+function ScanGroupCard({
+    item,
 }) {
     return (
         <Paper
-            elevation={0}
-            sx={{
-                p: 1.5,
-                border: 1,
-                borderColor: "divider",
-                bgcolor: "background.default",
-                overflow: "hidden",
-            }}
-        >
-            <Stack spacing={1.25}>
-                <Stack
-                    direction={{
-                        xs: "column",
-                        sm: "row",
-                    }}
-                    justifyContent="space-between"
-                    alignItems={{
-                        xs: "flex-start",
-                        sm: "center",
-                    }}
-                    spacing={1}
-                >
-                    <Box>
-                        <Typography
-                            variant="body1"
-                            fontWeight="bold"
-                        >
-                            {signal.symbol}
-                        </Typography>
-
-                        <Typography
-                            variant="body2"
-                            color="text.secondary"
-                        >
-                            {signal.strategy}
-                        </Typography>
-                    </Box>
-
-                    <Stack
-                        direction="row"
-                        spacing={1}
-                        flexWrap="wrap"
-                        useFlexGap
-                    >
-                        <Chip
-                            size="small"
-                            label={signal.direction}
-                            color={
-                                signal.direction === "LONG"
-                                    ? "success"
-                                    : "error"
-                            }
-                        />
-
-                        <Chip
-                            size="small"
-                            label={getSignalStatusLabel(
-                                signal.status,
-                            )}
-                            color={getSignalStatusColor(
-                                signal.status,
-                            )}
-                        />
-                    </Stack>
-                </Stack>
-
-                <Stack
-                    direction="row"
-                    flexWrap="wrap"
-                    gap={2}
-                    useFlexGap
-                >
-                    <MetricItem
-                        label="Probability"
-                        value={
-                            signal.probability === null
-                                ? "—"
-                                : `${signal.probability}%`
-                        }
-                    />
-
-                    <MetricItem
-                        label="Score"
-                        value={signal.score}
-                    />
-
-                    <MetricItem
-                        label="RR"
-                        value={signal.risk_reward ?? "—"}
-                    />
-                </Stack>
-
-                <Divider />
-
-                <Stack
-                    direction={{
-                        xs: "column",
-                        sm: "row",
-                    }}
-                    spacing={1.5}
-                    flexWrap="wrap"
-                    useFlexGap
-                >
-                    <LevelRow
-                        label="Entry"
-                        value={formatPrice(
-                            signal.entry_price,
-                        )}
-                    />
-
-                    <LevelRow
-                        label="SL"
-                        value={formatPrice(
-                            signal.stop_loss,
-                        )}
-                    />
-
-                    <LevelRow
-                        label="TP"
-                        value={formatPrice(
-                            signal.take_profit,
-                        )}
-                    />
-                </Stack>
-
-                <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{
-                        overflowWrap: "anywhere",
-                    }}
-                >
-                    <strong>Причина:</strong>
-                    {" "}
-                    {getSignalReason(signal)}
-                </Typography>
-            </Stack>
-        </Paper>
-    );
-}
-
-
-function ScanJournalPanel({
-    latestScan,
-    scanSignals,
-    scanSignalsTotal,
-    signalStatus,
-    setSignalStatus,
-    loading,
-}) {
-    const scanRun = latestScan?.scan_run || null;
-
-    return (
-        <Paper
-            elevation={0}
+            variant="outlined"
             sx={{
                 p: 2,
-                mb: 3,
-                border: 1,
-                borderColor: "divider",
+                borderRadius: 3,
+                minWidth: 0,
                 overflow: "hidden",
             }}
         >
@@ -686,195 +607,129 @@ function ScanJournalPanel({
                     xs: "flex-start",
                     md: "center",
                 }}
-                spacing={2}
+                spacing={1.5}
                 sx={{
-                    mb: 2,
+                    mb: 1.5,
                 }}
             >
-                <Box>
+                <Stack
+                    direction="row"
+                    spacing={1}
+                    useFlexGap
+                    flexWrap="wrap"
+                    alignItems="center"
+                >
                     <Typography
                         variant="h6"
-                        fontWeight="bold"
+                        fontWeight={700}
+                        sx={{
+                            wordBreak: "break-word",
+                        }}
                     >
-                        Останнє сканування
+                        {item.symbol}
                     </Typography>
+
+                    <Chip
+                        size="small"
+                        color={directionColor(item.direction)}
+                        label={item.direction}
+                    />
+
+                    <Chip
+                        size="small"
+                        color={signalStatusColor(item.status)}
+                        label={signalStatusLabel(item.status)}
+                    />
+
+                    {item.duplicates > 1 && (
+                        <Chip
+                            size="small"
+                            variant="outlined"
+                            label={`${item.duplicates} дублікати`}
+                        />
+                    )}
 
                     <Typography
                         variant="body2"
                         color="text.secondary"
-                        sx={{
-                            mt: 0.5,
-                        }}
                     >
-                        Журнал усіх знайдених сетапів:
-                        rejected / research / elite.
+                        {item.timeframe}
                     </Typography>
-                </Box>
+                </Stack>
 
                 <Stack
                     direction="row"
                     spacing={1}
-                    alignItems="center"
-                    flexWrap="wrap"
                     useFlexGap
+                    flexWrap="wrap"
                 >
-                    <Chip
-                        label={
-                            scanRun
-                                ? scanRun.status
-                                : "немає сканів"
-                        }
-                        color={
-                            scanRun?.status === "completed"
-                                ? "success"
-                                : "default"
-                        }
-                    />
-
-                    <FormControl
-                        size="small"
-                        sx={{
-                            minWidth: 155,
-                        }}
-                    >
-                        <InputLabel id="signal-status-label">
-                            Сигнали
-                        </InputLabel>
-
-                        <Select
-                            labelId="signal-status-label"
-                            label="Сигнали"
-                            value={signalStatus}
-                            onChange={(event) => {
-                                setSignalStatus(
-                                    event.target.value,
-                                );
-                            }}
-                        >
-                            {SIGNAL_STATUS_OPTIONS.map(
-                                (option) => (
-                                    <MenuItem
-                                        key={option.value}
-                                        value={option.value}
-                                    >
-                                        {option.label}
-                                    </MenuItem>
-                                ),
-                            )}
-                        </Select>
-                    </FormControl>
+                    {item.strategies.map((strategy) => (
+                        <Chip
+                            key={`${item.key}-${strategy}`}
+                            size="small"
+                            variant="outlined"
+                            label={strategy}
+                        />
+                    ))}
                 </Stack>
             </Stack>
 
-            {!scanRun && (
-                <Alert severity="info">
-                    Ще немає записаного сканування.
-                    Запусти один цикл:
-                    {" "}
-                    <strong>python -m app.main</strong>
-                </Alert>
-            )}
+            <Box
+                sx={{
+                    display: "grid",
+                    gap: 2,
+                    gridTemplateColumns: {
+                        xs: "repeat(2, minmax(0, 1fr))",
+                        md: "repeat(6, minmax(0, 1fr))",
+                    },
+                }}
+            >
+                <InfoStat
+                    label="Probability"
+                    value={
+                        item.probability !== null
+                            ? `${formatNumber(item.probability, 0)}%`
+                            : "—"
+                    }
+                />
 
-            {scanRun && (
-                <>
-                    <Stack
-                        direction="row"
-                        flexWrap="wrap"
-                        gap={3}
-                        useFlexGap
-                        sx={{
-                            mb: 2,
-                        }}
-                    >
-                        <MetricItem
-                            label="Початок"
-                            value={formatDate(
-                                scanRun.started_at,
-                            )}
-                        />
+                <InfoStat
+                    label="Score"
+                    value={formatNumber(item.score, 0)}
+                />
 
-                        <MetricItem
-                            label="Завершено"
-                            value={formatDate(
-                                scanRun.finished_at,
-                            )}
-                        />
+                <InfoStat
+                    label="Entry"
+                    value={formatPrice(item.entry)}
+                />
 
-                        <MetricItem
-                            label="TF"
-                            value={scanRun.timeframe}
-                        />
+                <InfoStat
+                    label="SL"
+                    value={formatPrice(item.stopLoss)}
+                />
 
-                        <MetricItem
-                            label="Перевірено пар"
-                            value={scanRun.symbols_scanned}
-                        />
+                <InfoStat
+                    label="TP"
+                    value={formatPrice(item.takeProfit)}
+                />
 
-                        <MetricItem
-                            label="Кандидатів"
-                            value={scanRun.candidate_signals}
-                        />
+                <InfoStat
+                    label="RR"
+                    value={formatNumber(item.rr, 2)}
+                />
+            </Box>
 
-                        <MetricItem
-                            label="Research trades"
-                            value={
-                                scanRun.research_trades_created
-                            }
-                        />
-
-                        <MetricItem
-                            label="Elite signals"
-                            value={scanRun.elite_signals_found}
-                        />
-
-                        <MetricItem
-                            label="Показано"
-                            value={
-                                `${scanSignals.length}/${scanSignalsTotal}`
-                            }
-                        />
-                    </Stack>
-
-                    {scanRun.error && (
-                        <Alert
-                            severity="error"
-                            sx={{
-                                mb: 2,
-                            }}
-                        >
-                            Помилка сканування: {scanRun.error}
-                        </Alert>
-                    )}
-
-                    {loading && (
-                        <Box
-                            sx={{
-                                py: 4,
-                                display: "flex",
-                                justifyContent: "center",
-                            }}
-                        >
-                            <CircularProgress size={24} />
-                        </Box>
-                    )}
-
-                    {!loading && scanSignals.length === 0 && (
-                        <Alert severity="info">
-                            Немає сигналів за вибраним фільтром.
-                        </Alert>
-                    )}
-
-                    {!loading && scanSignals.length > 0 && (
-                        <Stack spacing={1.5}>
-                            {scanSignals.map((signal) => (
-                                <SignalCard
-                                    key={signal.id}
-                                    signal={signal}
-                                />
-                            ))}
-                        </Stack>
-                    )}
-                </>
+            {item.reason && (
+                <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{
+                        mt: 1.5,
+                        wordBreak: "break-word",
+                    }}
+                >
+                    {item.reason}
+                </Typography>
             )}
         </Paper>
     );
@@ -883,40 +738,66 @@ function ScanJournalPanel({
 
 function TradeCard({
     trade,
-    detailLoading,
     onOpen,
 }) {
     return (
         <Paper
-            elevation={0}
+            variant="outlined"
             sx={{
-                p: 1.5,
-                border: 1,
-                borderColor: "divider",
-                bgcolor: "background.default",
-                overflow: "hidden",
+                p: 2,
+                borderRadius: 3,
+                minWidth: 0,
             }}
         >
-            <Stack spacing={1.25}>
-                <Stack
-                    direction={{
-                        xs: "column",
-                        sm: "row",
+            <Stack
+                direction={{
+                    xs: "column",
+                    lg: "row",
+                }}
+                justifyContent="space-between"
+                alignItems={{
+                    xs: "flex-start",
+                    lg: "center",
+                }}
+                spacing={2}
+            >
+                <Box
+                    sx={{
+                        minWidth: 0,
+                        flex: 1,
                     }}
-                    justifyContent="space-between"
-                    alignItems={{
-                        xs: "flex-start",
-                        sm: "center",
-                    }}
-                    spacing={1}
                 >
-                    <Box>
+                    <Stack
+                        direction="row"
+                        spacing={1}
+                        useFlexGap
+                        flexWrap="wrap"
+                        alignItems="center"
+                        sx={{
+                            mb: 1.25,
+                        }}
+                    >
                         <Typography
-                            variant="body1"
-                            fontWeight="bold"
+                            variant="h6"
+                            fontWeight={700}
+                            sx={{
+                                wordBreak: "break-word",
+                            }}
                         >
                             {trade.symbol}
                         </Typography>
+
+                        <Chip
+                            size="small"
+                            color={directionColor(trade.direction)}
+                            label={trade.direction}
+                        />
+
+                        <Chip
+                            size="small"
+                            color={tradeStatusColor(trade.status)}
+                            label={tradeStatusLabel(trade.status)}
+                        />
 
                         <Typography
                             variant="body2"
@@ -924,91 +805,64 @@ function TradeCard({
                         >
                             {trade.strategy} · {trade.timeframe}
                         </Typography>
-                    </Box>
-
-                    <Stack
-                        direction="row"
-                        spacing={1}
-                        flexWrap="wrap"
-                        useFlexGap
-                    >
-                        <Chip
-                            size="small"
-                            label={trade.direction}
-                            color={
-                                trade.direction === "LONG"
-                                    ? "success"
-                                    : "error"
-                            }
-                        />
-
-                        <Chip
-                            size="small"
-                            label={getStatusLabel(
-                                trade.status,
-                            )}
-                            color={getStatusColor(
-                                trade.status,
-                            )}
-                        />
                     </Stack>
-                </Stack>
 
-                <Stack
-                    direction="row"
-                    flexWrap="wrap"
-                    gap={2}
-                    useFlexGap
-                >
-                    <MetricItem
-                        label="Probability"
-                        value={`${trade.probability}%`}
-                    />
-
-                    <MetricItem
-                        label="Entry"
-                        value={formatPrice(
-                            trade.entry_price,
-                        )}
-                    />
-
-                    <MetricItem
-                        label="SL"
-                        value={formatPrice(
-                            trade.stop_loss,
-                        )}
-                    />
-
-                    <MetricItem
-                        label="TP"
-                        value={formatPrice(
-                            trade.take_profit,
-                        )}
-                    />
-
-                    <MetricItem
-                        label="Створено"
-                        value={formatDate(
-                            trade.created_at,
-                        )}
-                    />
-                </Stack>
-
-                <Stack
-                    direction="row"
-                    justifyContent="flex-end"
-                >
-                    <Button
-                        size="small"
-                        startIcon={<VisibilityIcon />}
-                        onClick={() => {
-                            onOpen(trade.id);
+                    <Box
+                        sx={{
+                            display: "grid",
+                            gap: 2,
+                            gridTemplateColumns: {
+                                xs: "repeat(2, minmax(0, 1fr))",
+                                md: "repeat(6, minmax(0, 1fr))",
+                            },
                         }}
-                        disabled={detailLoading}
                     >
-                        Відкрити
-                    </Button>
-                </Stack>
+                        <InfoStat
+                            label="Entry"
+                            value={formatPrice(trade.entry_price)}
+                        />
+
+                        <InfoStat
+                            label="SL"
+                            value={formatPrice(trade.stop_loss)}
+                        />
+
+                        <InfoStat
+                            label="TP"
+                            value={formatPrice(trade.take_profit)}
+                        />
+
+                        <InfoStat
+                            label="Probability"
+                            value={`${formatNumber(trade.probability, 0)}%`}
+                        />
+
+                        <InfoStat
+                            label="RR"
+                            value={formatNumber(trade.rr, 2)}
+                        />
+
+                        <InfoStat
+                            label="PnL"
+                            value={`${formatNumber(trade.profit_amount, 2)} USDT`}
+                        />
+                    </Box>
+                </Box>
+
+                <Button
+                    variant="outlined"
+                    startIcon={<VisibilityOutlinedIcon />}
+                    onClick={() => onOpen(trade)}
+                    sx={{
+                        alignSelf: {
+                            xs: "stretch",
+                            lg: "center",
+                        },
+                        minWidth: 150,
+                    }}
+                >
+                    Відкрити
+                </Button>
             </Stack>
         </Paper>
     );
@@ -1016,157 +870,758 @@ function TradeCard({
 
 
 export default function Research() {
-    const [statistics, setStatistics] = useState(null);
-    const [workerStatus, setWorkerStatus] =
-        useState(null);
-
-    const [latestScan, setLatestScan] = useState(null);
-    const [scanSignals, setScanSignals] = useState([]);
-    const [scanSignalsTotal, setScanSignalsTotal] =
-        useState(0);
-
-    const [trades, setTrades] = useState([]);
-
-    const [status, setStatus] = useState("");
-    const [symbol, setSymbol] = useState("");
-    const [signalStatus, setSignalStatus] = useState("");
-
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState("");
 
-    const [selectedTrade, setSelectedTrade] =
-        useState(null);
+    const [statistics, setStatistics] = useState(null);
+    const [workerStatus, setWorkerStatus] = useState(null);
+    const [trades, setTrades] = useState([]);
 
-    const [detailLoading, setDetailLoading] =
-        useState(false);
+    const [latestScanRun, setLatestScanRun] = useState(null);
+    const [latestScanEntries, setLatestScanEntries] = useState([]);
+    const [latestScanEntriesTotal, setLatestScanEntriesTotal] = useState(0);
 
-    const loadResearchData = useCallback(
+    const [scanStatusFilter, setScanStatusFilter] = useState("all");
+    const [scanDirectionFilter, setScanDirectionFilter] = useState("all");
+
+    const [dialogOpen, setDialogOpen] = useState(false);
+    const [dialogLoading, setDialogLoading] = useState(false);
+    const [dialogError, setDialogError] = useState("");
+    const [selectedTrade, setSelectedTrade] = useState(null);
+    const [selectedSetup, setSelectedSetup] = useState(null);
+    const [selectedSetupError, setSelectedSetupError] = useState("");
+
+    const loadData = useCallback(
         async () => {
-            setLoading(true);
             setError("");
 
+            const [
+                statisticsData,
+                workerStatusData,
+                tradesData,
+                latestScanData,
+            ] = await Promise.all([
+                getResearchStatistics(),
+                getWorkerStatus(),
+                getResearchTrades({
+                    limit: 100,
+                }),
+                getLatestScan(),
+            ]);
+
+            setStatistics(statisticsData || null);
+            setWorkerStatus(workerStatusData || null);
+            setTrades(safeArray(tradesData?.trades));
+
+            const scanRun = getLatestScanRun(latestScanData);
+
+            setLatestScanRun(scanRun);
+
+            if (!scanRun?.id) {
+                setLatestScanEntries([]);
+                setLatestScanEntriesTotal(0);
+                return;
+            }
+
+            const signalsData = await getScanSignals(
+                scanRun.id,
+                {
+                    status: scanStatusFilter === "all"
+                        ? ""
+                        : scanStatusFilter,
+                    limit: 200,
+                },
+            );
+
+            setLatestScanEntries(
+                safeArray(signalsData?.signals),
+            );
+
+            setLatestScanEntriesTotal(
+                Number(signalsData?.total ?? 0),
+            );
+        },
+        [
+            scanStatusFilter,
+        ],
+    );
+
+    const handleRefresh = useCallback(
+        async () => {
             try {
-                const [
-                    statisticsData,
-                    tradesData,
-                    workerStatusData,
-                    latestScanData,
-                ] = await Promise.all([
-                    getResearchStatistics(),
-                    getResearchTrades({
-                        status,
-                        symbol,
-                        limit: 100,
-                    }),
-                    getWorkerStatus(),
-                    getLatestScan(),
-                ]);
-
-                setStatistics(statisticsData);
-                setTrades(tradesData.trades);
-                setWorkerStatus(workerStatusData);
-                setLatestScan(latestScanData);
-
-                const scanRunId =
-                    latestScanData?.scan_run?.id;
-
-                if (!scanRunId) {
-                    setScanSignals([]);
-                    setScanSignalsTotal(0);
-                    return;
-                }
-
-                const scanSignalsData = await getScanSignals(
-                    scanRunId,
-                    {
-                        status: signalStatus,
-                        limit: 200,
-                    },
-                );
-
-                setScanSignals(scanSignalsData.signals);
-                setScanSignalsTotal(scanSignalsData.total);
-            } catch (requestError) {
-                const message =
-                    requestError.response?.data?.detail
-                    || requestError.message
-                    || (
-                        "Не вдалося завантажити "
-                        + "дані Research API."
-                    );
-
-                setError(message);
+                setRefreshing(true);
+                await loadData();
+            } catch (refreshError) {
+                setError(extractApiError(refreshError));
             } finally {
+                setRefreshing(false);
                 setLoading(false);
             }
         },
         [
-            status,
-            symbol,
-            signalStatus,
+            loadData,
         ],
     );
 
-    useEffect(() => {
-        void loadResearchData();
-    }, [loadResearchData]);
+    useEffect(
+        () => {
+            let active = true;
 
-    async function handleOpenTrade(tradeId) {
-        setDetailLoading(true);
+            async function start() {
+                try {
+                    await loadData();
+                } catch (loadError) {
+                    if (active) {
+                        setError(extractApiError(loadError));
+                    }
+                } finally {
+                    if (active) {
+                        setLoading(false);
+                    }
+                }
+            }
 
-        try {
-            const trade = await getResearchTrade(
-                tradeId,
-            );
+            void start();
 
+            return () => {
+                active = false;
+            };
+        },
+        [
+            loadData,
+        ],
+    );
+
+    const normalizedScanEntries = useMemo(
+        () => latestScanEntries.map(
+            (item, index) => normalizeJournalEntry(
+                item,
+                index,
+            ),
+        ),
+        [
+            latestScanEntries,
+        ],
+    );
+
+    const groupedScanEntries = useMemo(
+        () => {
+            const groups = new Map();
+
+            normalizedScanEntries.forEach((item) => {
+                const key = buildGroupKey(item);
+
+                if (!groups.has(key)) {
+                    groups.set(
+                        key,
+                        {
+                            key,
+                            symbol: item.symbol,
+                            direction: item.direction,
+                            timeframe: item.timeframe,
+                            probability: item.probability,
+                            score: item.score,
+                            entry: item.entry,
+                            stopLoss: item.stopLoss,
+                            takeProfit: item.takeProfit,
+                            rr: item.rr,
+                            status: item.status,
+                            reason: item.reason,
+                            createdAt: item.createdAt,
+                            strategies: [],
+                            duplicates: 0,
+                            items: [],
+                        },
+                    );
+                }
+
+                const group = groups.get(key);
+
+                group.items.push(item);
+                group.duplicates += 1;
+
+                if (
+                    item.strategy
+                    && !group.strategies.includes(item.strategy)
+                ) {
+                    group.strategies.push(item.strategy);
+                }
+
+                if (!group.reason && item.reason) {
+                    group.reason = item.reason;
+                }
+
+                if (
+                    group.status !== "elite"
+                    && item.status === "elite"
+                ) {
+                    group.status = "elite";
+                } else if (
+                    group.status === "candidate"
+                    && item.status !== "candidate"
+                ) {
+                    group.status = item.status;
+                }
+            });
+
+            return Array
+                .from(groups.values())
+                .sort((left, right) => {
+                    const leftTime = left.createdAt
+                        ? new Date(left.createdAt).getTime()
+                        : 0;
+
+                    const rightTime = right.createdAt
+                        ? new Date(right.createdAt).getTime()
+                        : 0;
+
+                    return rightTime - leftTime;
+                });
+        },
+        [
+            normalizedScanEntries,
+        ],
+    );
+
+    const filteredGroupedSignals = useMemo(
+        () => groupedScanEntries.filter((item) => (
+            scanDirectionFilter === "all"
+            || item.direction === scanDirectionFilter
+        )),
+        [
+            groupedScanEntries,
+            scanDirectionFilter,
+        ],
+    );
+
+    const scanLongCount = useMemo(
+        () => normalizedScanEntries.filter(
+            (item) => item.direction === "LONG",
+        ).length,
+        [
+            normalizedScanEntries,
+        ],
+    );
+
+    const scanShortCount = useMemo(
+        () => normalizedScanEntries.filter(
+            (item) => item.direction === "SHORT",
+        ).length,
+        [
+            normalizedScanEntries,
+        ],
+    );
+
+    const handleCloseDialog = useCallback(
+        () => {
+            setDialogOpen(false);
+            setDialogLoading(false);
+            setDialogError("");
+            setSelectedTrade(null);
+            setSelectedSetup(null);
+            setSelectedSetupError("");
+        },
+        [],
+    );
+
+    const handleOpenTrade = useCallback(
+        async (trade) => {
+            if (!trade?.id) {
+                return;
+            }
+
+            setDialogOpen(true);
+            setDialogLoading(true);
+            setDialogError("");
             setSelectedTrade(trade);
-        } catch (requestError) {
-            const message =
-                requestError.response?.data?.detail
-                || requestError.message
-                || "Не вдалося завантажити деталі угоди.";
+            setSelectedSetup(null);
+            setSelectedSetupError("");
 
-            setError(message);
-        } finally {
-            setDetailLoading(false);
-        }
-    }
+            try {
+                const details = await loadResearchTradeDetails(
+                    trade.id,
+                );
 
-    function handleCloseDialog() {
-        setSelectedTrade(null);
+                if (details.trade) {
+                    setSelectedTrade(details.trade);
+                }
+
+                if (details.setup) {
+                    setSelectedSetup(details.setup);
+                }
+
+                if (details.tradeError) {
+                    setDialogError(details.tradeError);
+                }
+
+                if (details.setupError) {
+                    setSelectedSetupError(details.setupError);
+                }
+            } catch (detailsError) {
+                setDialogError(extractApiError(detailsError));
+            } finally {
+                setDialogLoading(false);
+            }
+        },
+        [],
+    );
+
+    if (loading) {
+        return (
+            <Box
+                sx={{
+                    minHeight: "60vh",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                }}
+            >
+                <CircularProgress />
+            </Box>
+        );
     }
 
     return (
-        <>
+        <Box
+            sx={{
+                width: "100%",
+                maxWidth: "100%",
+                minWidth: 0,
+                overflowX: "hidden",
+            }}
+        >
             <GlobalStyles
                 styles={{
-                    html: {
-                        width: "100%",
-                        maxWidth: "100%",
-                        overflowX: "hidden",
-                    },
                     body: {
-                        width: "100%",
-                        maxWidth: "100%",
                         overflowX: "hidden",
                     },
                     "#root": {
-                        width: "100%",
-                        maxWidth: "100%",
                         overflowX: "hidden",
-                    },
-                    "*": {
-                        boxSizing: "border-box",
                     },
                 }}
             />
 
+            <Stack
+                direction={{
+                    xs: "column",
+                    md: "row",
+                }}
+                justifyContent="space-between"
+                alignItems={{
+                    xs: "flex-start",
+                    md: "center",
+                }}
+                spacing={2}
+                sx={{
+                    mb: 3,
+                }}
+            >
+                <Box sx={{ minWidth: 0 }}>
+                    <Typography
+                        variant="h3"
+                        fontWeight={700}
+                    >
+                        Research Trades
+                    </Typography>
+
+                    <Typography
+                        variant="h6"
+                        color="text.secondary"
+                        sx={{
+                            mt: 1,
+                            wordBreak: "break-word",
+                        }}
+                    >
+                        Virtual trades, статистика, журнал
+                        сканувань та setup-аналіз.
+                    </Typography>
+                </Box>
+
+                <Button
+                    variant="contained"
+                    size="large"
+                    startIcon={
+                        refreshing
+                            ? (
+                                <CircularProgress
+                                    size={18}
+                                    color="inherit"
+                                />
+                            )
+                            : <RefreshIcon />
+                    }
+                    onClick={handleRefresh}
+                    disabled={refreshing}
+                    sx={{
+                        minWidth: 180,
+                        alignSelf: {
+                            xs: "stretch",
+                            md: "auto",
+                        },
+                    }}
+                >
+                    {refreshing ? "Оновлення..." : "ОНОВИТИ"}
+                </Button>
+            </Stack>
+
+            {error && (
+                <Alert
+                    severity="error"
+                    sx={{
+                        mb: 3,
+                    }}
+                >
+                    {error}
+                </Alert>
+            )}
+
+            <WorkerStatusPanel
+                workerStatus={workerStatus}
+                statistics={statistics}
+            />
+
             <Box
                 sx={{
-                    width: "100%",
-                    maxWidth: "100%",
+                    display: "grid",
+                    gap: 2,
+                    gridTemplateColumns: {
+                        xs: "1fr",
+                        sm: "repeat(2, minmax(0, 1fr))",
+                        lg: "repeat(6, minmax(0, 1fr))",
+                    },
+                    mb: 3,
+                }}
+            >
+                <MetricCard
+                    label="Усього угод"
+                    value={formatNumber(statistics?.total, 0)}
+                />
+
+                <MetricCard
+                    label="Очікують входу"
+                    value={formatNumber(statistics?.waiting_entry, 0)}
+                />
+
+                <MetricCard
+                    label="Активні"
+                    value={formatNumber(statistics?.active, 0)}
+                />
+
+                <MetricCard
+                    label="Завершені"
+                    value={formatNumber(statistics?.completed, 0)}
+                />
+
+                <MetricCard
+                    label="Win rate"
+                    value={`${formatNumber(statistics?.win_rate, 2)}%`}
+                />
+
+                <MetricCard
+                    label="PnL"
+                    value={`${formatNumber(statistics?.total_profit, 2)} USDT`}
+                />
+            </Box>
+
+            <Paper
+                variant="outlined"
+                sx={{
+                    p: 3,
+                    borderRadius: 4,
+                    mb: 3,
                     minWidth: 0,
-                    overflowX: "hidden",
+                }}
+            >
+                <Stack
+                    direction={{
+                        xs: "column",
+                        lg: "row",
+                    }}
+                    justifyContent="space-between"
+                    alignItems={{
+                        xs: "flex-start",
+                        lg: "center",
+                    }}
+                    spacing={2}
+                    sx={{
+                        mb: 2,
+                    }}
+                >
+                    <Box sx={{ minWidth: 0 }}>
+                        <Typography
+                            variant="h4"
+                            fontWeight={700}
+                        >
+                            Останнє сканування
+                        </Typography>
+
+                        <Typography
+                            variant="body1"
+                            color="text.secondary"
+                            sx={{
+                                mt: 1,
+                                wordBreak: "break-word",
+                            }}
+                        >
+                            Дублі по одному symbol / direction /
+                            entry / SL / TP згруповані в одну картку.
+                        </Typography>
+                    </Box>
+
+                    <Stack
+                        direction={{
+                            xs: "column",
+                            sm: "row",
+                        }}
+                        spacing={1.5}
+                        sx={{
+                            width: {
+                                xs: "100%",
+                                lg: "auto",
+                            },
+                        }}
+                    >
+                        <Chip
+                            color={
+                                latestScanRun?.status === "completed"
+                                    ? "success"
+                                    : latestScanRun?.status === "failed"
+                                        ? "error"
+                                        : "default"
+                            }
+                            label={latestScanRun?.status || "unknown"}
+                            sx={{
+                                alignSelf: {
+                                    xs: "flex-start",
+                                    sm: "center",
+                                },
+                            }}
+                        />
+
+                        <FormControl
+                            size="small"
+                            sx={{
+                                minWidth: {
+                                    xs: "100%",
+                                    sm: 170,
+                                },
+                            }}
+                        >
+                            <Select
+                                value={scanStatusFilter}
+                                onChange={(event) => {
+                                    setScanStatusFilter(
+                                        event.target.value,
+                                    );
+                                }}
+                            >
+                                <MenuItem value="all">
+                                    Сигнали
+                                </MenuItem>
+
+                                <MenuItem value="candidate">
+                                    Candidate
+                                </MenuItem>
+
+                                <MenuItem value="rejected">
+                                    Rejected
+                                </MenuItem>
+
+                                <MenuItem value="research">
+                                    Research
+                                </MenuItem>
+
+                                <MenuItem value="elite">
+                                    Elite
+                                </MenuItem>
+                            </Select>
+                        </FormControl>
+
+                        <FormControl
+                            size="small"
+                            sx={{
+                                minWidth: {
+                                    xs: "100%",
+                                    sm: 170,
+                                },
+                            }}
+                        >
+                            <Select
+                                value={scanDirectionFilter}
+                                onChange={(event) => {
+                                    setScanDirectionFilter(
+                                        event.target.value,
+                                    );
+                                }}
+                            >
+                                <MenuItem value="all">
+                                    Напрямок
+                                </MenuItem>
+
+                                <MenuItem value="LONG">
+                                    LONG
+                                </MenuItem>
+
+                                <MenuItem value="SHORT">
+                                    SHORT
+                                </MenuItem>
+                            </Select>
+                        </FormControl>
+                    </Stack>
+                </Stack>
+
+                <Box
+                    sx={{
+                        display: "grid",
+                        gap: 2,
+                        gridTemplateColumns: {
+                            xs: "1fr",
+                            sm: "repeat(2, minmax(0, 1fr))",
+                            md: "repeat(3, minmax(0, 1fr))",
+                            xl: "repeat(8, minmax(0, 1fr))",
+                        },
+                        mb: 2,
+                    }}
+                >
+                    <InfoStat
+                        label="Початок"
+                        value={formatDateTime(latestScanRun?.started_at)}
+                    />
+
+                    <InfoStat
+                        label="Завершено"
+                        value={formatDateTime(latestScanRun?.finished_at)}
+                    />
+
+                    <InfoStat
+                        label="TF"
+                        value={latestScanRun?.timeframe || "—"}
+                    />
+
+                    <InfoStat
+                        label="Перевірено пар"
+                        value={formatNumber(
+                            latestScanRun?.symbols_scanned,
+                            0,
+                        )}
+                    />
+
+                    <InfoStat
+                        label="Кандидатів"
+                        value={formatNumber(
+                            latestScanRun?.candidate_signals,
+                            0,
+                        )}
+                    />
+
+                    <InfoStat
+                        label="Research trades"
+                        value={formatNumber(
+                            latestScanRun?.research_trades_created,
+                            0,
+                        )}
+                    />
+
+                    <InfoStat
+                        label="Elite signals"
+                        value={formatNumber(
+                            latestScanRun?.elite_signals_found,
+                            0,
+                        )}
+                    />
+
+                    <InfoStat
+                        label="Показано"
+                        value={
+                            `${filteredGroupedSignals.length}/${groupedScanEntries.length}`
+                        }
+                    />
+                </Box>
+
+                <Box
+                    sx={{
+                        display: "grid",
+                        gap: 2,
+                        gridTemplateColumns: {
+                            xs: "1fr",
+                            sm: "repeat(2, minmax(0, 1fr))",
+                            lg: "repeat(4, minmax(0, 1fr))",
+                        },
+                        mb: 2,
+                    }}
+                >
+                    <InfoStat
+                        label="LONG записів"
+                        value={formatNumber(scanLongCount, 0)}
+                    />
+
+                    <InfoStat
+                        label="SHORT записів"
+                        value={formatNumber(scanShortCount, 0)}
+                    />
+
+                    <InfoStat
+                        label="Статус scan-run"
+                        value={latestScanRun?.status || "—"}
+                    />
+
+                    <InfoStat
+                        label="Записів API"
+                        value={
+                            `${latestScanEntries.length}/${latestScanEntriesTotal}`
+                        }
+                    />
+                </Box>
+
+                {scanShortCount === 0 && scanLongCount > 0 && (
+                    <Alert
+                        severity="warning"
+                        icon={<WarningAmberRoundedIcon />}
+                        sx={{
+                            mb: 2,
+                        }}
+                    >
+                        У цьому scan-run немає жодного SHORT.
+                        Dashboard їх не ховає — backend scanner зараз
+                        повернув тільки LONG-сигнали.
+                    </Alert>
+                )}
+
+                <Stack spacing={2}>
+                    {filteredGroupedSignals.length === 0 ? (
+                        <Paper
+                            variant="outlined"
+                            sx={{
+                                p: 3,
+                                borderRadius: 3,
+                                textAlign: "center",
+                            }}
+                        >
+                            <Typography
+                                variant="body1"
+                                color="text.secondary"
+                            >
+                                Немає записів для поточного фільтра.
+                            </Typography>
+                        </Paper>
+                    ) : (
+                        filteredGroupedSignals.map((item) => (
+                            <ScanGroupCard
+                                key={item.key}
+                                item={item}
+                            />
+                        ))
+                    )}
+                </Stack>
+            </Paper>
+
+            <Paper
+                variant="outlined"
+                sx={{
+                    p: 3,
+                    borderRadius: 4,
+                    minWidth: 0,
                 }}
             >
                 <Stack
@@ -1181,496 +1636,312 @@ export default function Research() {
                     }}
                     spacing={2}
                     sx={{
-                        mb: 3,
+                        mb: 2,
                     }}
                 >
-                    <Box
-                        sx={{
-                            minWidth: 0,
-                        }}
-                    >
+                    <Box sx={{ minWidth: 0 }}>
                         <Typography
                             variant="h4"
-                            fontWeight="bold"
+                            fontWeight={700}
                         >
-                            Research Trades
+                            Virtual trades
                         </Typography>
 
                         <Typography
                             variant="body1"
                             color="text.secondary"
                             sx={{
-                                mt: 0.5,
+                                mt: 1,
+                                wordBreak: "break-word",
                             }}
                         >
-                            Virtual trades, статистика,
-                            журнал сканувань та результати
-                            перевірки сигналів.
+                            Натисни “Відкрити”, щоб подивитися
+                            повні деталі й setup-аналіз.
                         </Typography>
                     </Box>
 
-                    <Button
-                        variant="contained"
-                        startIcon={<RefreshIcon />}
-                        onClick={loadResearchData}
-                        disabled={loading}
-                    >
-                        Оновити
-                    </Button>
-                </Stack>
-
-                {error && (
-                    <Alert
-                        severity="error"
-                        sx={{
-                            mb: 3,
-                        }}
-                        onClose={() => setError("")}
-                    >
-                        {error}
-                    </Alert>
-                )}
-
-                <WorkerStatusPanel
-                    workerStatus={workerStatus}
-                    statistics={statistics}
-                />
-
-                <ScanJournalPanel
-                    latestScan={latestScan}
-                    scanSignals={scanSignals}
-                    scanSignalsTotal={scanSignalsTotal}
-                    signalStatus={signalStatus}
-                    setSignalStatus={setSignalStatus}
-                    loading={loading}
-                />
-
-                <Stack
-                    direction="row"
-                    flexWrap="wrap"
-                    gap={2}
-                    useFlexGap
-                    sx={{
-                        mb: 3,
-                    }}
-                >
-                    <StatisticCard
-                        label="Усього угод"
-                        value={statistics?.total ?? "—"}
-                    />
-
-                    <StatisticCard
-                        label="Очікують входу"
-                        value={
-                            statistics?.waiting_entry
-                            ?? "—"
-                        }
-                        color="warning.main"
-                    />
-
-                    <StatisticCard
-                        label="Активні"
-                        value={statistics?.active ?? "—"}
-                        color="info.main"
-                    />
-
-                    <StatisticCard
-                        label="Завершені"
-                        value={
-                            statistics?.completed
-                            ?? "—"
-                        }
-                        color="success.main"
-                    />
-
-                    <StatisticCard
-                        label="Win rate"
-                        value={formatPercent(
-                            statistics?.win_rate,
-                        )}
-                    />
-
-                    <StatisticCard
-                        label="PnL"
-                        value={`${formatMoney(
-                            statistics?.total_profit,
-                        )} USDT`}
-                        color={getProfitColor(
-                            statistics?.total_profit,
-                        )}
+                    <Chip
+                        color="info"
+                        label={`Угод: ${trades.length}`}
                     />
                 </Stack>
 
-                <Paper
-                    elevation={0}
-                    sx={{
-                        p: 2,
-                        mb: 3,
-                        border: 1,
-                        borderColor: "divider",
-                        overflow: "hidden",
-                    }}
-                >
-                    <Stack
-                        direction={{
-                            xs: "column",
-                            md: "row",
-                        }}
-                        spacing={2}
-                        alignItems={{
-                            xs: "stretch",
-                            md: "center",
-                        }}
-                        flexWrap="wrap"
-                        useFlexGap
-                    >
-                        <FormControl
-                            size="small"
+                <Stack spacing={2}>
+                    {trades.length === 0 ? (
+                        <Paper
+                            variant="outlined"
                             sx={{
-                                minWidth: 210,
+                                p: 3,
+                                borderRadius: 3,
+                                textAlign: "center",
                             }}
                         >
-                            <InputLabel id="research-status-label">
-                                Статус
-                            </InputLabel>
-
-                            <Select
-                                labelId="research-status-label"
-                                label="Статус"
-                                value={status}
-                                onChange={(event) => {
-                                    setStatus(
-                                        event.target.value,
-                                    );
-                                }}
+                            <Typography
+                                variant="body1"
+                                color="text.secondary"
                             >
-                                {STATUS_OPTIONS.map(
-                                    (option) => (
-                                        <MenuItem
-                                            key={option.value}
-                                            value={option.value}
-                                        >
-                                            {option.label}
-                                        </MenuItem>
-                                    ),
-                                )}
-                            </Select>
-                        </FormControl>
+                                Угод поки що немає.
+                            </Typography>
+                        </Paper>
+                    ) : (
+                        trades.map((trade) => (
+                            <TradeCard
+                                key={trade.id}
+                                trade={trade}
+                                onOpen={handleOpenTrade}
+                            />
+                        ))
+                    )}
+                </Stack>
+            </Paper>
 
-                        <TextField
-                            size="small"
-                            label="Символ"
-                            placeholder="BTCUSDT"
-                            value={symbol}
-                            onChange={(event) => {
-                                setSymbol(
-                                    event.target.value,
-                                );
-                            }}
-                            sx={{
-                                minWidth: 210,
-                            }}
-                        />
+            <Dialog
+                open={dialogOpen}
+                onClose={handleCloseDialog}
+                fullWidth
+                maxWidth="lg"
+            >
+                <DialogTitle>
+                    {selectedTrade
+                        ? `${selectedTrade.symbol} — ${selectedTrade.direction}`
+                        : "Деталі угоди"}
+                </DialogTitle>
 
-                        <Typography
-                            variant="body2"
-                            color="text.secondary"
-                        >
-                            Показано угод: {trades.length}
-                        </Typography>
-                    </Stack>
-                </Paper>
-
-                <Paper
-                    elevation={0}
-                    sx={{
-                        p: 2,
-                        border: 1,
-                        borderColor: "divider",
-                        overflow: "hidden",
-                    }}
-                >
-                    <Typography
-                        variant="h6"
-                        fontWeight="bold"
-                        sx={{
-                            mb: 2,
-                        }}
-                    >
-                        Research Trades
-                    </Typography>
-
-                    {loading && (
+                <DialogContent dividers>
+                    {dialogLoading ? (
                         <Box
                             sx={{
-                                py: 4,
+                                py: 6,
                                 display: "flex",
                                 justifyContent: "center",
                             }}
                         >
-                            <CircularProgress size={28} />
+                            <CircularProgress />
                         </Box>
-                    )}
+                    ) : (
+                        <Box sx={{ minWidth: 0 }}>
+                            {dialogError && (
+                                <Alert
+                                    severity="warning"
+                                    sx={{
+                                        mb: 2,
+                                    }}
+                                >
+                                    <Box
+                                        component="pre"
+                                        sx={{
+                                            m: 0,
+                                            fontFamily: "inherit",
+                                            whiteSpace: "pre-wrap",
+                                            wordBreak: "break-word",
+                                        }}
+                                    >
+                                        {dialogError}
+                                    </Box>
+                                </Alert>
+                            )}
 
-                    {!loading && trades.length === 0 && (
-                        <Alert severity="info">
-                            Немає угод за вибраними фільтрами.
-                        </Alert>
-                    )}
-
-                    {!loading && trades.length > 0 && (
-                        <Stack spacing={1.5}>
-                            {trades.map((trade) => (
-                                <TradeCard
-                                    key={trade.id}
-                                    trade={trade}
-                                    detailLoading={detailLoading}
-                                    onOpen={handleOpenTrade}
-                                />
-                            ))}
-                        </Stack>
-                    )}
-                </Paper>
-
-                <Dialog
-                    open={Boolean(selectedTrade)}
-                    onClose={handleCloseDialog}
-                    fullWidth
-                    maxWidth="sm"
-                >
-                    <DialogTitle>
-                        {selectedTrade
-                            ? (
-                                `${selectedTrade.symbol} — `
-                                + selectedTrade.direction
-                            )
-                            : "Деталі угоди"}
-                    </DialogTitle>
-
-                    <DialogContent dividers>
-                        {selectedTrade && (
-                            <Stack spacing={2}>
-                                <Box>
+                            {selectedTrade ? (
+                                <>
                                     <Stack
                                         direction="row"
                                         spacing={1}
-                                        alignItems="center"
-                                        flexWrap="wrap"
                                         useFlexGap
+                                        flexWrap="wrap"
+                                        alignItems="center"
+                                        sx={{
+                                            mb: 2,
+                                        }}
                                     >
                                         <Chip
-                                            label={getStatusLabel(
+                                            color={tradeStatusColor(
                                                 selectedTrade.status,
                                             )}
-                                            color={getStatusColor(
+                                            label={tradeStatusLabel(
                                                 selectedTrade.status,
                                             )}
                                         />
 
                                         <Chip
-                                            label={
-                                                selectedTrade.strategy
-                                            }
+                                            color={directionColor(
+                                                selectedTrade.direction,
+                                            )}
+                                            label={selectedTrade.direction}
+                                        />
+
+                                        <Chip
                                             variant="outlined"
+                                            label={selectedTrade.strategy}
                                         />
                                     </Stack>
-                                </Box>
 
-                                <Divider />
-
-                                <Box>
-                                    <Typography
-                                        variant="subtitle2"
+                                    <Box
                                         sx={{
-                                            mb: 1,
+                                            display: "grid",
+                                            gap: 2,
+                                            gridTemplateColumns: {
+                                                xs: "1fr",
+                                                sm: "repeat(2, minmax(0, 1fr))",
+                                                md: "repeat(4, minmax(0, 1fr))",
+                                            },
                                         }}
                                     >
-                                        Параметри входу
-                                    </Typography>
+                                        <InfoStat
+                                            label="Entry"
+                                            value={formatPrice(
+                                                selectedTrade.entry_price,
+                                            )}
+                                        />
 
-                                    <DetailRow
-                                        label="Entry"
-                                        value={formatPrice(
-                                            selectedTrade.entry_price,
-                                        )}
-                                    />
+                                        <InfoStat
+                                            label="Stop Loss"
+                                            value={formatPrice(
+                                                selectedTrade.stop_loss,
+                                            )}
+                                        />
 
-                                    <DetailRow
-                                        label="Stop Loss"
-                                        value={formatPrice(
-                                            selectedTrade.stop_loss,
-                                        )}
-                                    />
+                                        <InfoStat
+                                            label="Take Profit"
+                                            value={formatPrice(
+                                                selectedTrade.take_profit,
+                                            )}
+                                        />
 
-                                    <DetailRow
-                                        label="Take Profit"
-                                        value={formatPrice(
-                                            selectedTrade.take_profit,
-                                        )}
-                                    />
+                                        <InfoStat
+                                            label="Probability"
+                                            value={
+                                                `${formatNumber(
+                                                    selectedTrade.probability,
+                                                    0,
+                                                )}%`
+                                            }
+                                        />
 
-                                    <DetailRow
-                                        label="Ймовірність"
-                                        value={
-                                            `${selectedTrade.probability}%`
-                                        }
-                                    />
+                                        <InfoStat
+                                            label="Score"
+                                            value={formatNumber(
+                                                selectedTrade.score,
+                                                0,
+                                            )}
+                                        />
 
-                                    <DetailRow
-                                        label="Score"
-                                        value={selectedTrade.score}
-                                    />
+                                        <InfoStat
+                                            label="Notional"
+                                            value={
+                                                `${formatNumber(
+                                                    selectedTrade.notional,
+                                                    2,
+                                                )} USDT`
+                                            }
+                                        />
 
-                                    <DetailRow
-                                        label="Notional"
-                                        value={`${formatMoney(
-                                            selectedTrade.notional,
-                                        )} USDT`}
-                                    />
-                                </Box>
+                                        <InfoStat
+                                            label="PnL"
+                                            value={
+                                                `${formatNumber(
+                                                    selectedTrade.profit_amount,
+                                                    2,
+                                                )} USDT`
+                                            }
+                                        />
 
-                                <SetupVisualization trade={selectedTrade} />
+                                        <InfoStat
+                                            label="RR"
+                                            value={formatNumber(
+                                                selectedTrade.rr,
+                                                2,
+                                            )}
+                                        />
 
-                                <Divider />
+                                        <InfoStat
+                                            label="Створено"
+                                            value={formatDateTime(
+                                                selectedTrade.created_at,
+                                            )}
+                                        />
 
-                                <Box>
-                                    <Typography
-                                        variant="subtitle2"
-                                        sx={{
-                                            mb: 1,
-                                        }}
-                                    >
-                                        Результат
-                                    </Typography>
+                                        <InfoStat
+                                            label="Відкрито"
+                                            value={formatDateTime(
+                                                selectedTrade.opened_at,
+                                            )}
+                                        />
 
-                                    <DetailRow
-                                        label="PnL"
-                                        value={`${formatMoney(
-                                            selectedTrade.profit_amount,
-                                        )} USDT`}
-                                    />
+                                        <InfoStat
+                                            label="Закрито"
+                                            value={formatDateTime(
+                                                selectedTrade.closed_at,
+                                            )}
+                                        />
 
-                                    <DetailRow
-                                        label="PnL %"
-                                        value={formatPercent(
-                                            selectedTrade.profit_percent,
-                                        )}
-                                    />
+                                        <InfoStat
+                                            label="Причина закриття"
+                                            value={
+                                                selectedTrade.close_reason
+                                                || "—"
+                                            }
+                                        />
+                                    </Box>
 
-                                    <DetailRow
-                                        label="RR"
-                                        value={Number(
-                                            selectedTrade.rr,
-                                        ).toFixed(2)}
-                                    />
+                                    {safeArray(selectedTrade.reasons).length > 0 && (
+                                        <>
+                                            <Divider sx={{ my: 2 }} />
 
-                                    <DetailRow
-                                        label="Максимальний прибуток"
-                                        value={formatPercent(
-                                            selectedTrade.max_profit_percent,
-                                        )}
-                                    />
+                                            <Typography
+                                                variant="subtitle1"
+                                                fontWeight={700}
+                                                sx={{
+                                                    mb: 1,
+                                                }}
+                                            >
+                                                Причини сигналу
+                                            </Typography>
 
-                                    <DetailRow
-                                        label="Максимальна просадка"
-                                        value={formatPercent(
-                                            selectedTrade.max_drawdown_percent,
-                                        )}
-                                    />
-                                </Box>
-
-                                <Divider />
-
-                                <Box>
-                                    <Typography
-                                        variant="subtitle2"
-                                        sx={{
-                                            mb: 1,
-                                        }}
-                                    >
-                                        Час
-                                    </Typography>
-
-                                    <DetailRow
-                                        label="Створено"
-                                        value={formatDate(
-                                            selectedTrade.created_at,
-                                        )}
-                                    />
-
-                                    <DetailRow
-                                        label="Відкрито"
-                                        value={formatDate(
-                                            selectedTrade.opened_at,
-                                        )}
-                                    />
-
-                                    <DetailRow
-                                        label="Закрито"
-                                        value={formatDate(
-                                            selectedTrade.closed_at,
-                                        )}
-                                    />
-
-                                    <DetailRow
-                                        label="Причина закриття"
-                                        value={
-                                            selectedTrade.close_reason
-                                            || "—"
-                                        }
-                                    />
-                                </Box>
-
-                                <Divider />
-
-                                <Box>
-                                    <Typography
-                                        variant="subtitle2"
-                                        sx={{
-                                            mb: 1,
-                                        }}
-                                    >
-                                        Причини сигналу
-                                    </Typography>
-
-                                    {selectedTrade.reasons.length === 0 ? (
-                                        <Typography
-                                            variant="body2"
-                                            color="text.secondary"
-                                        >
-                                            Причини відсутні.
-                                        </Typography>
-                                    ) : (
-                                        <Stack spacing={0.75}>
-                                            {selectedTrade.reasons.map(
-                                                (
-                                                    reason,
-                                                    index,
-                                                ) => (
+                                            <Stack spacing={1}>
+                                                {safeArray(
+                                                    selectedTrade.reasons,
+                                                ).map((reason, index) => (
                                                     <Typography
                                                         key={
-                                                            `${reason}-${index}`
+                                                            `${selectedTrade.id}-reason-${index}`
                                                         }
                                                         variant="body2"
+                                                        color="text.secondary"
+                                                        sx={{
+                                                            wordBreak: "break-word",
+                                                        }}
                                                     >
                                                         • {reason}
                                                     </Typography>
-                                                ),
-                                            )}
-                                        </Stack>
+                                                ))}
+                                            </Stack>
+                                        </>
                                     )}
-                                </Box>
-                            </Stack>
-                        )}
-                    </DialogContent>
 
-                    <DialogActions>
-                        <Button onClick={handleCloseDialog}>
-                            Закрити
-                        </Button>
-                    </DialogActions>
-                </Dialog>
-            </Box>
-        </>
+                                    <Box sx={{ mt: 2 }}>
+                                        <SetupVisualization
+                                            trade={selectedTrade}
+                                            setup={selectedSetup}
+                                            setupError={selectedSetupError}
+                                            setupLoading={false}
+                                        />
+                                    </Box>
+                                </>
+                            ) : (
+                                <Typography color="text.secondary">
+                                    Немає вибраної угоди.
+                                </Typography>
+                            )}
+                        </Box>
+                    )}
+                </DialogContent>
+
+                <DialogActions>
+                    <Button onClick={handleCloseDialog}>
+                        Закрити
+                    </Button>
+                </DialogActions>
+            </Dialog>
+        </Box>
     );
 }

@@ -2,6 +2,7 @@ import {
     Alert,
     Box,
     Chip,
+    CircularProgress,
     Divider,
     Paper,
     Stack,
@@ -9,8 +10,25 @@ import {
 } from "@mui/material";
 
 
+function toNumber(value) {
+    if (value === null || value === undefined || value === "") {
+        return null;
+    }
+
+    const converted = Number(value);
+
+    if (Number.isNaN(converted)) {
+        return null;
+    }
+
+    return converted;
+}
+
+
 function formatPrice(value) {
-    if (value === null || value === undefined) {
+    const numeric = toNumber(value);
+
+    if (numeric === null) {
         return "—";
     }
 
@@ -20,179 +38,455 @@ function formatPrice(value) {
             minimumFractionDigits: 0,
             maximumFractionDigits: 8,
         },
-    ).format(value);
+    ).format(numeric);
 }
 
 
 function formatPercent(value) {
-    if (value === null || value === undefined) {
+    const numeric = toNumber(value);
+
+    if (numeric === null) {
         return "—";
     }
 
-    return `${Number(value).toFixed(2)}%`;
+    return `${numeric.toFixed(2)}%`;
 }
 
 
-function calculateSetup(trade) {
-    const direction = String(
-        trade?.direction || "",
-    ).toUpperCase();
+function normalizeDirection(direction) {
+    return String(direction || "").trim().toUpperCase();
+}
 
-    const entry = Number(trade?.entry_price);
-    const stopLoss = Number(trade?.stop_loss);
-    const takeProfit = Number(trade?.take_profit);
 
-    if (
-        !Number.isFinite(entry)
-        || !Number.isFinite(stopLoss)
-        || !Number.isFinite(takeProfit)
-        || entry <= 0
-    ) {
-        return null;
-    }
-
-    const risk = direction === "LONG"
-        ? entry - stopLoss
-        : stopLoss - entry;
+function calculateFallbackTarget({
+    direction,
+    entry,
+    stopLoss,
+    rr,
+}) {
+    const risk = Math.abs(entry - stopLoss);
 
     if (risk <= 0) {
         return null;
     }
 
-    const currentReward = direction === "LONG"
-        ? takeProfit - entry
-        : entry - takeProfit;
+    if (normalizeDirection(direction) === "SHORT") {
+        return entry - risk * rr;
+    }
 
-    const currentRiskReward = currentReward / risk;
+    return entry + risk * rr;
+}
 
-    const scenarios = [1, 2, 3].map((rr) => {
-        const targetPrice = direction === "LONG"
-            ? entry + risk * rr
-            : entry - risk * rr;
 
-        const movePercent = Math.abs(
-            (targetPrice - entry) / entry,
-        ) * 100;
+function calculateCurrentRR(trade) {
+    const entry = toNumber(trade?.entry_price);
+    const stopLoss = toNumber(trade?.stop_loss);
+    const takeProfit = toNumber(trade?.take_profit);
 
-        const isCurrentTarget = (
-            Math.abs(targetPrice - takeProfit)
-            <= Math.max(Math.abs(takeProfit) * 0.000001, 0.00000001)
-        );
+    if (
+        entry === null
+        || stopLoss === null
+        || takeProfit === null
+        || entry === stopLoss
+    ) {
+        return null;
+    }
 
-        return {
+    return Math.abs(takeProfit - entry) / Math.abs(entry - stopLoss);
+}
+
+
+function buildTargets({
+    trade,
+    setup,
+}) {
+    if (setup?.rr_targets?.length > 0) {
+        return setup.rr_targets.map((target) => ({
+            rr: toNumber(target.rr),
+            price: toNumber(target.price),
+            source: "backend",
+        }));
+    }
+
+    const entry = toNumber(trade?.entry_price);
+    const stopLoss = toNumber(trade?.stop_loss);
+
+    if (entry === null || stopLoss === null) {
+        return [];
+    }
+
+    return [
+        1,
+        2,
+        3,
+    ].map((rr) => ({
+        rr,
+        price: calculateFallbackTarget({
+            direction: trade.direction,
+            entry,
+            stopLoss,
             rr,
-            targetPrice,
-            movePercent,
-            isCurrentTarget,
-        };
-    });
+        }),
+        source: "fallback",
+    }));
+}
 
-    const riskPercent = Math.abs(
-        (entry - stopLoss) / entry,
-    ) * 100;
+
+function buildScale({
+    trade,
+    setup,
+    targets,
+}) {
+    const prices = [
+        toNumber(trade?.entry_price),
+        toNumber(trade?.stop_loss),
+        toNumber(trade?.take_profit),
+        toNumber(setup?.assessed_target_price),
+        ...targets.map((target) => toNumber(target.price)),
+        ...(setup?.zones || []).flatMap((zone) => [
+            toNumber(zone.lower),
+            toNumber(zone.upper),
+            toNumber(zone.center),
+        ]),
+    ].filter((value) => value !== null);
+
+    if (prices.length === 0) {
+        return {
+            min: 0,
+            max: 1,
+            range: 1,
+        };
+    }
+
+    let min = Math.min(...prices);
+    let max = Math.max(...prices);
+
+    if (min === max) {
+        min -= 1;
+        max += 1;
+    }
+
+    const padding = Math.abs(max - min) * 0.08;
+
+    min -= padding;
+    max += padding;
 
     return {
-        direction,
-        entry,
-        stopLoss,
-        takeProfit,
-        risk,
-        riskPercent,
-        currentRiskReward,
-        scenarios,
+        min,
+        max,
+        range: max - min,
     };
 }
 
 
-function PriceLine({
-    label,
-    price,
-    chip,
-}) {
-    return (
-        <Stack
-            direction="row"
-            justifyContent="space-between"
-            alignItems="center"
-            spacing={2}
-        >
-            <Stack
-                direction="row"
-                spacing={1}
-                alignItems="center"
-            >
-                <Typography
-                    variant="body2"
-                    fontWeight="bold"
-                >
-                    {label}
-                </Typography>
+function positionPrice(price, scale) {
+    const numeric = toNumber(price);
 
-                {chip}
-            </Stack>
+    if (numeric === null || scale.range <= 0) {
+        return 0;
+    }
 
-            <Typography
-                variant="body2"
-                fontWeight="bold"
-            >
-                {formatPrice(price)}
-            </Typography>
-        </Stack>
+    const value = ((numeric - scale.min) / scale.range) * 100;
+
+    return Math.min(
+        100,
+        Math.max(
+            0,
+            value,
+        ),
     );
 }
 
 
-function ScenarioCard({
-    scenario,
+function getZoneColor(zoneType) {
+    if (zoneType === "resistance") {
+        return "error";
+    }
+
+    if (zoneType === "support") {
+        return "success";
+    }
+
+    return "default";
+}
+
+
+function getZoneLabel(zoneType) {
+    if (zoneType === "resistance") {
+        return "Resistance";
+    }
+
+    if (zoneType === "support") {
+        return "Support";
+    }
+
+    return zoneType || "Zone";
+}
+
+
+function getTargetClearLabel(setup) {
+    if (!setup) {
+        return "Setup API не завантажено";
+    }
+
+    if (setup.assessed_target_clear) {
+        return `TP 1:${setup.assessed_rr} clear`;
+    }
+
+    return `TP 1:${setup.assessed_rr} blocked`;
+}
+
+
+function getTargetClearColor(setup) {
+    if (!setup) {
+        return "default";
+    }
+
+    return setup.assessed_target_clear
+        ? "success"
+        : "warning";
+}
+
+
+function PriceMarker({
+    label,
+    price,
+    scale,
+    color = "primary",
+}) {
+    const left = positionPrice(
+        price,
+        scale,
+    );
+
+    return (
+        <Box
+            sx={{
+                position: "absolute",
+                left: `${left}%`,
+                top: 0,
+                bottom: 0,
+                transform: "translateX(-50%)",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                pointerEvents: "none",
+            }}
+        >
+            <Box
+                sx={{
+                    width: 2,
+                    height: "100%",
+                    bgcolor: `${color}.main`,
+                    opacity: 0.85,
+                }}
+            />
+
+            <Typography
+                variant="caption"
+                sx={{
+                    mt: 0.5,
+                    whiteSpace: "nowrap",
+                    color: `${color}.main`,
+                    fontWeight: "bold",
+                }}
+            >
+                {label}
+            </Typography>
+        </Box>
+    );
+}
+
+
+function ZoneBand({
+    zone,
+    scale,
+}) {
+    const left = positionPrice(
+        zone.lower,
+        scale,
+    );
+
+    const right = positionPrice(
+        zone.upper,
+        scale,
+    );
+
+    const width = Math.max(
+        1,
+        Math.abs(right - left),
+    );
+
+    const color = zone.zone_type === "resistance"
+        ? "error.main"
+        : "success.main";
+
+    return (
+        <Box
+            sx={{
+                position: "absolute",
+                left: `${Math.min(left, right)}%`,
+                width: `${width}%`,
+                top: 8,
+                bottom: 8,
+                bgcolor: color,
+                opacity: 0.16,
+                borderRadius: 1,
+            }}
+        />
+    );
+}
+
+
+function TargetCard({
+    target,
+    currentTakeProfit,
+}) {
+    const isCurrentTp = (
+        toNumber(target.price) !== null
+        && toNumber(currentTakeProfit) !== null
+        && Math.abs(
+            toNumber(target.price) - toNumber(currentTakeProfit),
+        ) <= Math.abs(toNumber(currentTakeProfit)) * 0.0001
+    );
+
+    return (
+        <Paper
+            elevation={0}
+            sx={{
+                p: 1.5,
+                border: 1,
+                borderColor: isCurrentTp
+                    ? "primary.main"
+                    : "divider",
+                minWidth: 130,
+            }}
+        >
+            <Stack spacing={0.75}>
+                <Stack
+                    direction="row"
+                    spacing={1}
+                    alignItems="center"
+                    justifyContent="space-between"
+                >
+                    <Typography
+                        variant="body2"
+                        color="text.secondary"
+                    >
+                        RR
+                    </Typography>
+
+                    <Chip
+                        size="small"
+                        label={`1:${target.rr}`}
+                        color={isCurrentTp ? "primary" : "default"}
+                    />
+                </Stack>
+
+                <Typography
+                    variant="body1"
+                    fontWeight="bold"
+                >
+                    {formatPrice(target.price)}
+                </Typography>
+
+                {isCurrentTp && (
+                    <Typography
+                        variant="caption"
+                        color="primary.main"
+                    >
+                        Поточний TP
+                    </Typography>
+                )}
+            </Stack>
+        </Paper>
+    );
+}
+
+
+function ZoneCard({
+    zone,
+    compact = false,
 }) {
     return (
         <Paper
             elevation={0}
             sx={{
                 p: 1.5,
-                flex: "1 1 140px",
                 border: 1,
-                borderColor: scenario.isCurrentTarget
-                    ? "success.main"
-                    : "divider",
-                bgcolor: scenario.isCurrentTarget
-                    ? "success.main"
-                    : "background.paper",
+                borderColor: "divider",
             }}
         >
             <Stack spacing={0.75}>
                 <Stack
                     direction="row"
-                    justifyContent="space-between"
+                    spacing={1}
                     alignItems="center"
+                    justifyContent="space-between"
+                    flexWrap="wrap"
+                    useFlexGap
                 >
-                    <Typography
-                        variant="body2"
-                        fontWeight="bold"
-                    >
-                        1:{scenario.rr}
-                    </Typography>
+                    <Chip
+                        size="small"
+                        color={getZoneColor(zone.zone_type)}
+                        label={getZoneLabel(zone.zone_type)}
+                    />
 
-                    {scenario.isCurrentTarget && (
-                        <Chip
-                            size="small"
-                            label="поточний TP"
-                            color="success"
-                            variant="outlined"
-                        />
-                    )}
+                    <Typography
+                        variant="caption"
+                        color="text.secondary"
+                    >
+                        touches: {zone.touches ?? "—"}
+                    </Typography>
                 </Stack>
 
-                <Typography variant="body2">
-                    TP: {formatPrice(scenario.targetPrice)}
+                <Typography
+                    variant={compact ? "body2" : "body1"}
+                    fontWeight="bold"
+                >
+                    {formatPrice(zone.lower)}
+                    {" — "}
+                    {formatPrice(zone.upper)}
                 </Typography>
 
-                <Typography
-                    variant="caption"
-                    color="text.secondary"
+                <Stack
+                    direction="row"
+                    spacing={2}
+                    flexWrap="wrap"
+                    useFlexGap
                 >
-                    Рух від Entry: {formatPercent(scenario.movePercent)}
-                </Typography>
+                    <Typography
+                        variant="caption"
+                        color="text.secondary"
+                    >
+                        Center: {formatPrice(zone.center)}
+                    </Typography>
+
+                    <Typography
+                        variant="caption"
+                        color="text.secondary"
+                    >
+                        Strength: {formatPercent(zone.strength)}
+                    </Typography>
+
+                    <Typography
+                        variant="caption"
+                        color="text.secondary"
+                    >
+                        Entry: {formatPercent(
+                            zone.distance_to_entry_percent,
+                        )}
+                    </Typography>
+
+                    <Typography
+                        variant="caption"
+                        color="text.secondary"
+                    >
+                        Target: {formatPercent(
+                            zone.distance_to_target_percent,
+                        )}
+                    </Typography>
+                </Stack>
             </Stack>
         </Paper>
     );
@@ -201,51 +495,45 @@ function ScenarioCard({
 
 export default function SetupVisualization({
     trade,
+    setup = null,
+    setupError = "",
+    setupLoading = false,
 }) {
-    const setup = calculateSetup(trade);
-
-    if (!setup) {
-        return (
-            <Alert severity="warning">
-                Неможливо побудувати RR-сетап:
-                некоректні Entry / SL / TP.
-            </Alert>
-        );
+    if (!trade) {
+        return null;
     }
 
-    const isLong = setup.direction === "LONG";
+    const entry = toNumber(trade.entry_price);
+    const stopLoss = toNumber(trade.stop_loss);
+    const currentTakeProfit = toNumber(trade.take_profit);
+    const currentRR = calculateCurrentRR(trade);
 
-    const topLabel = isLong
-        ? "Take Profit"
-        : "Stop Loss";
+    const targets = buildTargets({
+        trade,
+        setup,
+    });
 
-    const topPrice = isLong
-        ? setup.takeProfit
-        : setup.stopLoss;
+    const scale = buildScale({
+        trade,
+        setup,
+        targets,
+    });
 
-    const bottomLabel = isLong
-        ? "Stop Loss"
-        : "Take Profit";
+    const blockingZones = setup?.blocking_zones || [];
+    const zones = setup?.zones || [];
 
-    const bottomPrice = isLong
-        ? setup.stopLoss
-        : setup.takeProfit;
+    const nearestZones = [...zones]
+        .sort((left, right) => {
+            const leftDistance = Math.abs(
+                toNumber(left.distance_to_entry_percent) ?? 999999,
+            );
+            const rightDistance = Math.abs(
+                toNumber(right.distance_to_entry_percent) ?? 999999,
+            );
 
-    const topZoneLabel = isLong
-        ? "Зона прибутку"
-        : "Зона ризику";
-
-    const bottomZoneLabel = isLong
-        ? "Зона ризику"
-        : "Зона прибутку";
-
-    const topZoneColor = isLong
-        ? "success.main"
-        : "error.main";
-
-    const bottomZoneColor = isLong
-        ? "error.main"
-        : "success.main";
+            return leftDistance - rightDistance;
+        })
+        .slice(0, 5);
 
     return (
         <Paper
@@ -263,142 +551,285 @@ export default function SetupVisualization({
                         xs: "column",
                         sm: "row",
                     }}
+                    spacing={1}
                     justifyContent="space-between"
                     alignItems={{
                         xs: "flex-start",
                         sm: "center",
                     }}
-                    spacing={1}
                 >
                     <Box>
                         <Typography
                             variant="subtitle2"
                             fontWeight="bold"
                         >
-                            Візуалізація сетапу
+                            Setup visualization
                         </Typography>
 
                         <Typography
                             variant="body2"
                             color="text.secondary"
-                            sx={{
-                                mt: 0.5,
-                            }}
                         >
-                            Entry / SL / TP та RR-сценарії 1:1, 1:2, 1:3.
+                            Entry / SL / TP, RR-цілі та support /
+                            resistance зони.
                         </Typography>
                     </Box>
 
-                    <Chip
-                        label={`Поточний RR: 1:${setup.currentRiskReward.toFixed(2)}`}
-                        color="info"
-                        variant="outlined"
-                    />
-                </Stack>
-
-                <Stack spacing={1.25}>
-                    <PriceLine
-                        label={topLabel}
-                        price={topPrice}
-                        chip={
-                            <Chip
-                                size="small"
-                                label={topZoneLabel}
-                                color={isLong ? "success" : "error"}
-                                variant="outlined"
-                            />
-                        }
-                    />
-
-                    <Box
-                        sx={{
-                            height: 46,
-                            borderRadius: 1,
-                            bgcolor: topZoneColor,
-                            opacity: 0.22,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            border: 1,
-                            borderColor: topZoneColor,
-                        }}
+                    <Stack
+                        direction="row"
+                        spacing={1}
+                        flexWrap="wrap"
+                        useFlexGap
                     >
-                        <Typography
-                            variant="caption"
-                            fontWeight="bold"
-                        >
-                            {topZoneLabel}
-                        </Typography>
-                    </Box>
-
-                    <Divider>
                         <Chip
-                            label={`Entry ${formatPrice(setup.entry)}`}
                             size="small"
+                            label={
+                                currentRR === null
+                                    ? "Current RR: —"
+                                    : `Current RR 1:${currentRR.toFixed(2)}`
+                            }
+                            color="primary"
+                            variant="outlined"
                         />
-                    </Divider>
 
+                        <Chip
+                            size="small"
+                            label={getTargetClearLabel(setup)}
+                            color={getTargetClearColor(setup)}
+                        />
+                    </Stack>
+                </Stack>
+
+                {setupLoading && (
+                    <Alert
+                        severity="info"
+                        icon={<CircularProgress size={18} />}
+                    >
+                        Завантажую setup-аналіз...
+                    </Alert>
+                )}
+
+                {setupError && (
+                    <Alert severity="warning">
+                        Setup API недоступний для цієї угоди:
+                        {" "}
+                        {setupError}
+                    </Alert>
+                )}
+
+                {setup?.summary && (
+                    <Alert
+                        severity={
+                            setup.assessed_target_clear
+                                ? "success"
+                                : "warning"
+                        }
+                    >
+                        {setup.summary}
+                    </Alert>
+                )}
+
+                <Box>
                     <Box
                         sx={{
-                            height: 46,
-                            borderRadius: 1,
-                            bgcolor: bottomZoneColor,
-                            opacity: 0.22,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
+                            position: "relative",
+                            height: 92,
+                            borderRadius: 2,
                             border: 1,
-                            borderColor: bottomZoneColor,
+                            borderColor: "divider",
+                            overflow: "hidden",
+                            bgcolor: "background.paper",
+                        }}
+                    >
+                        {zones.map((zone, index) => (
+                            <ZoneBand
+                                key={`${zone.zone_type}-${zone.center}-${index}`}
+                                zone={zone}
+                                scale={scale}
+                            />
+                        ))}
+
+                        <Box
+                            sx={{
+                                position: "absolute",
+                                left: 0,
+                                right: 0,
+                                top: "50%",
+                                height: 8,
+                                transform: "translateY(-50%)",
+                                bgcolor: "action.hover",
+                            }}
+                        />
+
+                        <PriceMarker
+                            label="SL"
+                            price={stopLoss}
+                            scale={scale}
+                            color="error"
+                        />
+
+                        <PriceMarker
+                            label="Entry"
+                            price={entry}
+                            scale={scale}
+                            color="primary"
+                        />
+
+                        <PriceMarker
+                            label="TP"
+                            price={currentTakeProfit}
+                            scale={scale}
+                            color="success"
+                        />
+
+                        {setup?.assessed_target_price && (
+                            <PriceMarker
+                                label={`1:${setup.assessed_rr}`}
+                                price={setup.assessed_target_price}
+                                scale={scale}
+                                color={
+                                    setup.assessed_target_clear
+                                        ? "success"
+                                        : "warning"
+                                }
+                            />
+                        )}
+                    </Box>
+
+                    <Stack
+                        direction="row"
+                        justifyContent="space-between"
+                        sx={{
+                            mt: 1,
                         }}
                     >
                         <Typography
                             variant="caption"
-                            fontWeight="bold"
+                            color="text.secondary"
                         >
-                            {bottomZoneLabel}
+                            {formatPrice(scale.min)}
                         </Typography>
-                    </Box>
 
-                    <PriceLine
-                        label={bottomLabel}
-                        price={bottomPrice}
-                        chip={
-                            <Chip
-                                size="small"
-                                label={bottomZoneLabel}
-                                color={isLong ? "error" : "success"}
-                                variant="outlined"
+                        <Typography
+                            variant="caption"
+                            color="text.secondary"
+                        >
+                            {formatPrice(scale.max)}
+                        </Typography>
+                    </Stack>
+                </Box>
+
+                <Box>
+                    <Typography
+                        variant="subtitle2"
+                        sx={{
+                            mb: 1,
+                        }}
+                    >
+                        RR targets
+                    </Typography>
+
+                    <Stack
+                        direction="row"
+                        spacing={1}
+                        flexWrap="wrap"
+                        useFlexGap
+                    >
+                        {targets.map((target) => (
+                            <TargetCard
+                                key={`target-${target.rr}`}
+                                target={target}
+                                currentTakeProfit={currentTakeProfit}
                             />
-                        }
-                    />
-                </Stack>
+                        ))}
+                    </Stack>
+                </Box>
 
                 <Divider />
 
-                <Stack
-                    direction="row"
-                    flexWrap="wrap"
-                    gap={1.5}
-                >
-                    {setup.scenarios.map((scenario) => (
-                        <ScenarioCard
-                            key={scenario.rr}
-                            scenario={scenario}
-                        />
-                    ))}
-                </Stack>
+                <Box>
+                    <Stack
+                        direction="row"
+                        spacing={1}
+                        alignItems="center"
+                        sx={{
+                            mb: 1,
+                        }}
+                    >
+                        <Typography variant="subtitle2">
+                            Blocking zones
+                        </Typography>
 
-                <Typography
-                    variant="caption"
-                    color="text.secondary"
-                >
-                    Ризик до SL:
-                    {" "}
-                    {formatPercent(setup.riskPercent)}
-                    {" "}
-                    від Entry. Далі сюди додамо support/resistance zones,
-                    щоб бачити, чи TP не впирається в сильну зону.
-                </Typography>
+                        <Chip
+                            size="small"
+                            label={blockingZones.length}
+                            color={
+                                blockingZones.length > 0
+                                    ? "warning"
+                                    : "success"
+                            }
+                        />
+                    </Stack>
+
+                    {blockingZones.length === 0 ? (
+                        <Typography
+                            variant="body2"
+                            color="text.secondary"
+                        >
+                            Блокуючих зон для цілі 1:3 не знайдено.
+                        </Typography>
+                    ) : (
+                        <Stack spacing={1}>
+                            {blockingZones.map((zone, index) => (
+                                <ZoneCard
+                                    key={`blocking-${zone.center}-${index}`}
+                                    zone={zone}
+                                    compact
+                                />
+                            ))}
+                        </Stack>
+                    )}
+                </Box>
+
+                <Box>
+                    <Stack
+                        direction="row"
+                        spacing={1}
+                        alignItems="center"
+                        sx={{
+                            mb: 1,
+                        }}
+                    >
+                        <Typography variant="subtitle2">
+                            Найближчі support / resistance
+                        </Typography>
+
+                        <Chip
+                            size="small"
+                            label={nearestZones.length}
+                            variant="outlined"
+                        />
+                    </Stack>
+
+                    {nearestZones.length === 0 ? (
+                        <Typography
+                            variant="body2"
+                            color="text.secondary"
+                        >
+                            Зони поки не знайдені.
+                        </Typography>
+                    ) : (
+                        <Stack spacing={1}>
+                            {nearestZones.map((zone, index) => (
+                                <ZoneCard
+                                    key={`nearest-${zone.center}-${index}`}
+                                    zone={zone}
+                                    compact
+                                />
+                            ))}
+                        </Stack>
+                    )}
+                </Box>
             </Stack>
         </Paper>
     );

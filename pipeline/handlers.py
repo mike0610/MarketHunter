@@ -218,6 +218,7 @@ class ResearchTradeHandler(SignalHandler):
             return
 
         probability = context.probability.probability
+        reaction_assessment = None
 
         snapshot = getattr(
             context,
@@ -291,6 +292,37 @@ class ResearchTradeHandler(SignalHandler):
                 )
                 return
 
+        reaction_bonus = 0
+
+        if reaction_assessment is not None:
+            reaction_bonus = self._reaction_probability_bonus(
+                reaction_assessment,
+            )
+
+        if reaction_bonus > 0:
+            base_probability = probability
+            probability = min(
+                100,
+                probability + reaction_bonus,
+            )
+
+            context.signal.metadata["base_probability"] = (
+                base_probability
+            )
+            context.signal.metadata["reaction_probability_bonus"] = (
+                reaction_bonus
+            )
+            context.signal.metadata["probability"] = probability
+
+            probability_reasons = context.signal.metadata.get(
+                "probability_reasons",
+            )
+
+            if isinstance(probability_reasons, list):
+                probability_reasons.append(
+                    f"Reaction Quality +{reaction_bonus}"
+                )
+
         if probability < self.minimum_probability:
             self._skip(
                 context=context,
@@ -348,6 +380,54 @@ class ResearchTradeHandler(SignalHandler):
 
         context.signal.metadata["research_trade_id"] = (
             trade.id
+        )
+
+    @staticmethod
+    def _reaction_probability_bonus(
+        reaction_assessment,
+    ) -> int:
+        if not reaction_assessment.confirmed:
+            return 0
+
+        strong_reactions = {
+            "Bullish BOS",
+            "Bearish BOS",
+            "Bullish CHoCH",
+            "Bearish CHoCH",
+            "Bullish Liquidity Sweep",
+            "Bearish Liquidity Sweep",
+            "Double Bottom",
+            "Double Top",
+        }
+
+        medium_reactions = {
+            "Bullish Breakout",
+            "Bearish Breakout",
+            "Bullish False Breakout",
+            "Bearish False Breakout",
+            "ATR Impulse",
+        }
+
+        reasons = set(
+            reaction_assessment.reasons
+        )
+
+        bonus = 0
+
+        if reasons & strong_reactions:
+            bonus = 15
+        elif reasons & medium_reactions:
+            bonus = 10
+
+        if (
+            bonus > 0
+            and reaction_assessment.score >= 2
+        ):
+            bonus += 5
+
+        return min(
+            bonus,
+            20,
         )
 
     @staticmethod

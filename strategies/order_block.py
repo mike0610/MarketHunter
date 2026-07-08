@@ -164,10 +164,6 @@ class OrderBlockStrategy(BaseStrategy):
             f"Distance {self._distance_percent(snapshot, distance):.2f}%"
         )
 
-        signal.add_reason(
-            f"Distance {self._distance_percent(snapshot, distance):.2f}%"
-        )
-
         if inside_block:
             signal.add_reason(
                 "Price inside Bullish Order Block"
@@ -266,10 +262,6 @@ class OrderBlockStrategy(BaseStrategy):
 
         signal.add_reason(
             f"Zone {block.low:.4f} - {block.high:.4f}"
-        )
-
-        signal.add_reason(
-            f"Distance {self._distance_percent(snapshot, distance):.2f}%"
         )
 
         signal.add_reason(

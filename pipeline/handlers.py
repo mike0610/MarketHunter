@@ -480,7 +480,7 @@ class ResearchTradeHandler(SignalHandler):
                 for candle in recent
             )
             has_pullback = recent_high >= (
-                ema20 - atr
+                ema20 - (atr * 0.25)
             )
 
         else:
@@ -504,7 +504,7 @@ class ResearchTradeHandler(SignalHandler):
                 for candle in recent
             )
             has_pullback = recent_low <= (
-                ema20 + atr
+                ema20 + (atr * 0.25)
             )
 
         context.signal.metadata["parabolic_recent_move_percent"] = (
@@ -529,13 +529,13 @@ class ResearchTradeHandler(SignalHandler):
             has_pullback
         )
 
-        if recent_move_percent < 18.0:
+        if recent_move_percent < 12.0:
             return None
 
-        if ema_distance_percent < 8.0:
+        if ema_distance_percent < 5.0:
             return None
 
-        if ema_distance_atr < 2.5:
+        if ema_distance_atr < 1.8:
             return None
 
         if has_pullback:

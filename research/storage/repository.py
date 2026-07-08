@@ -53,6 +53,12 @@ class ResearchRepository:
         TradeStatus.ACTIVE.value,
     )
 
+    DUPLICATE_STATUSES = (
+        TradeStatus.CANDIDATE.value,
+        TradeStatus.WAITING_ENTRY.value,
+        TradeStatus.ACTIVE.value,
+    )
+
     def __init__(
         self,
         path: str = "research.db",
@@ -587,14 +593,14 @@ class ResearchRepository:
                 WHERE UPPER(symbol) = UPPER(?)
                   AND timeframe = ?
                   AND UPPER(direction) = UPPER(?)
-                  AND status IN (?, ?)
+                  AND status IN (?, ?, ?)
                 LIMIT 1
                 """,
                 (
                     symbol,
                     timeframe,
                     direction,
-                    *self.OPEN_STATUSES,
+                    *self.DUPLICATE_STATUSES,
                 ),
             ).fetchone()
 

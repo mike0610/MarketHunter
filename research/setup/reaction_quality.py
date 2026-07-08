@@ -12,6 +12,7 @@ from indicators.bos_filter import BOSFilter
 from indicators.breakout_filter import BreakoutFilter
 from indicators.choch_filter import CHoCHFilter
 from indicators.false_breakout_filter import FalseBreakoutFilter
+from indicators.double_pattern import DoublePatternDetector
 from indicators.liquidity_filter import LiquidityFilter
 from models.market_snapshot import MarketSnapshot
 
@@ -51,6 +52,7 @@ class ReactionQualityDetector:
         self.breakout = BreakoutFilter()
         self.false_breakout = FalseBreakoutFilter()
         self.liquidity = LiquidityFilter()
+        self.double_pattern = DoublePatternDetector()
 
     def assess(
         self,
@@ -73,6 +75,10 @@ class ReactionQualityDetector:
                     "Bearish Liquidity Sweep",
                     self.liquidity.bearish(snapshot),
                 ),
+                (
+                    "Double Top",
+                    self.double_pattern.bearish(snapshot.candles),
+                ),
             ]
         else:
             normalized_direction = "LONG"
@@ -88,6 +94,10 @@ class ReactionQualityDetector:
                 (
                     "Bullish Liquidity Sweep",
                     self.liquidity.bullish(snapshot),
+                ),
+                (
+                    "Double Bottom",
+                    self.double_pattern.bullish(snapshot.candles),
                 ),
             ]
 
@@ -118,7 +128,7 @@ class ReactionQualityDetector:
         else:
             summary = (
                 "No confirmed reaction: missing BOS/CHoCH, "
-                "breakout, false breakout, liquidity sweep or "
+                "breakout, false breakout, liquidity sweep, double top/bottom or "
                 "ATR impulse."
             )
 

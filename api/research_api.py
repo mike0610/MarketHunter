@@ -9,6 +9,7 @@ Responsibilities:
 - Provide details for one virtual trade.
 - Provide aggregate research statistics.
 - Provide persisted continuous worker status.
+- Provide scan runs and signal journal records.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import math
 from collections.abc import Iterator
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from research.models.trade import ResearchTrade
@@ -26,6 +27,11 @@ from research.statistics import ResearchStatistics
 from research.storage.repository import (
     ResearchRepository,
     WorkerStatus,
+)
+from research.storage.scan_journal_repository import (
+    ScanJournalRepository,
+    ScanRun,
+    SignalRecord,
 )
 
 
@@ -212,6 +218,171 @@ class WorkerStatusResponse(BaseModel):
         )
 
 
+class ScanRunResponse(BaseModel):
+    """
+    Serializable scan run.
+    """
+
+    id: str
+    started_at: datetime
+    finished_at: datetime | None
+    status: str
+
+    timeframe: str
+    candle_limit: int
+    symbol_limit: int
+    min_quote_volume_usdt: float
+
+    research_minimum_probability: int
+    elite_minimum_probability: int
+
+    symbols_scanned: int
+    candidate_signals: int
+    research_trades_created: int
+    elite_signals_found: int
+
+    error: str | None
+
+    @classmethod
+    def from_scan_run(
+        cls,
+        scan_run: ScanRun,
+    ) -> "ScanRunResponse":
+        """
+        Convert ScanRun into API response.
+        """
+
+        return cls(
+            id=scan_run.id,
+            started_at=scan_run.started_at,
+            finished_at=scan_run.finished_at,
+            status=scan_run.status,
+            timeframe=scan_run.timeframe,
+            candle_limit=scan_run.candle_limit,
+            symbol_limit=scan_run.symbol_limit,
+            min_quote_volume_usdt=(
+                scan_run.min_quote_volume_usdt
+            ),
+            research_minimum_probability=(
+                scan_run.research_minimum_probability
+            ),
+            elite_minimum_probability=(
+                scan_run.elite_minimum_probability
+            ),
+            symbols_scanned=scan_run.symbols_scanned,
+            candidate_signals=scan_run.candidate_signals,
+            research_trades_created=(
+                scan_run.research_trades_created
+            ),
+            elite_signals_found=scan_run.elite_signals_found,
+            error=scan_run.error,
+        )
+
+
+class LatestScanRunResponse(BaseModel):
+    """
+    Latest scan response.
+    """
+
+    scan_run: ScanRunResponse | None
+
+
+class ScanRunListResponse(BaseModel):
+    """
+    Scan run list response.
+    """
+
+    scan_runs: list[ScanRunResponse]
+    total: int
+    offset: int
+    limit: int
+
+
+class SignalRecordResponse(BaseModel):
+    """
+    Serializable scan signal record.
+    """
+
+    id: str
+    scan_run_id: str
+
+    symbol: str
+    market: str
+    timeframe: str
+    strategy: str
+    direction: str
+
+    score: float
+    probability: int | None
+    confidence: str | None
+
+    entry_price: float | None
+    stop_loss: float | None
+    take_profit: float | None
+    risk_reward: float | None
+
+    status: str
+    rejected_reason: str | None
+
+    research_trade_id: str | None
+    research_skipped: str | None
+    is_elite: bool
+
+    reasons: list[str]
+    probability_reasons: list[str]
+    metadata: dict
+
+    created_at: datetime
+
+    @classmethod
+    def from_signal_record(
+        cls,
+        record: SignalRecord,
+    ) -> "SignalRecordResponse":
+        """
+        Convert SignalRecord into API response.
+        """
+
+        return cls(
+            id=record.id,
+            scan_run_id=record.scan_run_id,
+            symbol=record.symbol,
+            market=record.market,
+            timeframe=record.timeframe,
+            strategy=record.strategy,
+            direction=record.direction,
+            score=record.score,
+            probability=record.probability,
+            confidence=record.confidence,
+            entry_price=record.entry_price,
+            stop_loss=record.stop_loss,
+            take_profit=record.take_profit,
+            risk_reward=record.risk_reward,
+            status=record.status,
+            rejected_reason=record.rejected_reason,
+            research_trade_id=record.research_trade_id,
+            research_skipped=record.research_skipped,
+            is_elite=record.is_elite,
+            reasons=list(record.reasons),
+            probability_reasons=list(
+                record.probability_reasons
+            ),
+            metadata=dict(record.metadata),
+            created_at=record.created_at,
+        )
+
+
+class SignalRecordListResponse(BaseModel):
+    """
+    Signal record list response.
+    """
+
+    signals: list[SignalRecordResponse]
+    total: int
+    offset: int
+    limit: int
+
+
 def get_repository() -> Iterator[ResearchRepository]:
     """
     Open one short-lived SQLite connection per API request.
@@ -225,6 +396,21 @@ def get_repository() -> Iterator[ResearchRepository]:
         yield repository
     finally:
         repository.close()
+
+
+def get_scan_journal() -> Iterator[ScanJournalRepository]:
+    """
+    Open one short-lived scan journal connection per API request.
+    """
+
+    journal = ScanJournalRepository(
+        path=DATABASE_PATH,
+    )
+
+    try:
+        yield journal
+    finally:
+        journal.close()
 
 
 @router.get(
@@ -247,6 +433,125 @@ def get_worker_status(
 
     return WorkerStatusResponse.from_status(
         status=status,
+    )
+
+
+@router.get(
+    "/latest-scan",
+    response_model=LatestScanRunResponse,
+)
+def get_latest_scan(
+    journal: ScanJournalRepository = Depends(
+        get_scan_journal,
+    ),
+) -> LatestScanRunResponse:
+    """
+    Return latest scan run.
+    """
+
+    scan_run = journal.get_latest_scan_run()
+
+    if scan_run is None:
+        return LatestScanRunResponse(
+            scan_run=None,
+        )
+
+    return LatestScanRunResponse(
+        scan_run=ScanRunResponse.from_scan_run(
+            scan_run,
+        ),
+    )
+
+
+@router.get(
+    "/scan-runs",
+    response_model=ScanRunListResponse,
+)
+def list_scan_runs(
+    limit: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+    ),
+    journal: ScanJournalRepository = Depends(
+        get_scan_journal,
+    ),
+) -> ScanRunListResponse:
+    """
+    Return recent scan runs.
+    """
+
+    scan_runs = journal.list_scan_runs(
+        limit=limit,
+        offset=offset,
+    )
+
+    return ScanRunListResponse(
+        scan_runs=[
+            ScanRunResponse.from_scan_run(scan_run)
+            for scan_run in scan_runs
+        ],
+        total=len(scan_runs),
+        offset=offset,
+        limit=limit,
+    )
+
+
+@router.get(
+    "/scan-runs/{scan_run_id}/signals",
+    response_model=SignalRecordListResponse,
+)
+def list_scan_signals(
+    scan_run_id: str,
+    status: str | None = Query(
+        default=None,
+        description="Signal status: rejected, research or elite.",
+    ),
+    limit: int = Query(
+        default=200,
+        ge=1,
+        le=500,
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+    ),
+    journal: ScanJournalRepository = Depends(
+        get_scan_journal,
+    ),
+) -> SignalRecordListResponse:
+    """
+    Return signal records for one scan run.
+    """
+
+    normalized_status = _normalize_signal_status(
+        status,
+    )
+
+    signals = journal.list_signal_records(
+        scan_run_id=scan_run_id,
+        status=normalized_status,
+        limit=limit,
+        offset=offset,
+    )
+
+    total = journal.count_signal_records(
+        scan_run_id=scan_run_id,
+        status=normalized_status,
+    )
+
+    return SignalRecordListResponse(
+        signals=[
+            SignalRecordResponse.from_signal_record(signal)
+            for signal in signals
+        ],
+        total=total,
+        offset=offset,
+        limit=limit,
     )
 
 
@@ -394,8 +699,6 @@ def get_research_trade(
     )
 
     if trade is None:
-        from fastapi import HTTPException
-
         raise HTTPException(
             status_code=404,
             detail=(
@@ -413,7 +716,7 @@ def _normalize_status(
     status: str | None,
 ) -> str | None:
     """
-    Validate and normalize optional status query parameter.
+    Validate and normalize optional trade status query parameter.
     """
 
     if status is None:
@@ -427,8 +730,6 @@ def _normalize_status(
     }
 
     if normalized not in allowed_statuses:
-        from fastapi import HTTPException
-
         allowed = ", ".join(
             sorted(allowed_statuses)
         )
@@ -437,6 +738,40 @@ def _normalize_status(
             status_code=400,
             detail=(
                 f"Unsupported trade status: {status}. "
+                f"Allowed values: {allowed}."
+            ),
+        )
+
+    return normalized
+
+
+def _normalize_signal_status(
+    status: str | None,
+) -> str | None:
+    """
+    Validate and normalize optional signal status query parameter.
+    """
+
+    if status is None:
+        return None
+
+    normalized = status.strip().lower()
+
+    allowed_statuses = {
+        "rejected",
+        "research",
+        "elite",
+    }
+
+    if normalized not in allowed_statuses:
+        allowed = ", ".join(
+            sorted(allowed_statuses)
+        )
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported signal status: {status}. "
                 f"Allowed values: {allowed}."
             ),
         )

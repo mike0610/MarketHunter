@@ -9,6 +9,7 @@ Responsibilities:
 - Build a market snapshot.
 - Run all strategies for a symbol.
 - Send candidate signals through SignalPipeline.
+- Persist every candidate signal into scan journal when enabled.
 """
 
 from __future__ import annotations
@@ -21,6 +22,9 @@ from models.market_symbol import MarketSymbol
 from models.signal import Signal
 from pipeline.context import SignalContext
 from pipeline.signal_pipeline import SignalPipeline
+from research.storage.scan_journal_repository import (
+    ScanJournalRepository,
+)
 from services.market_data import MarketDataService
 from services.snapshot_builder import SnapshotBuilder
 from services.worker_pool import WorkerPool
@@ -44,6 +48,8 @@ class Scanner:
         pipeline: SignalPipeline | None = None,
         timeframe: str = "1h",
         candle_limit: int = 500,
+        scan_journal: ScanJournalRepository | None = None,
+        scan_run_id: str | None = None,
     ) -> None:
         """
         Initialize scanner dependencies.
@@ -61,6 +67,11 @@ class Scanner:
                 "Scanner candle limit must be at least 200."
             )
 
+        if scan_journal is not None and scan_run_id is None:
+            raise ValueError(
+                "Scanner scan_run_id is required when scan_journal is set."
+            )
+
         self.market_data = market_data
         self.strategies = strategies
         self.snapshot_builder = SnapshotBuilder()
@@ -68,6 +79,8 @@ class Scanner:
         self.pipeline = pipeline
         self.timeframe = normalized_timeframe
         self.candle_limit = candle_limit
+        self.scan_journal = scan_journal
+        self.scan_run_id = scan_run_id
 
     async def scan_symbol(
         self,
@@ -117,15 +130,25 @@ class Scanner:
                 signal.market = symbol.market
                 signal.timeframe = self.timeframe
 
-                processed_signal = await self._process_signal(
+                context = await self._process_signal(
                     signal=signal,
                     snapshot=snapshot,
                 )
 
-                if processed_signal is None:
+                self._record_signal_context(
+                    context=context,
+                )
+
+                if not context.accepted:
+                    logger.debug(
+                        "{} {} rejected by pipeline: {}",
+                        signal.symbol,
+                        signal.strategy,
+                        context.rejected_reason,
+                    )
                     continue
 
-                signals.append(processed_signal)
+                signals.append(context.signal)
 
             except Exception as exc:
                 logger.warning(
@@ -183,28 +206,45 @@ class Scanner:
         self,
         signal: Signal,
         snapshot: object,
-    ) -> Signal | None:
+    ) -> SignalContext:
         """
         Send a candidate signal through the optional pipeline.
         """
-
-        if self.pipeline is None:
-            return signal
 
         context = SignalContext(
             signal=signal,
             snapshot=snapshot,
         )
 
-        context = await self.pipeline.process(context)
+        if self.pipeline is None:
+            return context
 
-        if not context.accepted:
-            logger.debug(
-                "{} {} rejected by pipeline: {}",
-                signal.symbol,
-                signal.strategy,
-                context.rejected_reason,
+        return await self.pipeline.process(context)
+
+    def _record_signal_context(
+        self,
+        context: SignalContext,
+    ) -> None:
+        """
+        Persist one processed signal context into scan journal.
+        """
+
+        if self.scan_journal is None:
+            return
+
+        if self.scan_run_id is None:
+            return
+
+        try:
+            self.scan_journal.save_signal_record_from_context(
+                scan_run_id=self.scan_run_id,
+                context=context,
             )
-            return None
 
-        return context.signal
+        except Exception as exc:
+            logger.warning(
+                "{} {} failed to write signal journal record: {}",
+                context.signal.symbol,
+                context.signal.strategy,
+                exc,
+            )

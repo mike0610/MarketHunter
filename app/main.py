@@ -9,12 +9,14 @@ Responsibilities:
 - Select liquid USDT perpetual Futures contracts.
 - Scan one configured timeframe.
 - Create virtual research trades for qualified signals.
+- Persist scan runs and every candidate signal.
 - Show only elite signals in Scanner output.
 """
 
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 
 from loguru import logger
 
@@ -33,6 +35,9 @@ from research.manager import ResearchManager
 from research.monitor_service import ResearchMonitorService
 from research.statistics import ResearchStatistics
 from research.storage.repository import ResearchRepository
+from research.storage.scan_journal_repository import (
+    ScanJournalRepository,
+)
 from risk.risk_manager import RiskManager
 from services.market_data import MarketDataService
 from services.scanner import Scanner
@@ -157,7 +162,16 @@ async def main() -> None:
         path=DATABASE_PATH,
     )
 
+    scan_journal = ScanJournalRepository(
+        path=DATABASE_PATH,
+    )
+
     market_data = MarketDataService()
+
+    scan_run_id: str | None = None
+    symbols_scanned = 0
+    created_trades = 0
+    elite_signals_found = 0
 
     try:
         await market_data.ping()
@@ -180,6 +194,8 @@ async def main() -> None:
             )
             return
 
+        symbols_scanned = len(symbols)
+
         logger.info(
             "Loaded liquid perpetual Futures: {}",
             len(symbols),
@@ -197,6 +213,29 @@ async def main() -> None:
             "Research threshold: {}% | Elite threshold: {}%",
             RESEARCH_MINIMUM_PROBABILITY,
             ELITE_MINIMUM_PROBABILITY,
+        )
+
+        scan_run = scan_journal.create_scan_run(
+            timeframe=SCAN_TIMEFRAME,
+            candle_limit=SCAN_CANDLE_LIMIT,
+            symbol_limit=SCAN_SYMBOL_LIMIT,
+            min_quote_volume_usdt=(
+                MINIMUM_FUTURES_QUOTE_VOLUME_USDT
+            ),
+            research_minimum_probability=(
+                RESEARCH_MINIMUM_PROBABILITY
+            ),
+            elite_minimum_probability=(
+                ELITE_MINIMUM_PROBABILITY
+            ),
+            started_at=datetime.now(UTC),
+        )
+
+        scan_run_id = scan_run.id
+
+        logger.info(
+            "Scan journal run started: {}",
+            scan_run_id,
         )
 
         pipeline = build_pipeline(
@@ -225,6 +264,8 @@ async def main() -> None:
             pipeline=pipeline,
             timeframe=SCAN_TIMEFRAME,
             candle_limit=SCAN_CANDLE_LIMIT,
+            scan_journal=scan_journal,
+            scan_run_id=scan_run_id,
         )
 
         elite_signals = await scanner.scan_many(
@@ -238,15 +279,41 @@ async def main() -> None:
             len(trades) - trades_before,
         )
 
+        elite_signals_found = len(elite_signals)
+
+        signal_summary = (
+            scan_journal.get_signal_record_summary(
+                scan_run_id=scan_run_id,
+            )
+        )
+
+        scan_journal.finish_scan_run(
+            scan_run_id=scan_run_id,
+            status="completed",
+            finished_at=datetime.now(UTC),
+            symbols_scanned=symbols_scanned,
+            candidate_signals=signal_summary["total"],
+            research_trades_created=created_trades,
+            elite_signals_found=elite_signals_found,
+        )
+
         logger.info("")
         logger.info("=" * 60)
+        logger.info(
+            "Scan journal | Total: {} | Rejected: {} | "
+            "Research: {} | Elite: {}",
+            signal_summary["total"],
+            signal_summary["rejected"],
+            signal_summary["research"],
+            signal_summary["elite"],
+        )
         logger.info(
             "Research trades created this scan: {}",
             created_trades,
         )
         logger.info(
             "Elite signals found: {}",
-            len(elite_signals),
+            elite_signals_found,
         )
         logger.info("=" * 60)
 
@@ -322,8 +389,28 @@ async def main() -> None:
             statistics["average_rr"],
         )
 
+    except Exception as exc:
+        if scan_run_id is not None:
+            summary = scan_journal.get_signal_record_summary(
+                scan_run_id=scan_run_id,
+            )
+
+            scan_journal.finish_scan_run(
+                scan_run_id=scan_run_id,
+                status="failed",
+                finished_at=datetime.now(UTC),
+                symbols_scanned=symbols_scanned,
+                candidate_signals=summary["total"],
+                research_trades_created=created_trades,
+                elite_signals_found=elite_signals_found,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
+        raise
+
     finally:
         repository.close()
+        scan_journal.close()
         await market_data.close()
 
 

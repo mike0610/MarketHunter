@@ -10,17 +10,12 @@ import {
     DialogTitle,
     Divider,
     FormControl,
+    GlobalStyles,
     InputLabel,
     MenuItem,
     Paper,
     Select,
     Stack,
-    Table,
-    TableBody,
-    TableCell,
-    TableContainer,
-    TableHead,
-    TableRow,
     TextField,
     Typography,
 } from "@mui/material";
@@ -42,6 +37,8 @@ import {
     getScanSignals,
     getWorkerStatus,
 } from "../api/researchApi";
+
+import SetupVisualization from "../components/SetupVisualization";
 
 
 const STATUS_OPTIONS = [
@@ -264,7 +261,11 @@ function StatisticCard({
             elevation={0}
             sx={{
                 p: 2,
-                minWidth: 170,
+                minWidth: {
+                    xs: "100%",
+                    sm: 170,
+                },
+                flex: "1 1 170px",
                 border: 1,
                 borderColor: "divider",
             }}
@@ -282,6 +283,7 @@ function StatisticCard({
                 color={color}
                 sx={{
                     mt: 0.5,
+                    overflowWrap: "anywhere",
                 }}
             >
                 {value}
@@ -291,14 +293,18 @@ function StatisticCard({
 }
 
 
-function WorkerMetric({
+function MetricItem({
     label,
     value,
 }) {
     return (
         <Box
             sx={{
-                minWidth: 155,
+                minWidth: {
+                    xs: "45%",
+                    sm: 135,
+                },
+                flex: "1 1 135px",
             }}
         >
             <Typography
@@ -313,11 +319,64 @@ function WorkerMetric({
                 fontWeight="medium"
                 sx={{
                     mt: 0.5,
+                    overflowWrap: "anywhere",
                 }}
             >
                 {value}
             </Typography>
         </Box>
+    );
+}
+
+
+function DetailRow({
+    label,
+    value,
+}) {
+    return (
+        <Box
+            sx={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 3,
+                py: 0.75,
+            }}
+        >
+            <Typography
+                variant="body2"
+                color="text.secondary"
+            >
+                {label}
+            </Typography>
+
+            <Typography
+                variant="body2"
+                textAlign="right"
+                sx={{
+                    overflowWrap: "anywhere",
+                }}
+            >
+                {value}
+            </Typography>
+        </Box>
+    );
+}
+
+
+function LevelRow({
+    label,
+    value,
+}) {
+    return (
+        <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{
+                overflowWrap: "anywhere",
+            }}
+        >
+            <strong>{label}:</strong> {value}
+        </Typography>
     );
 }
 
@@ -336,6 +395,7 @@ function WorkerStatusPanel({
                 mb: 3,
                 border: 1,
                 borderColor: "divider",
+                overflow: "hidden",
             }}
         >
             <Stack
@@ -382,32 +442,33 @@ function WorkerStatusPanel({
                 direction="row"
                 flexWrap="wrap"
                 gap={3}
+                useFlexGap
             >
-                <WorkerMetric
+                <MetricItem
                     label="Останній цикл"
                     value={formatDate(
                         workerStatus?.last_cycle_finished_at,
                     )}
                 />
 
-                <WorkerMetric
+                <MetricItem
                     label="Наступний запуск"
                     value={formatDate(
                         workerStatus?.next_cycle_at,
                     )}
                 />
 
-                <WorkerMetric
+                <MetricItem
                     label="Очікують входу"
                     value={statistics?.waiting_entry ?? "—"}
                 />
 
-                <WorkerMetric
+                <MetricItem
                     label="Активні угоди"
                     value={statistics?.active ?? "—"}
                 />
 
-                <WorkerMetric
+                <MetricItem
                     label="Оновлено"
                     value={formatDate(
                         workerStatus?.updated_at,
@@ -447,6 +508,153 @@ function WorkerStatusPanel({
 }
 
 
+function SignalCard({
+    signal,
+}) {
+    return (
+        <Paper
+            elevation={0}
+            sx={{
+                p: 1.5,
+                border: 1,
+                borderColor: "divider",
+                bgcolor: "background.default",
+                overflow: "hidden",
+            }}
+        >
+            <Stack spacing={1.25}>
+                <Stack
+                    direction={{
+                        xs: "column",
+                        sm: "row",
+                    }}
+                    justifyContent="space-between"
+                    alignItems={{
+                        xs: "flex-start",
+                        sm: "center",
+                    }}
+                    spacing={1}
+                >
+                    <Box>
+                        <Typography
+                            variant="body1"
+                            fontWeight="bold"
+                        >
+                            {signal.symbol}
+                        </Typography>
+
+                        <Typography
+                            variant="body2"
+                            color="text.secondary"
+                        >
+                            {signal.strategy}
+                        </Typography>
+                    </Box>
+
+                    <Stack
+                        direction="row"
+                        spacing={1}
+                        flexWrap="wrap"
+                        useFlexGap
+                    >
+                        <Chip
+                            size="small"
+                            label={signal.direction}
+                            color={
+                                signal.direction === "LONG"
+                                    ? "success"
+                                    : "error"
+                            }
+                        />
+
+                        <Chip
+                            size="small"
+                            label={getSignalStatusLabel(
+                                signal.status,
+                            )}
+                            color={getSignalStatusColor(
+                                signal.status,
+                            )}
+                        />
+                    </Stack>
+                </Stack>
+
+                <Stack
+                    direction="row"
+                    flexWrap="wrap"
+                    gap={2}
+                    useFlexGap
+                >
+                    <MetricItem
+                        label="Probability"
+                        value={
+                            signal.probability === null
+                                ? "—"
+                                : `${signal.probability}%`
+                        }
+                    />
+
+                    <MetricItem
+                        label="Score"
+                        value={signal.score}
+                    />
+
+                    <MetricItem
+                        label="RR"
+                        value={signal.risk_reward ?? "—"}
+                    />
+                </Stack>
+
+                <Divider />
+
+                <Stack
+                    direction={{
+                        xs: "column",
+                        sm: "row",
+                    }}
+                    spacing={1.5}
+                    flexWrap="wrap"
+                    useFlexGap
+                >
+                    <LevelRow
+                        label="Entry"
+                        value={formatPrice(
+                            signal.entry_price,
+                        )}
+                    />
+
+                    <LevelRow
+                        label="SL"
+                        value={formatPrice(
+                            signal.stop_loss,
+                        )}
+                    />
+
+                    <LevelRow
+                        label="TP"
+                        value={formatPrice(
+                            signal.take_profit,
+                        )}
+                    />
+                </Stack>
+
+                <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{
+                        overflowWrap: "anywhere",
+                    }}
+                >
+                    <strong>Причина:</strong>
+                    {" "}
+                    {getSignalReason(signal)}
+                </Typography>
+            </Stack>
+        </Paper>
+    );
+}
+
+
 function ScanJournalPanel({
     latestScan,
     scanSignals,
@@ -465,6 +673,7 @@ function ScanJournalPanel({
                 mb: 3,
                 border: 1,
                 borderColor: "divider",
+                overflow: "hidden",
             }}
         >
             <Stack
@@ -506,6 +715,8 @@ function ScanJournalPanel({
                     direction="row"
                     spacing={1}
                     alignItems="center"
+                    flexWrap="wrap"
+                    useFlexGap
                 >
                     <Chip
                         label={
@@ -570,52 +781,53 @@ function ScanJournalPanel({
                         direction="row"
                         flexWrap="wrap"
                         gap={3}
+                        useFlexGap
                         sx={{
                             mb: 2,
                         }}
                     >
-                        <WorkerMetric
+                        <MetricItem
                             label="Початок"
                             value={formatDate(
                                 scanRun.started_at,
                             )}
                         />
 
-                        <WorkerMetric
+                        <MetricItem
                             label="Завершено"
                             value={formatDate(
                                 scanRun.finished_at,
                             )}
                         />
 
-                        <WorkerMetric
+                        <MetricItem
                             label="TF"
                             value={scanRun.timeframe}
                         />
 
-                        <WorkerMetric
+                        <MetricItem
                             label="Перевірено пар"
                             value={scanRun.symbols_scanned}
                         />
 
-                        <WorkerMetric
+                        <MetricItem
                             label="Кандидатів"
                             value={scanRun.candidate_signals}
                         />
 
-                        <WorkerMetric
+                        <MetricItem
                             label="Research trades"
                             value={
                                 scanRun.research_trades_created
                             }
                         />
 
-                        <WorkerMetric
+                        <MetricItem
                             label="Elite signals"
                             value={scanRun.elite_signals_found}
                         />
 
-                        <WorkerMetric
+                        <MetricItem
                             label="Показано"
                             value={
                                 `${scanSignals.length}/${scanSignalsTotal}`
@@ -634,190 +846,34 @@ function ScanJournalPanel({
                         </Alert>
                     )}
 
-                    <TableContainer
-                        sx={{
-                            maxHeight: 430,
-                        }}
-                    >
-                        <Table
-                            stickyHeader
-                            size="small"
+                    {loading && (
+                        <Box
+                            sx={{
+                                py: 4,
+                                display: "flex",
+                                justifyContent: "center",
+                            }}
                         >
-                            <TableHead>
-                                <TableRow>
-                                    <TableCell>
-                                        Символ
-                                    </TableCell>
+                            <CircularProgress size={24} />
+                        </Box>
+                    )}
 
-                                    <TableCell>
-                                        Стратегія
-                                    </TableCell>
+                    {!loading && scanSignals.length === 0 && (
+                        <Alert severity="info">
+                            Немає сигналів за вибраним фільтром.
+                        </Alert>
+                    )}
 
-                                    <TableCell>
-                                        Напрямок
-                                    </TableCell>
-
-                                    <TableCell>
-                                        Probability
-                                    </TableCell>
-
-                                    <TableCell>
-                                        Score
-                                    </TableCell>
-
-                                    <TableCell>
-                                        Entry
-                                    </TableCell>
-
-                                    <TableCell>
-                                        SL
-                                    </TableCell>
-
-                                    <TableCell>
-                                        TP
-                                    </TableCell>
-
-                                    <TableCell>
-                                        RR
-                                    </TableCell>
-
-                                    <TableCell>
-                                        Статус
-                                    </TableCell>
-
-                                    <TableCell>
-                                        Причина
-                                    </TableCell>
-                                </TableRow>
-                            </TableHead>
-
-                            <TableBody>
-                                {loading && (
-                                    <TableRow>
-                                        <TableCell
-                                            colSpan={11}
-                                            align="center"
-                                            sx={{
-                                                py: 4,
-                                            }}
-                                        >
-                                            <CircularProgress
-                                                size={24}
-                                            />
-                                        </TableCell>
-                                    </TableRow>
-                                )}
-
-                                {!loading
-                                    && scanSignals.length === 0 && (
-                                    <TableRow>
-                                        <TableCell
-                                            colSpan={11}
-                                            align="center"
-                                            sx={{
-                                                py: 4,
-                                            }}
-                                        >
-                                            Немає сигналів за
-                                            вибраним фільтром.
-                                        </TableCell>
-                                    </TableRow>
-                                )}
-
-                                {!loading
-                                    && scanSignals.map((signal) => (
-                                    <TableRow
-                                        hover
-                                        key={signal.id}
-                                    >
-                                        <TableCell>
-                                            <Typography
-                                                fontWeight="bold"
-                                            >
-                                                {signal.symbol}
-                                            </Typography>
-                                        </TableCell>
-
-                                        <TableCell>
-                                            {signal.strategy}
-                                        </TableCell>
-
-                                        <TableCell>
-                                            <Chip
-                                                size="small"
-                                                label={
-                                                    signal.direction
-                                                }
-                                                color={
-                                                    signal.direction
-                                                    === "LONG"
-                                                        ? "success"
-                                                        : "error"
-                                                }
-                                            />
-                                        </TableCell>
-
-                                        <TableCell>
-                                            {signal.probability === null
-                                                ? "—"
-                                                : `${signal.probability}%`}
-                                        </TableCell>
-
-                                        <TableCell>
-                                            {signal.score}
-                                        </TableCell>
-
-                                        <TableCell>
-                                            {formatPrice(
-                                                signal.entry_price,
-                                            )}
-                                        </TableCell>
-
-                                        <TableCell>
-                                            {formatPrice(
-                                                signal.stop_loss,
-                                            )}
-                                        </TableCell>
-
-                                        <TableCell>
-                                            {formatPrice(
-                                                signal.take_profit,
-                                            )}
-                                        </TableCell>
-
-                                        <TableCell>
-                                            {signal.risk_reward ?? "—"}
-                                        </TableCell>
-
-                                        <TableCell>
-                                            <Chip
-                                                size="small"
-                                                label={getSignalStatusLabel(
-                                                    signal.status,
-                                                )}
-                                                color={getSignalStatusColor(
-                                                    signal.status,
-                                                )}
-                                            />
-                                        </TableCell>
-
-                                        <TableCell
-                                            sx={{
-                                                maxWidth: 320,
-                                            }}
-                                        >
-                                            <Typography
-                                                variant="body2"
-                                                color="text.secondary"
-                                            >
-                                                {getSignalReason(signal)}
-                                            </Typography>
-                                        </TableCell>
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
-                    </TableContainer>
+                    {!loading && scanSignals.length > 0 && (
+                        <Stack spacing={1.5}>
+                            {scanSignals.map((signal) => (
+                                <SignalCard
+                                    key={signal.id}
+                                    signal={signal}
+                                />
+                            ))}
+                        </Stack>
+                    )}
                 </>
             )}
         </Paper>
@@ -825,33 +881,136 @@ function ScanJournalPanel({
 }
 
 
-function DetailRow({
-    label,
-    value,
+function TradeCard({
+    trade,
+    detailLoading,
+    onOpen,
 }) {
     return (
-        <Box
+        <Paper
+            elevation={0}
             sx={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: 3,
-                py: 0.75,
+                p: 1.5,
+                border: 1,
+                borderColor: "divider",
+                bgcolor: "background.default",
+                overflow: "hidden",
             }}
         >
-            <Typography
-                variant="body2"
-                color="text.secondary"
-            >
-                {label}
-            </Typography>
+            <Stack spacing={1.25}>
+                <Stack
+                    direction={{
+                        xs: "column",
+                        sm: "row",
+                    }}
+                    justifyContent="space-between"
+                    alignItems={{
+                        xs: "flex-start",
+                        sm: "center",
+                    }}
+                    spacing={1}
+                >
+                    <Box>
+                        <Typography
+                            variant="body1"
+                            fontWeight="bold"
+                        >
+                            {trade.symbol}
+                        </Typography>
 
-            <Typography
-                variant="body2"
-                textAlign="right"
-            >
-                {value}
-            </Typography>
-        </Box>
+                        <Typography
+                            variant="body2"
+                            color="text.secondary"
+                        >
+                            {trade.strategy} · {trade.timeframe}
+                        </Typography>
+                    </Box>
+
+                    <Stack
+                        direction="row"
+                        spacing={1}
+                        flexWrap="wrap"
+                        useFlexGap
+                    >
+                        <Chip
+                            size="small"
+                            label={trade.direction}
+                            color={
+                                trade.direction === "LONG"
+                                    ? "success"
+                                    : "error"
+                            }
+                        />
+
+                        <Chip
+                            size="small"
+                            label={getStatusLabel(
+                                trade.status,
+                            )}
+                            color={getStatusColor(
+                                trade.status,
+                            )}
+                        />
+                    </Stack>
+                </Stack>
+
+                <Stack
+                    direction="row"
+                    flexWrap="wrap"
+                    gap={2}
+                    useFlexGap
+                >
+                    <MetricItem
+                        label="Probability"
+                        value={`${trade.probability}%`}
+                    />
+
+                    <MetricItem
+                        label="Entry"
+                        value={formatPrice(
+                            trade.entry_price,
+                        )}
+                    />
+
+                    <MetricItem
+                        label="SL"
+                        value={formatPrice(
+                            trade.stop_loss,
+                        )}
+                    />
+
+                    <MetricItem
+                        label="TP"
+                        value={formatPrice(
+                            trade.take_profit,
+                        )}
+                    />
+
+                    <MetricItem
+                        label="Створено"
+                        value={formatDate(
+                            trade.created_at,
+                        )}
+                    />
+                </Stack>
+
+                <Stack
+                    direction="row"
+                    justifyContent="flex-end"
+                >
+                    <Button
+                        size="small"
+                        startIcon={<VisibilityIcon />}
+                        onClick={() => {
+                            onOpen(trade.id);
+                        }}
+                        disabled={detailLoading}
+                    >
+                        Відкрити
+                    </Button>
+                </Stack>
+            </Stack>
+        </Paper>
     );
 }
 
@@ -978,141 +1137,36 @@ export default function Research() {
     }
 
     return (
-        <Box>
-            <Stack
-                direction={{
-                    xs: "column",
-                    md: "row",
+        <>
+            <GlobalStyles
+                styles={{
+                    html: {
+                        width: "100%",
+                        maxWidth: "100%",
+                        overflowX: "hidden",
+                    },
+                    body: {
+                        width: "100%",
+                        maxWidth: "100%",
+                        overflowX: "hidden",
+                    },
+                    "#root": {
+                        width: "100%",
+                        maxWidth: "100%",
+                        overflowX: "hidden",
+                    },
+                    "*": {
+                        boxSizing: "border-box",
+                    },
                 }}
-                justifyContent="space-between"
-                alignItems={{
-                    xs: "flex-start",
-                    md: "center",
-                }}
-                spacing={2}
-                sx={{
-                    mb: 3,
-                }}
-            >
-                <Box>
-                    <Typography
-                        variant="h4"
-                        fontWeight="bold"
-                    >
-                        Research Trades
-                    </Typography>
-
-                    <Typography
-                        variant="body1"
-                        color="text.secondary"
-                        sx={{
-                            mt: 0.5,
-                        }}
-                    >
-                        Virtual trades, статистика,
-                        журнал сканувань та результати
-                        перевірки сигналів.
-                    </Typography>
-                </Box>
-
-                <Button
-                    variant="contained"
-                    startIcon={<RefreshIcon />}
-                    onClick={loadResearchData}
-                    disabled={loading}
-                >
-                    Оновити
-                </Button>
-            </Stack>
-
-            {error && (
-                <Alert
-                    severity="error"
-                    sx={{
-                        mb: 3,
-                    }}
-                    onClose={() => setError("")}
-                >
-                    {error}
-                </Alert>
-            )}
-
-            <WorkerStatusPanel
-                workerStatus={workerStatus}
-                statistics={statistics}
             />
 
-            <ScanJournalPanel
-                latestScan={latestScan}
-                scanSignals={scanSignals}
-                scanSignalsTotal={scanSignalsTotal}
-                signalStatus={signalStatus}
-                setSignalStatus={setSignalStatus}
-                loading={loading}
-            />
-
-            <Stack
-                direction="row"
-                flexWrap="wrap"
-                gap={2}
+            <Box
                 sx={{
-                    mb: 3,
-                }}
-            >
-                <StatisticCard
-                    label="Усього угод"
-                    value={statistics?.total ?? "—"}
-                />
-
-                <StatisticCard
-                    label="Очікують входу"
-                    value={
-                        statistics?.waiting_entry
-                        ?? "—"
-                    }
-                    color="warning.main"
-                />
-
-                <StatisticCard
-                    label="Активні"
-                    value={statistics?.active ?? "—"}
-                    color="info.main"
-                />
-
-                <StatisticCard
-                    label="Завершені"
-                    value={
-                        statistics?.completed
-                        ?? "—"
-                    }
-                    color="success.main"
-                />
-
-                <StatisticCard
-                    label="Win rate"
-                    value={formatPercent(
-                        statistics?.win_rate,
-                    )}
-                />
-
-                <StatisticCard
-                    label="PnL"
-                    value={`${formatMoney(
-                        statistics?.total_profit,
-                    )} USDT`}
-                    color={getProfitColor(
-                        statistics?.total_profit,
-                    )}
-                />
-            </Stack>
-
-            <Paper
-                elevation={0}
-                sx={{
-                    p: 2,
-                    mb: 3,
-                    border: 1,
-                    borderColor: "divider",
+                    width: "100%",
+                    maxWidth: "100%",
+                    minWidth: 0,
+                    overflowX: "hidden",
                 }}
             >
                 <Stack
@@ -1120,499 +1174,503 @@ export default function Research() {
                         xs: "column",
                         md: "row",
                     }}
-                    spacing={2}
+                    justifyContent="space-between"
                     alignItems={{
-                        xs: "stretch",
+                        xs: "flex-start",
                         md: "center",
                     }}
+                    spacing={2}
+                    sx={{
+                        mb: 3,
+                    }}
                 >
-                    <FormControl
-                        size="small"
+                    <Box
                         sx={{
-                            minWidth: 210,
+                            minWidth: 0,
                         }}
                     >
-                        <InputLabel id="research-status-label">
-                            Статус
-                        </InputLabel>
+                        <Typography
+                            variant="h4"
+                            fontWeight="bold"
+                        >
+                            Research Trades
+                        </Typography>
 
-                        <Select
-                            labelId="research-status-label"
-                            label="Статус"
-                            value={status}
+                        <Typography
+                            variant="body1"
+                            color="text.secondary"
+                            sx={{
+                                mt: 0.5,
+                            }}
+                        >
+                            Virtual trades, статистика,
+                            журнал сканувань та результати
+                            перевірки сигналів.
+                        </Typography>
+                    </Box>
+
+                    <Button
+                        variant="contained"
+                        startIcon={<RefreshIcon />}
+                        onClick={loadResearchData}
+                        disabled={loading}
+                    >
+                        Оновити
+                    </Button>
+                </Stack>
+
+                {error && (
+                    <Alert
+                        severity="error"
+                        sx={{
+                            mb: 3,
+                        }}
+                        onClose={() => setError("")}
+                    >
+                        {error}
+                    </Alert>
+                )}
+
+                <WorkerStatusPanel
+                    workerStatus={workerStatus}
+                    statistics={statistics}
+                />
+
+                <ScanJournalPanel
+                    latestScan={latestScan}
+                    scanSignals={scanSignals}
+                    scanSignalsTotal={scanSignalsTotal}
+                    signalStatus={signalStatus}
+                    setSignalStatus={setSignalStatus}
+                    loading={loading}
+                />
+
+                <Stack
+                    direction="row"
+                    flexWrap="wrap"
+                    gap={2}
+                    useFlexGap
+                    sx={{
+                        mb: 3,
+                    }}
+                >
+                    <StatisticCard
+                        label="Усього угод"
+                        value={statistics?.total ?? "—"}
+                    />
+
+                    <StatisticCard
+                        label="Очікують входу"
+                        value={
+                            statistics?.waiting_entry
+                            ?? "—"
+                        }
+                        color="warning.main"
+                    />
+
+                    <StatisticCard
+                        label="Активні"
+                        value={statistics?.active ?? "—"}
+                        color="info.main"
+                    />
+
+                    <StatisticCard
+                        label="Завершені"
+                        value={
+                            statistics?.completed
+                            ?? "—"
+                        }
+                        color="success.main"
+                    />
+
+                    <StatisticCard
+                        label="Win rate"
+                        value={formatPercent(
+                            statistics?.win_rate,
+                        )}
+                    />
+
+                    <StatisticCard
+                        label="PnL"
+                        value={`${formatMoney(
+                            statistics?.total_profit,
+                        )} USDT`}
+                        color={getProfitColor(
+                            statistics?.total_profit,
+                        )}
+                    />
+                </Stack>
+
+                <Paper
+                    elevation={0}
+                    sx={{
+                        p: 2,
+                        mb: 3,
+                        border: 1,
+                        borderColor: "divider",
+                        overflow: "hidden",
+                    }}
+                >
+                    <Stack
+                        direction={{
+                            xs: "column",
+                            md: "row",
+                        }}
+                        spacing={2}
+                        alignItems={{
+                            xs: "stretch",
+                            md: "center",
+                        }}
+                        flexWrap="wrap"
+                        useFlexGap
+                    >
+                        <FormControl
+                            size="small"
+                            sx={{
+                                minWidth: 210,
+                            }}
+                        >
+                            <InputLabel id="research-status-label">
+                                Статус
+                            </InputLabel>
+
+                            <Select
+                                labelId="research-status-label"
+                                label="Статус"
+                                value={status}
+                                onChange={(event) => {
+                                    setStatus(
+                                        event.target.value,
+                                    );
+                                }}
+                            >
+                                {STATUS_OPTIONS.map(
+                                    (option) => (
+                                        <MenuItem
+                                            key={option.value}
+                                            value={option.value}
+                                        >
+                                            {option.label}
+                                        </MenuItem>
+                                    ),
+                                )}
+                            </Select>
+                        </FormControl>
+
+                        <TextField
+                            size="small"
+                            label="Символ"
+                            placeholder="BTCUSDT"
+                            value={symbol}
                             onChange={(event) => {
-                                setStatus(
+                                setSymbol(
                                     event.target.value,
                                 );
                             }}
+                            sx={{
+                                minWidth: 210,
+                            }}
+                        />
+
+                        <Typography
+                            variant="body2"
+                            color="text.secondary"
                         >
-                            {STATUS_OPTIONS.map(
-                                (option) => (
-                                    <MenuItem
-                                        key={option.value}
-                                        value={option.value}
-                                    >
-                                        {option.label}
-                                    </MenuItem>
-                                ),
-                            )}
-                        </Select>
-                    </FormControl>
+                            Показано угод: {trades.length}
+                        </Typography>
+                    </Stack>
+                </Paper>
 
-                    <TextField
-                        size="small"
-                        label="Символ"
-                        placeholder="BTCUSDT"
-                        value={symbol}
-                        onChange={(event) => {
-                            setSymbol(
-                                event.target.value,
-                            );
-                        }}
-                        sx={{
-                            minWidth: 210,
-                        }}
-                    />
-
+                <Paper
+                    elevation={0}
+                    sx={{
+                        p: 2,
+                        border: 1,
+                        borderColor: "divider",
+                        overflow: "hidden",
+                    }}
+                >
                     <Typography
-                        variant="body2"
-                        color="text.secondary"
+                        variant="h6"
+                        fontWeight="bold"
+                        sx={{
+                            mb: 2,
+                        }}
                     >
-                        Показано угод: {trades.length}
+                        Research Trades
                     </Typography>
-                </Stack>
-            </Paper>
 
-            <Paper
-                elevation={0}
-                sx={{
-                    border: 1,
-                    borderColor: "divider",
-                    overflow: "hidden",
-                }}
-            >
-                <TableContainer>
-                    <Table
-                        stickyHeader
-                        size="small"
-                    >
-                        <TableHead>
-                            <TableRow>
-                                <TableCell>
-                                    Символ
-                                </TableCell>
+                    {loading && (
+                        <Box
+                            sx={{
+                                py: 4,
+                                display: "flex",
+                                justifyContent: "center",
+                            }}
+                        >
+                            <CircularProgress size={28} />
+                        </Box>
+                    )}
 
-                                <TableCell>
-                                    Стратегія
-                                </TableCell>
+                    {!loading && trades.length === 0 && (
+                        <Alert severity="info">
+                            Немає угод за вибраними фільтрами.
+                        </Alert>
+                    )}
 
-                                <TableCell>
-                                    Напрямок
-                                </TableCell>
-
-                                <TableCell>
-                                    TF
-                                </TableCell>
-
-                                <TableCell>
-                                    Ймовірність
-                                </TableCell>
-
-                                <TableCell>
-                                    Вхід
-                                </TableCell>
-
-                                <TableCell>
-                                    SL
-                                </TableCell>
-
-                                <TableCell>
-                                    TP
-                                </TableCell>
-
-                                <TableCell>
-                                    Статус
-                                </TableCell>
-
-                                <TableCell>
-                                    Створено
-                                </TableCell>
-
-                                <TableCell align="right">
-                                    Деталі
-                                </TableCell>
-                            </TableRow>
-                        </TableHead>
-
-                        <TableBody>
-                            {loading && (
-                                <TableRow>
-                                    <TableCell
-                                        colSpan={11}
-                                        align="center"
-                                        sx={{
-                                            py: 5,
-                                        }}
-                                    >
-                                        <CircularProgress
-                                            size={28}
-                                        />
-                                    </TableCell>
-                                </TableRow>
-                            )}
-
-                            {!loading
-                                && trades.length === 0 && (
-                                <TableRow>
-                                    <TableCell
-                                        colSpan={11}
-                                        align="center"
-                                        sx={{
-                                            py: 5,
-                                        }}
-                                    >
-                                        Немає угод за
-                                        вибраними фільтрами.
-                                    </TableCell>
-                                </TableRow>
-                            )}
-
-                            {!loading
-                                && trades.map((trade) => (
-                                <TableRow
-                                    hover
+                    {!loading && trades.length > 0 && (
+                        <Stack spacing={1.5}>
+                            {trades.map((trade) => (
+                                <TradeCard
                                     key={trade.id}
-                                >
-                                    <TableCell>
-                                        <Typography
-                                            fontWeight="bold"
-                                        >
-                                            {trade.symbol}
-                                        </Typography>
-                                    </TableCell>
-
-                                    <TableCell>
-                                        {trade.strategy}
-                                    </TableCell>
-
-                                    <TableCell>
-                                        <Chip
-                                            size="small"
-                                            label={
-                                                trade.direction
-                                            }
-                                            color={
-                                                trade.direction
-                                                === "LONG"
-                                                    ? "success"
-                                                    : "error"
-                                            }
-                                        />
-                                    </TableCell>
-
-                                    <TableCell>
-                                        {trade.timeframe}
-                                    </TableCell>
-
-                                    <TableCell>
-                                        {trade.probability}%
-                                    </TableCell>
-
-                                    <TableCell>
-                                        {formatPrice(
-                                            trade.entry_price,
-                                        )}
-                                    </TableCell>
-
-                                    <TableCell>
-                                        {formatPrice(
-                                            trade.stop_loss,
-                                        )}
-                                    </TableCell>
-
-                                    <TableCell>
-                                        {formatPrice(
-                                            trade.take_profit,
-                                        )}
-                                    </TableCell>
-
-                                    <TableCell>
-                                        <Chip
-                                            size="small"
-                                            label={getStatusLabel(
-                                                trade.status,
-                                            )}
-                                            color={getStatusColor(
-                                                trade.status,
-                                            )}
-                                        />
-                                    </TableCell>
-
-                                    <TableCell>
-                                        {formatDate(
-                                            trade.created_at,
-                                        )}
-                                    </TableCell>
-
-                                    <TableCell align="right">
-                                        <Button
-                                            size="small"
-                                            startIcon={
-                                                <VisibilityIcon />
-                                            }
-                                            onClick={() => {
-                                                void handleOpenTrade(
-                                                    trade.id,
-                                                );
-                                            }}
-                                            disabled={
-                                                detailLoading
-                                            }
-                                        >
-                                            Відкрити
-                                        </Button>
-                                    </TableCell>
-                                </TableRow>
+                                    trade={trade}
+                                    detailLoading={detailLoading}
+                                    onOpen={handleOpenTrade}
+                                />
                             ))}
-                        </TableBody>
-                    </Table>
-                </TableContainer>
-            </Paper>
-
-            <Dialog
-                open={Boolean(selectedTrade)}
-                onClose={handleCloseDialog}
-                fullWidth
-                maxWidth="sm"
-            >
-                <DialogTitle>
-                    {selectedTrade
-                        ? (
-                            `${selectedTrade.symbol} — `
-                            + selectedTrade.direction
-                        )
-                        : "Деталі угоди"}
-                </DialogTitle>
-
-                <DialogContent dividers>
-                    {selectedTrade && (
-                        <Stack spacing={2}>
-                            <Box>
-                                <Stack
-                                    direction="row"
-                                    spacing={1}
-                                    alignItems="center"
-                                >
-                                    <Chip
-                                        label={getStatusLabel(
-                                            selectedTrade.status,
-                                        )}
-                                        color={getStatusColor(
-                                            selectedTrade.status,
-                                        )}
-                                    />
-
-                                    <Chip
-                                        label={
-                                            selectedTrade.strategy
-                                        }
-                                        variant="outlined"
-                                    />
-                                </Stack>
-                            </Box>
-
-                            <Divider />
-
-                            <Box>
-                                <Typography
-                                    variant="subtitle2"
-                                    sx={{
-                                        mb: 1,
-                                    }}
-                                >
-                                    Параметри входу
-                                </Typography>
-
-                                <DetailRow
-                                    label="Entry"
-                                    value={formatPrice(
-                                        selectedTrade.entry_price,
-                                    )}
-                                />
-
-                                <DetailRow
-                                    label="Stop Loss"
-                                    value={formatPrice(
-                                        selectedTrade.stop_loss,
-                                    )}
-                                />
-
-                                <DetailRow
-                                    label="Take Profit"
-                                    value={formatPrice(
-                                        selectedTrade.take_profit,
-                                    )}
-                                />
-
-                                <DetailRow
-                                    label="Ймовірність"
-                                    value={
-                                        `${selectedTrade.probability}%`
-                                    }
-                                />
-
-                                <DetailRow
-                                    label="Score"
-                                    value={selectedTrade.score}
-                                />
-
-                                <DetailRow
-                                    label="Notional"
-                                    value={`${formatMoney(
-                                        selectedTrade.notional,
-                                    )} USDT`}
-                                />
-                            </Box>
-
-                            <Divider />
-
-                            <Box>
-                                <Typography
-                                    variant="subtitle2"
-                                    sx={{
-                                        mb: 1,
-                                    }}
-                                >
-                                    Результат
-                                </Typography>
-
-                                <DetailRow
-                                    label="PnL"
-                                    value={`${formatMoney(
-                                        selectedTrade.profit_amount,
-                                    )} USDT`}
-                                />
-
-                                <DetailRow
-                                    label="PnL %"
-                                    value={formatPercent(
-                                        selectedTrade.profit_percent,
-                                    )}
-                                />
-
-                                <DetailRow
-                                    label="RR"
-                                    value={Number(
-                                        selectedTrade.rr,
-                                    ).toFixed(2)}
-                                />
-
-                                <DetailRow
-                                    label="Максимальний прибуток"
-                                    value={formatPercent(
-                                        selectedTrade.max_profit_percent,
-                                    )}
-                                />
-
-                                <DetailRow
-                                    label="Максимальна просадка"
-                                    value={formatPercent(
-                                        selectedTrade.max_drawdown_percent,
-                                    )}
-                                />
-                            </Box>
-
-                            <Divider />
-
-                            <Box>
-                                <Typography
-                                    variant="subtitle2"
-                                    sx={{
-                                        mb: 1,
-                                    }}
-                                >
-                                    Час
-                                </Typography>
-
-                                <DetailRow
-                                    label="Створено"
-                                    value={formatDate(
-                                        selectedTrade.created_at,
-                                    )}
-                                />
-
-                                <DetailRow
-                                    label="Відкрито"
-                                    value={formatDate(
-                                        selectedTrade.opened_at,
-                                    )}
-                                />
-
-                                <DetailRow
-                                    label="Закрито"
-                                    value={formatDate(
-                                        selectedTrade.closed_at,
-                                    )}
-                                />
-
-                                <DetailRow
-                                    label="Причина закриття"
-                                    value={
-                                        selectedTrade.close_reason
-                                        || "—"
-                                    }
-                                />
-                            </Box>
-
-                            <Divider />
-
-                            <Box>
-                                <Typography
-                                    variant="subtitle2"
-                                    sx={{
-                                        mb: 1,
-                                    }}
-                                >
-                                    Причини сигналу
-                                </Typography>
-
-                                {selectedTrade.reasons.length === 0 ? (
-                                    <Typography
-                                        variant="body2"
-                                        color="text.secondary"
-                                    >
-                                        Причини відсутні.
-                                    </Typography>
-                                ) : (
-                                    <Stack spacing={0.75}>
-                                        {selectedTrade.reasons.map(
-                                            (
-                                                reason,
-                                                index,
-                                            ) => (
-                                                <Typography
-                                                    key={
-                                                        `${reason}-${index}`
-                                                    }
-                                                    variant="body2"
-                                                >
-                                                    • {reason}
-                                                </Typography>
-                                            ),
-                                        )}
-                                    </Stack>
-                                )}
-                            </Box>
                         </Stack>
                     )}
-                </DialogContent>
+                </Paper>
 
-                <DialogActions>
-                    <Button onClick={handleCloseDialog}>
-                        Закрити
-                    </Button>
-                </DialogActions>
-            </Dialog>
-        </Box>
+                <Dialog
+                    open={Boolean(selectedTrade)}
+                    onClose={handleCloseDialog}
+                    fullWidth
+                    maxWidth="sm"
+                >
+                    <DialogTitle>
+                        {selectedTrade
+                            ? (
+                                `${selectedTrade.symbol} — `
+                                + selectedTrade.direction
+                            )
+                            : "Деталі угоди"}
+                    </DialogTitle>
+
+                    <DialogContent dividers>
+                        {selectedTrade && (
+                            <Stack spacing={2}>
+                                <Box>
+                                    <Stack
+                                        direction="row"
+                                        spacing={1}
+                                        alignItems="center"
+                                        flexWrap="wrap"
+                                        useFlexGap
+                                    >
+                                        <Chip
+                                            label={getStatusLabel(
+                                                selectedTrade.status,
+                                            )}
+                                            color={getStatusColor(
+                                                selectedTrade.status,
+                                            )}
+                                        />
+
+                                        <Chip
+                                            label={
+                                                selectedTrade.strategy
+                                            }
+                                            variant="outlined"
+                                        />
+                                    </Stack>
+                                </Box>
+
+                                <Divider />
+
+                                <Box>
+                                    <Typography
+                                        variant="subtitle2"
+                                        sx={{
+                                            mb: 1,
+                                        }}
+                                    >
+                                        Параметри входу
+                                    </Typography>
+
+                                    <DetailRow
+                                        label="Entry"
+                                        value={formatPrice(
+                                            selectedTrade.entry_price,
+                                        )}
+                                    />
+
+                                    <DetailRow
+                                        label="Stop Loss"
+                                        value={formatPrice(
+                                            selectedTrade.stop_loss,
+                                        )}
+                                    />
+
+                                    <DetailRow
+                                        label="Take Profit"
+                                        value={formatPrice(
+                                            selectedTrade.take_profit,
+                                        )}
+                                    />
+
+                                    <DetailRow
+                                        label="Ймовірність"
+                                        value={
+                                            `${selectedTrade.probability}%`
+                                        }
+                                    />
+
+                                    <DetailRow
+                                        label="Score"
+                                        value={selectedTrade.score}
+                                    />
+
+                                    <DetailRow
+                                        label="Notional"
+                                        value={`${formatMoney(
+                                            selectedTrade.notional,
+                                        )} USDT`}
+                                    />
+                                </Box>
+
+                                <SetupVisualization trade={selectedTrade} />
+
+                                <Divider />
+
+                                <Box>
+                                    <Typography
+                                        variant="subtitle2"
+                                        sx={{
+                                            mb: 1,
+                                        }}
+                                    >
+                                        Результат
+                                    </Typography>
+
+                                    <DetailRow
+                                        label="PnL"
+                                        value={`${formatMoney(
+                                            selectedTrade.profit_amount,
+                                        )} USDT`}
+                                    />
+
+                                    <DetailRow
+                                        label="PnL %"
+                                        value={formatPercent(
+                                            selectedTrade.profit_percent,
+                                        )}
+                                    />
+
+                                    <DetailRow
+                                        label="RR"
+                                        value={Number(
+                                            selectedTrade.rr,
+                                        ).toFixed(2)}
+                                    />
+
+                                    <DetailRow
+                                        label="Максимальний прибуток"
+                                        value={formatPercent(
+                                            selectedTrade.max_profit_percent,
+                                        )}
+                                    />
+
+                                    <DetailRow
+                                        label="Максимальна просадка"
+                                        value={formatPercent(
+                                            selectedTrade.max_drawdown_percent,
+                                        )}
+                                    />
+                                </Box>
+
+                                <Divider />
+
+                                <Box>
+                                    <Typography
+                                        variant="subtitle2"
+                                        sx={{
+                                            mb: 1,
+                                        }}
+                                    >
+                                        Час
+                                    </Typography>
+
+                                    <DetailRow
+                                        label="Створено"
+                                        value={formatDate(
+                                            selectedTrade.created_at,
+                                        )}
+                                    />
+
+                                    <DetailRow
+                                        label="Відкрито"
+                                        value={formatDate(
+                                            selectedTrade.opened_at,
+                                        )}
+                                    />
+
+                                    <DetailRow
+                                        label="Закрито"
+                                        value={formatDate(
+                                            selectedTrade.closed_at,
+                                        )}
+                                    />
+
+                                    <DetailRow
+                                        label="Причина закриття"
+                                        value={
+                                            selectedTrade.close_reason
+                                            || "—"
+                                        }
+                                    />
+                                </Box>
+
+                                <Divider />
+
+                                <Box>
+                                    <Typography
+                                        variant="subtitle2"
+                                        sx={{
+                                            mb: 1,
+                                        }}
+                                    >
+                                        Причини сигналу
+                                    </Typography>
+
+                                    {selectedTrade.reasons.length === 0 ? (
+                                        <Typography
+                                            variant="body2"
+                                            color="text.secondary"
+                                        >
+                                            Причини відсутні.
+                                        </Typography>
+                                    ) : (
+                                        <Stack spacing={0.75}>
+                                            {selectedTrade.reasons.map(
+                                                (
+                                                    reason,
+                                                    index,
+                                                ) => (
+                                                    <Typography
+                                                        key={
+                                                            `${reason}-${index}`
+                                                        }
+                                                        variant="body2"
+                                                    >
+                                                        • {reason}
+                                                    </Typography>
+                                                ),
+                                            )}
+                                        </Stack>
+                                    )}
+                                </Box>
+                            </Stack>
+                        )}
+                    </DialogContent>
+
+                    <DialogActions>
+                        <Button onClick={handleCloseDialog}>
+                            Закрити
+                        </Button>
+                    </DialogActions>
+                </Dialog>
+            </Box>
+        </>
     );
 }

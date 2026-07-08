@@ -10,19 +10,27 @@ Responsibilities:
 - Provide aggregate research statistics.
 - Provide persisted continuous worker status.
 - Provide scan runs and signal journal records.
+- Provide trade setup analysis with RR targets and S/R zones.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from models.market_symbol import MarketSymbol
 from research.models.trade import ResearchTrade
 from research.models.trade_status import TradeStatus
+from research.setup.support_resistance import (
+    SupportResistanceDetector,
+    SupportResistanceZone,
+    calculate_rr_target,
+    normalize_direction,
+)
 from research.statistics import ResearchStatistics
 from research.storage.repository import (
     ResearchRepository,
@@ -33,9 +41,12 @@ from research.storage.scan_journal_repository import (
     ScanRun,
     SignalRecord,
 )
+from services.market_data import MarketDataService
 
 
 DATABASE_PATH = "data/research.db"
+SETUP_CANDLE_LIMIT = 240
+SETUP_TARGET_RR = 3.0
 
 
 router = APIRouter(
@@ -383,6 +394,87 @@ class SignalRecordListResponse(BaseModel):
     limit: int
 
 
+class SetupTargetResponse(BaseModel):
+    """
+    RR target price.
+    """
+
+    rr: float
+    price: float
+
+
+class SupportResistanceZoneResponse(BaseModel):
+    """
+    Serializable support / resistance zone.
+    """
+
+    zone_type: str
+
+    lower: float
+    upper: float
+    center: float
+
+    touches: int
+    strength: float
+
+    last_touched_at: datetime | None
+
+    distance_to_entry_percent: float | None
+    distance_to_target_percent: float | None
+
+    @classmethod
+    def from_zone(
+        cls,
+        zone: SupportResistanceZone,
+    ) -> "SupportResistanceZoneResponse":
+        """
+        Convert zone into API response.
+        """
+
+        return cls(
+            zone_type=zone.zone_type,
+            lower=zone.lower,
+            upper=zone.upper,
+            center=zone.center,
+            touches=zone.touches,
+            strength=zone.strength,
+            last_touched_at=zone.last_touched_at,
+            distance_to_entry_percent=(
+                zone.distance_to_entry_percent
+            ),
+            distance_to_target_percent=(
+                zone.distance_to_target_percent
+            ),
+        )
+
+
+class TradeSetupResponse(BaseModel):
+    """
+    Trade setup analysis for chart visualization.
+    """
+
+    trade_id: str
+
+    symbol: str
+    market: str
+    timeframe: str
+    direction: str
+
+    entry_price: float
+    stop_loss: float
+    current_take_profit: float
+
+    rr_targets: list[SetupTargetResponse]
+
+    assessed_rr: float
+    assessed_target_price: float
+    assessed_target_clear: bool
+    summary: str
+
+    zones: list[SupportResistanceZoneResponse]
+    blocking_zones: list[SupportResistanceZoneResponse]
+
+
 def get_repository() -> Iterator[ResearchRepository]:
     """
     Open one short-lived SQLite connection per API request.
@@ -411,6 +503,19 @@ def get_scan_journal() -> Iterator[ScanJournalRepository]:
         yield journal
     finally:
         journal.close()
+
+
+async def get_market_data() -> AsyncIterator[MarketDataService]:
+    """
+    Open one short-lived market data client per API request.
+    """
+
+    market_data = MarketDataService()
+
+    try:
+        yield market_data
+    finally:
+        await market_data.close()
 
 
 @router.get(
@@ -681,6 +786,141 @@ def get_research_statistics(
 
 
 @router.get(
+    "/trades/{trade_id}/setup",
+    response_model=TradeSetupResponse,
+)
+async def get_research_trade_setup(
+    trade_id: str,
+    repository: ResearchRepository = Depends(
+        get_repository,
+    ),
+    market_data: MarketDataService = Depends(
+        get_market_data,
+    ),
+) -> TradeSetupResponse:
+    """
+    Return RR targets and support/resistance zones for one trade.
+    """
+
+    trade = repository.get_by_id(
+        trade_id=trade_id,
+    )
+
+    if trade is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Research trade was not found: "
+                f"{trade_id}"
+            ),
+        )
+
+    try:
+        direction = normalize_direction(
+            trade.direction,
+        )
+
+        rr_targets = [
+            SetupTargetResponse(
+                rr=rr,
+                price=calculate_rr_target(
+                    direction=direction,
+                    entry_price=trade.entry_price,
+                    stop_loss=trade.stop_loss,
+                    risk_reward=rr,
+                ),
+            )
+            for rr in [
+                1.0,
+                2.0,
+                3.0,
+            ]
+        ]
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    symbol = _build_market_symbol(
+        symbol=trade.symbol,
+        market=trade.market,
+    )
+
+    try:
+        candles = await market_data.load_candles(
+            symbol=symbol,
+            interval=trade.timeframe,
+            limit=SETUP_CANDLE_LIMIT,
+        )
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Failed to load market candles for setup "
+                f"analysis: {type(exc).__name__}: {exc}"
+            ),
+        ) from exc
+
+    if len(candles) < 20:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Not enough candles for setup analysis. "
+                f"Loaded: {len(candles)}."
+            ),
+        )
+
+    detector = SupportResistanceDetector(
+        lookback_candles=160,
+        pivot_window=2,
+        min_touches=1,
+        max_zones=12,
+    )
+
+    try:
+        assessment = detector.assess_rr_target(
+            candles,
+            direction=direction,
+            entry_price=trade.entry_price,
+            stop_loss=trade.stop_loss,
+            target_rr=SETUP_TARGET_RR,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    return TradeSetupResponse(
+        trade_id=trade.id,
+        symbol=trade.symbol,
+        market=trade.market,
+        timeframe=trade.timeframe,
+        direction=trade.direction,
+        entry_price=trade.entry_price,
+        stop_loss=trade.stop_loss,
+        current_take_profit=trade.take_profit,
+        rr_targets=rr_targets,
+        assessed_rr=assessment.target_rr,
+        assessed_target_price=assessment.target_price,
+        assessed_target_clear=assessment.target_clear,
+        summary=assessment.summary,
+        zones=[
+            SupportResistanceZoneResponse.from_zone(zone)
+            for zone in assessment.zones
+        ],
+        blocking_zones=[
+            SupportResistanceZoneResponse.from_zone(zone)
+            for zone in assessment.blocking_zones
+        ],
+    )
+
+
+@router.get(
     "/trades/{trade_id}",
     response_model=ResearchTradeResponse,
 )
@@ -709,6 +949,62 @@ def get_research_trade(
 
     return ResearchTradeResponse.from_trade(
         trade,
+    )
+
+
+def _build_market_symbol(
+    *,
+    symbol: str,
+    market: str,
+) -> MarketSymbol:
+    """
+    Build MarketSymbol from stored trade symbol.
+
+    Examples:
+    - BTCUSDT -> base BTC, quote USDT
+    - 1000PEPEUSDT -> base 1000PEPE, quote USDT
+    """
+
+    normalized_symbol = symbol.strip().upper()
+    normalized_market = market.strip().upper()
+
+    known_quote_assets = [
+        "FDUSD",
+        "USDT",
+        "USDC",
+        "BUSD",
+        "TUSD",
+        "BTC",
+        "ETH",
+        "BNB",
+        "EUR",
+        "TRY",
+        "BRL",
+    ]
+
+    for quote_asset in known_quote_assets:
+        if not normalized_symbol.endswith(quote_asset):
+            continue
+
+        base_asset = normalized_symbol[
+            : -len(quote_asset)
+        ]
+
+        if not base_asset:
+            continue
+
+        return MarketSymbol(
+            symbol=normalized_symbol,
+            base_asset=base_asset,
+            quote_asset=quote_asset,
+            market=normalized_market,
+        )
+
+    return MarketSymbol(
+        symbol=normalized_symbol,
+        base_asset=normalized_symbol,
+        quote_asset="",
+        market=normalized_market,
     )
 
 

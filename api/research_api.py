@@ -51,6 +51,7 @@ from services.market_data import MarketDataService
 DATABASE_PATH = "data/research.db"
 SETUP_CANDLE_LIMIT = 240
 SETUP_TARGET_RR = 3.0
+SETUP_DIVERGENCE_FRESH_BARS = 40
 
 
 router = APIRouter(
@@ -527,6 +528,11 @@ class TradeSetupResponse(BaseModel):
     latest_bullish_divergence: SetupDivergenceResponse | None
     latest_bearish_divergence: SetupDivergenceResponse | None
 
+    trade_direction_divergence: SetupDivergenceResponse | None
+    opposite_direction_divergence: SetupDivergenceResponse | None
+    trade_direction_divergence_confirmed: bool
+    divergence_fresh_window_bars: int
+
 
 def get_repository() -> Iterator[ResearchRepository]:
     """
@@ -978,6 +984,24 @@ async def get_research_trade_setup(
         None,
     )
 
+    if direction == "LONG":
+        trade_direction_divergence = latest_bullish_divergence
+        opposite_direction_divergence = latest_bearish_divergence
+    else:
+        trade_direction_divergence = latest_bearish_divergence
+        opposite_direction_divergence = latest_bullish_divergence
+
+    latest_candle_index = len(candles) - 1
+
+    trade_direction_divergence_confirmed = (
+        trade_direction_divergence is not None
+        and (
+            latest_candle_index
+            - trade_direction_divergence.second_index
+        )
+        <= SETUP_DIVERGENCE_FRESH_BARS
+    )
+
     return TradeSetupResponse(
         trade_id=trade.id,
         symbol=trade.symbol,
@@ -1017,6 +1041,26 @@ async def get_research_trade_setup(
             else SetupDivergenceResponse.from_signal(
                 latest_bearish_divergence,
             )
+        ),
+        trade_direction_divergence=(
+            None
+            if trade_direction_divergence is None
+            else SetupDivergenceResponse.from_signal(
+                trade_direction_divergence,
+            )
+        ),
+        opposite_direction_divergence=(
+            None
+            if opposite_direction_divergence is None
+            else SetupDivergenceResponse.from_signal(
+                opposite_direction_divergence,
+            )
+        ),
+        trade_direction_divergence_confirmed=(
+            trade_direction_divergence_confirmed
+        ),
+        divergence_fresh_window_bars=(
+            SETUP_DIVERGENCE_FRESH_BARS
         ),
     )
 

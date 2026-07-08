@@ -21,6 +21,9 @@ class MitigationStrategy(BaseStrategy):
 
     name = "Mitigation"
 
+    MAX_ZONE_DISTANCE_ATR = 1.0
+    MAX_ZONE_DISTANCE_PERCENT = 2.0
+
     def __init__(self) -> None:
 
         self.mitigation = MitigationFilter()
@@ -44,6 +47,15 @@ class MitigationStrategy(BaseStrategy):
         trend_ok = self.trend.bullish(snapshot)
         volume_ok = self.volume.bullish(snapshot)
         inside = self.mitigation.inside(snapshot)
+        distance_percent = self.mitigation.distance_percent(
+            snapshot,
+        )
+
+        if not self._zone_is_close(
+            snapshot=snapshot,
+            distance_percent=distance_percent,
+        ):
+            return None
 
         if trend_ok:
             score += 10
@@ -72,7 +84,7 @@ class MitigationStrategy(BaseStrategy):
         )
 
         signal.add_reason(
-            f"Distance {self.mitigation.distance_percent(snapshot):.2f}%"
+            f"Distance {distance_percent:.2f}%"
         )
 
         if inside:
@@ -94,3 +106,35 @@ class MitigationStrategy(BaseStrategy):
             )
 
         return signal
+
+    @classmethod
+    def _zone_is_close(
+        cls,
+        *,
+        snapshot: MarketSnapshot,
+        distance_percent: float,
+    ) -> bool:
+        if distance_percent <= 0:
+            return True
+
+        if distance_percent > cls.MAX_ZONE_DISTANCE_PERCENT:
+            return False
+
+        if (
+            snapshot.atr14 <= 0
+            or not snapshot.candles
+        ):
+            return True
+
+        close = snapshot.candles[-1].close
+
+        if close <= 0:
+            return True
+
+        distance = close * distance_percent / 100
+
+        return (
+            distance / snapshot.atr14
+            <= cls.MAX_ZONE_DISTANCE_ATR
+        )
+

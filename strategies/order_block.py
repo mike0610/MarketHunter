@@ -32,6 +32,12 @@ class OrderBlockStrategy(BaseStrategy):
 
     name = "OrderBlock"
 
+    MAX_ZONE_DISTANCE_ATR = 1.0
+    MAX_ZONE_DISTANCE_PERCENT = 2.0
+
+    MAX_ZONE_DISTANCE_ATR = 1.0
+    MAX_ZONE_DISTANCE_PERCENT = 2.0
+
     def __init__(self) -> None:
         self.order_block = OrderBlockFilter()
         self.trend = TrendFilter()
@@ -47,6 +53,15 @@ class OrderBlockStrategy(BaseStrategy):
 
         bearish_block = self.order_block.latest_bearish(
             snapshot,
+        )
+
+        bullish_block = self._close_block_or_none(
+            snapshot=snapshot,
+            block=bullish_block,
+        )
+        bearish_block = self._close_block_or_none(
+            snapshot=snapshot,
+            block=bearish_block,
         )
 
         if bullish_block is None and bearish_block is None:
@@ -80,7 +95,7 @@ class OrderBlockStrategy(BaseStrategy):
         self,
         snapshot: MarketSnapshot,
         block: OrderBlock,
-    ) -> Signal:
+    ) -> Signal | None:
         score = 75
 
         trend_ok = self._call_bool(
@@ -99,6 +114,17 @@ class OrderBlockStrategy(BaseStrategy):
             snapshot,
             block,
         )
+
+        distance = self._block_distance(
+            snapshot=snapshot,
+            block=block,
+        )
+
+        if not self._zone_is_close(
+            snapshot=snapshot,
+            distance=distance,
+        ):
+            return None
 
         if trend_ok:
             score += 10
@@ -132,6 +158,14 @@ class OrderBlockStrategy(BaseStrategy):
 
         signal.add_reason(
             f"Zone {block.low:.4f} - {block.high:.4f}"
+        )
+
+        signal.add_reason(
+            f"Distance {self._distance_percent(snapshot, distance):.2f}%"
+        )
+
+        signal.add_reason(
+            f"Distance {self._distance_percent(snapshot, distance):.2f}%"
         )
 
         if inside_block:
@@ -189,6 +223,17 @@ class OrderBlockStrategy(BaseStrategy):
             block,
         )
 
+        distance = self._block_distance(
+            snapshot=snapshot,
+            block=block,
+        )
+
+        if not self._zone_is_close(
+            snapshot=snapshot,
+            distance=distance,
+        ):
+            return None
+
         if trend_ok:
             score += 10
 
@@ -223,6 +268,14 @@ class OrderBlockStrategy(BaseStrategy):
             f"Zone {block.low:.4f} - {block.high:.4f}"
         )
 
+        signal.add_reason(
+            f"Distance {self._distance_percent(snapshot, distance):.2f}%"
+        )
+
+        signal.add_reason(
+            f"Distance {self._distance_percent(snapshot, distance):.2f}%"
+        )
+
         if inside_block:
             signal.add_reason(
                 "Price inside Bearish Order Block"
@@ -250,6 +303,88 @@ class OrderBlockStrategy(BaseStrategy):
                 )
 
         return signal
+
+    def _close_block_or_none(
+        self,
+        *,
+        snapshot: MarketSnapshot,
+        block: OrderBlock | None,
+    ) -> OrderBlock | None:
+        if block is None:
+            return None
+
+        distance = self._block_distance(
+            snapshot=snapshot,
+            block=block,
+        )
+
+        if not self._zone_is_close(
+            snapshot=snapshot,
+            distance=distance,
+        ):
+            return None
+
+        return block
+
+    @staticmethod
+    def _block_distance(
+        *,
+        snapshot: MarketSnapshot,
+        block: OrderBlock,
+    ) -> float:
+        if not snapshot.candles:
+            return 0.0
+
+        close = snapshot.candles[-1].close
+
+        if block.low <= close <= block.high:
+            return 0.0
+
+        if close < block.low:
+            return block.low - close
+
+        return close - block.high
+
+    @classmethod
+    def _zone_is_close(
+        cls,
+        *,
+        snapshot: MarketSnapshot,
+        distance: float,
+    ) -> bool:
+        if distance <= 0:
+            return True
+
+        distance_percent = cls._distance_percent(
+            snapshot,
+            distance,
+        )
+
+        if distance_percent > cls.MAX_ZONE_DISTANCE_PERCENT:
+            return False
+
+        if snapshot.atr14 <= 0:
+            return True
+
+        return (
+            distance / snapshot.atr14
+            <= cls.MAX_ZONE_DISTANCE_ATR
+        )
+
+    @staticmethod
+    def _distance_percent(
+        snapshot: MarketSnapshot,
+        distance: float,
+    ) -> float:
+        if not snapshot.candles:
+            return 0.0
+
+        close = snapshot.candles[-1].close
+
+        if close <= 0:
+            return 0.0
+
+        return distance / close * 100
 
     def _should_use_short(
         self,

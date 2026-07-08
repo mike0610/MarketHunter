@@ -32,6 +32,9 @@ class FVGStrategy(BaseStrategy):
 
     name = "FVG"
 
+    MAX_ZONE_DISTANCE_ATR = 1.0
+    MAX_ZONE_DISTANCE_PERCENT = 2.0
+
     def __init__(self) -> None:
         self.trend = TrendFilter()
         self.volume = VolumeFilter()
@@ -63,8 +66,20 @@ class FVGStrategy(BaseStrategy):
         self,
         snapshot: MarketSnapshot,
         gap: FVG,
-    ) -> Signal:
+    ) -> Signal | None:
         score = 70
+
+        distance = self._distance_to_zone(
+            snapshot=snapshot,
+            lower=gap.lower,
+            upper=gap.upper,
+        )
+
+        if not self._zone_is_close(
+            snapshot=snapshot,
+            distance=distance,
+        ):
+            return None
 
         trend_ok = self._call_bool(
             self.trend,
@@ -113,6 +128,10 @@ class FVGStrategy(BaseStrategy):
             f"Gap Size {gap.percent:.2f}%"
         )
 
+        signal.add_reason(
+            f"Distance {self._distance_percent(snapshot, distance):.2f}%"
+        )
+
         if trend_ok:
             signal.add_reason(
                 "Bullish EMA trend"
@@ -140,8 +159,20 @@ class FVGStrategy(BaseStrategy):
         self,
         snapshot: MarketSnapshot,
         gap: FVG,
-    ) -> Signal:
+    ) -> Signal | None:
         score = 70
+
+        distance = self._distance_to_zone(
+            snapshot=snapshot,
+            lower=gap.lower,
+            upper=gap.upper,
+        )
+
+        if not self._zone_is_close(
+            snapshot=snapshot,
+            distance=distance,
+        ):
+            return None
 
         trend_ok = self._call_bool(
             self.trend,
@@ -190,6 +221,10 @@ class FVGStrategy(BaseStrategy):
             f"Gap Size {gap.percent:.2f}%"
         )
 
+        signal.add_reason(
+            f"Distance {self._distance_percent(snapshot, distance):.2f}%"
+        )
+
         if trend_ok:
             signal.add_reason(
                 "Bearish EMA trend"
@@ -212,6 +247,67 @@ class FVGStrategy(BaseStrategy):
                 )
 
         return signal
+
+    @staticmethod
+    def _distance_to_zone(
+        *,
+        snapshot: MarketSnapshot,
+        lower: float,
+        upper: float,
+    ) -> float:
+        if not snapshot.candles:
+            return 0.0
+
+        close = snapshot.candles[-1].close
+
+        if lower <= close <= upper:
+            return 0.0
+
+        if close < lower:
+            return lower - close
+
+        return close - upper
+
+    @classmethod
+    def _zone_is_close(
+        cls,
+        *,
+        snapshot: MarketSnapshot,
+        distance: float,
+    ) -> bool:
+        if distance <= 0:
+            return True
+
+        distance_percent = cls._distance_percent(
+            snapshot,
+            distance,
+        )
+
+        if distance_percent > cls.MAX_ZONE_DISTANCE_PERCENT:
+            return False
+
+        if snapshot.atr14 <= 0:
+            return True
+
+        return (
+            distance / snapshot.atr14
+            <= cls.MAX_ZONE_DISTANCE_ATR
+        )
+
+    @staticmethod
+    def _distance_percent(
+        snapshot: MarketSnapshot,
+        distance: float,
+    ) -> float:
+        if not snapshot.candles:
+            return 0.0
+
+        close = snapshot.candles[-1].close
+
+        if close <= 0:
+            return 0.0
+
+        return distance / close * 100
 
     @staticmethod
     def _snapshot_value(

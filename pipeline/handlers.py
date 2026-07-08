@@ -314,6 +314,13 @@ class ResearchTradeHandler(SignalHandler):
             )
             context.signal.metadata["probability"] = probability
 
+            context.probability.probability = probability
+            context.probability.confidence = (
+                self._confidence_for_probability(
+                    probability,
+                )
+            )
+
             probability_reasons = context.signal.metadata.get(
                 "probability_reasons",
             )
@@ -381,6 +388,24 @@ class ResearchTradeHandler(SignalHandler):
         context.signal.metadata["research_trade_id"] = (
             trade.id
         )
+
+    @staticmethod
+    def _confidence_for_probability(
+        probability: int,
+    ) -> str:
+        if probability >= 90:
+            return "A+"
+
+        if probability >= 80:
+            return "A"
+
+        if probability >= 70:
+            return "B"
+
+        if probability >= 60:
+            return "C"
+
+        return "D"
 
     @staticmethod
     def _reaction_probability_bonus(

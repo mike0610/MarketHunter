@@ -845,6 +845,33 @@ def get_research_statistics(
 
 
 @router.get(
+    "/statistics/setup-reasons",
+)
+def get_research_setup_reason_statistics(
+    repository: ResearchRepository = Depends(
+        get_repository,
+    ),
+) -> dict[str, object]:
+    """
+    Return research performance grouped by setup and block reason.
+    """
+
+    trades = repository.list_all()
+
+    statistics = ResearchStatistics().calculate_setup_reasons(
+        trades,
+    )
+
+    statistics["signal_block_reasons"] = (
+        repository.get_signal_block_reason_statistics(
+            limit=1000,
+        )
+    )
+
+    return statistics
+
+
+@router.get(
     "/trades/{trade_id}/setup",
     response_model=TradeSetupResponse,
 )

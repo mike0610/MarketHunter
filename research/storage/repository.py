@@ -653,6 +653,184 @@ class ResearchRepository:
             direction=direction,
         )
 
+    def get_signal_block_reason_statistics(
+        self,
+        *,
+        limit: int = 1000,
+    ) -> list[dict[str, object]]:
+        """
+        Return recent scan-journal rejection/block statistics.
+
+        This reads signal_records from the same SQLite database. If the
+        scan-journal table has not been created yet, an empty list is returned.
+        """
+
+        safe_limit = max(
+            1,
+            min(
+                int(limit),
+                5000,
+            ),
+        )
+
+        try:
+            with self._lock:
+                rows = self.connection.execute(
+                    """
+                    SELECT
+                        strategy,
+                        direction,
+                        status,
+                        rejected_reason,
+                        research_skipped,
+                        reasons,
+                        probability_reasons,
+                        metadata
+                    FROM signal_records
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (
+                        safe_limit,
+                    ),
+                ).fetchall()
+
+        except sqlite3.OperationalError:
+            return []
+
+        groups: dict[str, dict[str, object]] = {}
+
+        for row in rows:
+            metadata = self._safe_json_dict(
+                row["metadata"],
+            )
+
+            reason = (
+                row["research_skipped"]
+                or row["rejected_reason"]
+                or metadata.get("research_skipped")
+                or metadata.get("elite_skipped")
+                or "Unknown"
+            )
+
+            label = self._signal_block_reason_key(
+                str(reason),
+            )
+
+            if label not in groups:
+                groups[label] = {
+                    "label": label,
+                    "count": 0,
+                    "strategies": {},
+                    "directions": {},
+                    "examples": [],
+                }
+
+            group = groups[label]
+            group["count"] = int(group["count"]) + 1
+
+            strategy = str(
+                row["strategy"]
+                or "Unknown"
+            )
+
+            direction = str(
+                row["direction"]
+                or "Unknown"
+            ).upper()
+
+            strategies = group["strategies"]
+            directions = group["directions"]
+
+            strategies[strategy] = int(
+                strategies.get(
+                    strategy,
+                    0,
+                )
+            ) + 1
+
+            directions[direction] = int(
+                directions.get(
+                    direction,
+                    0,
+                )
+            ) + 1
+
+            examples = group["examples"]
+
+            if len(examples) < 5:
+                examples.append(
+                    str(reason),
+                )
+
+        result = list(
+            groups.values()
+        )
+
+        result.sort(
+            key=lambda item: int(
+                item["count"],
+            ),
+            reverse=True,
+        )
+
+        return result
+
+    @staticmethod
+    def _safe_json_dict(
+        value,
+    ) -> dict:
+        if not value:
+            return {}
+
+        if isinstance(value, dict):
+            return value
+
+        try:
+            decoded = json.loads(value)
+        except Exception:
+            return {}
+
+        if isinstance(decoded, dict):
+            return decoded
+
+        return {}
+
+    @staticmethod
+    def _signal_block_reason_key(
+        reason: str,
+    ) -> str:
+        normalized = reason.lower()
+
+        if "risk geometry" in normalized:
+            return "Risk geometry blocked"
+
+        if "target quality" in normalized or "blocked by support" in normalized or "blocked by resistance" in normalized:
+            return "Target blocked"
+
+        if "reaction quality" in normalized or "no confirmed reaction" in normalized:
+            return "Reaction blocked"
+
+        if "parabolic" in normalized:
+            return "Parabolic blocked"
+
+        if "direction conflict" in normalized:
+            return "Direction conflict"
+
+        if "probability" in normalized and "below research" in normalized:
+            return "Research threshold"
+
+        if "probability" in normalized and "below elite" in normalized:
+            return "Elite threshold"
+
+        if "open trade already exists" in normalized or "already exists" in normalized:
+            return "Duplicate/open trade"
+
+        if "cycle limit" in normalized:
+            return "Cycle limit"
+
+        return "Other rejected"
+
     def _row_to_trade(
         self,
         row: sqlite3.Row,

@@ -653,6 +653,600 @@ class ResearchRepository:
             direction=direction,
         )
 
+    def get_direction_conflict_statistics(
+        self,
+        *,
+        limit: int = 2000,
+    ) -> dict[str, object]:
+        """
+        Return direction-conflict analytics from recent signal records.
+        """
+
+        def empty_payload() -> dict[str, object]:
+            return {
+                "summary": {
+                    "records": 0,
+                    "events": 0,
+                    "mixed_rejected": 0,
+                    "resolved": 0,
+                    "long_winner": 0,
+                    "short_winner": 0,
+                    "average_delta": 0.0,
+                    "average_long_score": 0.0,
+                    "average_short_score": 0.0,
+                },
+                "by_symbol": [],
+                "by_strategy": [],
+                "by_strategy_pair": [],
+                "by_outcome": [],
+            }
+
+        def safe_float(value) -> float | None:
+            try:
+                if value is None:
+                    return None
+
+                return float(value)
+
+            except (
+                TypeError,
+                ValueError,
+            ):
+                return None
+
+        def safe_list(value) -> list[str]:
+            if value is None:
+                return []
+
+            if isinstance(value, list):
+                return [
+                    str(item)
+                    for item in value
+                    if str(item).strip()
+                ]
+
+            return [
+                str(value),
+            ]
+
+        def format_list(values) -> str:
+            clean = sorted(
+                {
+                    str(item)
+                    for item in values
+                    if str(item).strip()
+                }
+            )
+
+            if not clean:
+                return "Unknown"
+
+            return ", ".join(clean)
+
+        def new_group(label: str) -> dict[str, object]:
+            return {
+                "label": label,
+                "count": 0,
+                "mixed_rejected": 0,
+                "resolved": 0,
+                "winner": 0,
+                "loser_rejected": 0,
+                "long_winner": 0,
+                "short_winner": 0,
+                "symbols": set(),
+                "examples": [],
+                "_delta_sum": 0.0,
+                "_delta_count": 0,
+                "_long_score_sum": 0.0,
+                "_long_score_count": 0,
+                "_short_score_sum": 0.0,
+                "_short_score_count": 0,
+            }
+
+        def bump_group(
+            groups: dict[str, dict[str, object]],
+            *,
+            label: str,
+            symbol: str,
+            outcome: str,
+            winner_direction: str,
+            delta: float | None,
+            long_score: float | None,
+            short_score: float | None,
+            example: str,
+        ) -> None:
+            group = groups.setdefault(
+                label,
+                new_group(label),
+            )
+
+            group["count"] = int(group["count"]) + 1
+            group["symbols"].add(symbol)
+
+            if outcome == "mixed_rejected":
+                group["mixed_rejected"] = (
+                    int(group["mixed_rejected"])
+                    + 1
+                )
+
+            if outcome == "resolved":
+                group["resolved"] = int(group["resolved"]) + 1
+
+            if outcome == "winner":
+                group["winner"] = int(group["winner"]) + 1
+
+            if outcome == "loser_rejected":
+                group["loser_rejected"] = (
+                    int(group["loser_rejected"])
+                    + 1
+                )
+
+            if winner_direction == "LONG":
+                group["long_winner"] = (
+                    int(group["long_winner"])
+                    + 1
+                )
+
+            if winner_direction == "SHORT":
+                group["short_winner"] = (
+                    int(group["short_winner"])
+                    + 1
+                )
+
+            if delta is not None:
+                group["_delta_sum"] = (
+                    float(group["_delta_sum"])
+                    + delta
+                )
+                group["_delta_count"] = (
+                    int(group["_delta_count"])
+                    + 1
+                )
+
+            if long_score is not None:
+                group["_long_score_sum"] = (
+                    float(group["_long_score_sum"])
+                    + long_score
+                )
+                group["_long_score_count"] = (
+                    int(group["_long_score_count"])
+                    + 1
+                )
+
+            if short_score is not None:
+                group["_short_score_sum"] = (
+                    float(group["_short_score_sum"])
+                    + short_score
+                )
+                group["_short_score_count"] = (
+                    int(group["_short_score_count"])
+                    + 1
+                )
+
+            examples = group["examples"]
+
+            if len(examples) < 5:
+                examples.append(example)
+
+        def serialize_group(group: dict[str, object]) -> dict[str, object]:
+            delta_count = int(group["_delta_count"])
+            long_score_count = int(group["_long_score_count"])
+            short_score_count = int(group["_short_score_count"])
+
+            return {
+                "label": group["label"],
+                "count": int(group["count"]),
+                "mixed_rejected": int(group["mixed_rejected"]),
+                "resolved": int(group["resolved"]),
+                "winner": int(group["winner"]),
+                "loser_rejected": int(group["loser_rejected"]),
+                "long_winner": int(group["long_winner"]),
+                "short_winner": int(group["short_winner"]),
+                "average_delta": (
+                    float(group["_delta_sum"])
+                    / delta_count
+                    if delta_count > 0
+                    else 0.0
+                ),
+                "average_long_score": (
+                    float(group["_long_score_sum"])
+                    / long_score_count
+                    if long_score_count > 0
+                    else 0.0
+                ),
+                "average_short_score": (
+                    float(group["_short_score_sum"])
+                    / short_score_count
+                    if short_score_count > 0
+                    else 0.0
+                ),
+                "symbols": sorted(group["symbols"]),
+                "examples": list(group["examples"]),
+            }
+
+        safe_limit = max(
+            1,
+            min(
+                int(limit),
+                5000,
+            ),
+        )
+
+        try:
+            with self._lock:
+                rows = self.connection.execute(
+                    """
+                    SELECT
+                        scan_run_id,
+                        symbol,
+                        strategy,
+                        direction,
+                        status,
+                        rejected_reason,
+                        metadata
+                    FROM signal_records
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (
+                        safe_limit,
+                    ),
+                ).fetchall()
+
+        except sqlite3.OperationalError:
+            return empty_payload()
+
+        events: dict[str, dict[str, object]] = {}
+        by_strategy: dict[str, dict[str, object]] = {}
+
+        record_count = 0
+
+        for row in rows:
+            metadata = self._safe_json_dict(
+                row["metadata"],
+            )
+
+            if not metadata.get("direction_conflict"):
+                continue
+
+            record_count += 1
+
+            symbol = str(
+                row["symbol"]
+                or metadata.get("conflict_symbol")
+                or "Unknown"
+            ).upper()
+
+            strategy = str(
+                row["strategy"]
+                or "Unknown"
+            )
+
+            direction = str(
+                row["direction"]
+                or "Unknown"
+            ).upper()
+
+            long_score = safe_float(
+                metadata.get("conflict_long_score"),
+            )
+            short_score = safe_float(
+                metadata.get("conflict_short_score"),
+            )
+            score_delta = safe_float(
+                metadata.get("conflict_score_delta"),
+            )
+
+            resolution = str(
+                metadata.get("conflict_resolution")
+                or ""
+            )
+
+            signal_outcome = str(
+                metadata.get("conflict_signal_outcome")
+                or resolution
+                or "unknown"
+            )
+
+            winner_direction = str(
+                metadata.get("conflict_winner_direction")
+                or ""
+            ).upper()
+
+            scan_run_id = str(
+                row["scan_run_id"]
+                or "unknown_scan"
+            )
+
+            event_key = "|".join(
+                [
+                    scan_run_id,
+                    symbol,
+                    str(long_score),
+                    str(short_score),
+                    str(score_delta),
+                ]
+            )
+
+            event = events.setdefault(
+                event_key,
+                {
+                    "symbol": symbol,
+                    "long_score": long_score,
+                    "short_score": short_score,
+                    "score_delta": score_delta,
+                    "winner_direction": winner_direction,
+                    "resolutions": set(),
+                    "outcomes": set(),
+                    "long_strategies": set(),
+                    "short_strategies": set(),
+                    "records": 0,
+                    "example": "",
+                },
+            )
+
+            event["records"] = int(event["records"]) + 1
+            event["resolutions"].add(resolution)
+            event["outcomes"].add(signal_outcome)
+
+            if winner_direction:
+                event["winner_direction"] = winner_direction
+
+            event["long_strategies"].update(
+                safe_list(
+                    metadata.get("conflict_long_strategies"),
+                )
+            )
+
+            event["short_strategies"].update(
+                safe_list(
+                    metadata.get("conflict_short_strategies"),
+                )
+            )
+
+            if direction == "LONG":
+                event["long_strategies"].add(strategy)
+
+            if direction == "SHORT":
+                event["short_strategies"].add(strategy)
+
+            if not event["example"]:
+                event["example"] = (
+                    f"{symbol}: LONG {long_score}, "
+                    f"SHORT {short_score}, delta {score_delta}"
+                )
+
+            bump_group(
+                by_strategy,
+                label=strategy,
+                symbol=symbol,
+                outcome=signal_outcome,
+                winner_direction=winner_direction,
+                delta=score_delta,
+                long_score=long_score,
+                short_score=short_score,
+                example=(
+                    f"{symbol} {direction}: {signal_outcome}"
+                ),
+            )
+
+        if not events:
+            payload = empty_payload()
+            payload["summary"]["records"] = record_count
+            return payload
+
+        by_symbol: dict[str, dict[str, object]] = {}
+        by_pair: dict[str, dict[str, object]] = {}
+        by_outcome: dict[str, dict[str, object]] = {}
+
+        summary = {
+            "records": record_count,
+            "events": 0,
+            "mixed_rejected": 0,
+            "resolved": 0,
+            "long_winner": 0,
+            "short_winner": 0,
+            "_delta_sum": 0.0,
+            "_delta_count": 0,
+            "_long_score_sum": 0.0,
+            "_long_score_count": 0,
+            "_short_score_sum": 0.0,
+            "_short_score_count": 0,
+        }
+
+        for event in events.values():
+            resolutions = event["resolutions"]
+            outcomes = event["outcomes"]
+
+            if (
+                "mixed_rejected" in resolutions
+                or "mixed_rejected" in outcomes
+            ):
+                event_outcome = "mixed_rejected"
+            else:
+                event_outcome = "resolved"
+
+            symbol = str(event["symbol"])
+            winner_direction = str(
+                event["winner_direction"]
+                or ""
+            ).upper()
+
+            long_score = event["long_score"]
+            short_score = event["short_score"]
+            score_delta = event["score_delta"]
+
+            pair_label = (
+                "LONG: "
+                f"{format_list(event['long_strategies'])}"
+                " | SHORT: "
+                f"{format_list(event['short_strategies'])}"
+            )
+
+            example = str(
+                event["example"]
+                or symbol
+            )
+
+            summary["events"] = int(summary["events"]) + 1
+
+            if event_outcome == "mixed_rejected":
+                summary["mixed_rejected"] = (
+                    int(summary["mixed_rejected"])
+                    + 1
+                )
+            else:
+                summary["resolved"] = (
+                    int(summary["resolved"])
+                    + 1
+                )
+
+            if winner_direction == "LONG":
+                summary["long_winner"] = (
+                    int(summary["long_winner"])
+                    + 1
+                )
+
+            if winner_direction == "SHORT":
+                summary["short_winner"] = (
+                    int(summary["short_winner"])
+                    + 1
+                )
+
+            if score_delta is not None:
+                summary["_delta_sum"] = (
+                    float(summary["_delta_sum"])
+                    + float(score_delta)
+                )
+                summary["_delta_count"] = (
+                    int(summary["_delta_count"])
+                    + 1
+                )
+
+            if long_score is not None:
+                summary["_long_score_sum"] = (
+                    float(summary["_long_score_sum"])
+                    + float(long_score)
+                )
+                summary["_long_score_count"] = (
+                    int(summary["_long_score_count"])
+                    + 1
+                )
+
+            if short_score is not None:
+                summary["_short_score_sum"] = (
+                    float(summary["_short_score_sum"])
+                    + float(short_score)
+                )
+                summary["_short_score_count"] = (
+                    int(summary["_short_score_count"])
+                    + 1
+                )
+
+            bump_group(
+                by_symbol,
+                label=symbol,
+                symbol=symbol,
+                outcome=event_outcome,
+                winner_direction=winner_direction,
+                delta=score_delta,
+                long_score=long_score,
+                short_score=short_score,
+                example=example,
+            )
+
+            bump_group(
+                by_pair,
+                label=pair_label,
+                symbol=symbol,
+                outcome=event_outcome,
+                winner_direction=winner_direction,
+                delta=score_delta,
+                long_score=long_score,
+                short_score=short_score,
+                example=example,
+            )
+
+            bump_group(
+                by_outcome,
+                label=event_outcome,
+                symbol=symbol,
+                outcome=event_outcome,
+                winner_direction=winner_direction,
+                delta=score_delta,
+                long_score=long_score,
+                short_score=short_score,
+                example=example,
+            )
+
+        delta_count = int(summary["_delta_count"])
+        long_score_count = int(summary["_long_score_count"])
+        short_score_count = int(summary["_short_score_count"])
+
+        payload = {
+            "summary": {
+                "records": int(summary["records"]),
+                "events": int(summary["events"]),
+                "mixed_rejected": int(summary["mixed_rejected"]),
+                "resolved": int(summary["resolved"]),
+                "long_winner": int(summary["long_winner"]),
+                "short_winner": int(summary["short_winner"]),
+                "average_delta": (
+                    float(summary["_delta_sum"])
+                    / delta_count
+                    if delta_count > 0
+                    else 0.0
+                ),
+                "average_long_score": (
+                    float(summary["_long_score_sum"])
+                    / long_score_count
+                    if long_score_count > 0
+                    else 0.0
+                ),
+                "average_short_score": (
+                    float(summary["_short_score_sum"])
+                    / short_score_count
+                    if short_score_count > 0
+                    else 0.0
+                ),
+            },
+            "by_symbol": sorted(
+                [
+                    serialize_group(group)
+                    for group in by_symbol.values()
+                ],
+                key=lambda item: int(item["count"]),
+                reverse=True,
+            )[:20],
+            "by_strategy": sorted(
+                [
+                    serialize_group(group)
+                    for group in by_strategy.values()
+                ],
+                key=lambda item: int(item["count"]),
+                reverse=True,
+            )[:20],
+            "by_strategy_pair": sorted(
+                [
+                    serialize_group(group)
+                    for group in by_pair.values()
+                ],
+                key=lambda item: int(item["count"]),
+                reverse=True,
+            )[:20],
+            "by_outcome": sorted(
+                [
+                    serialize_group(group)
+                    for group in by_outcome.values()
+                ],
+                key=lambda item: int(item["count"]),
+                reverse=True,
+            ),
+        }
+
+        return payload
+
+
     def get_signal_block_reason_statistics(
         self,
         *,

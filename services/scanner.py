@@ -323,6 +323,12 @@ class Scanner:
             "conflict_min_score_delta": self.CONFLICT_MIN_SCORE_DELTA,
             "conflict_long_signal_count": len(long_signals),
             "conflict_short_signal_count": len(short_signals),
+            "conflict_long_strategies": self._strategy_names(
+                long_signals,
+            ),
+            "conflict_short_strategies": self._strategy_names(
+                short_signals,
+            ),
         }
 
         if score_delta < self.CONFLICT_MIN_SCORE_DELTA:
@@ -551,6 +557,29 @@ class Scanner:
                 "",
             )
         ).strip().upper()
+
+    @staticmethod
+    def _strategy_names(
+        signals: list[Signal],
+    ) -> list[str]:
+        """
+        Return sorted unique strategy names for conflict analytics.
+        """
+
+        names = {
+            str(
+                getattr(
+                    signal,
+                    "strategy",
+                    "Unknown",
+                )
+                or "Unknown"
+            )
+            for signal in signals
+        }
+
+        return sorted(names)
+
 
     @staticmethod
     def _total_score(

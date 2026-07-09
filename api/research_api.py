@@ -872,6 +872,23 @@ def get_research_setup_reason_statistics(
 
 
 @router.get(
+    "/statistics/conflicts",
+)
+def get_research_direction_conflict_statistics(
+    repository: ResearchRepository = Depends(
+        get_repository,
+    ),
+) -> dict[str, object]:
+    """
+    Return direction-conflict analytics from scan journal.
+    """
+
+    return repository.get_direction_conflict_statistics(
+        limit=2000,
+    )
+
+
+@router.get(
     "/trades/{trade_id}/setup",
     response_model=TradeSetupResponse,
 )

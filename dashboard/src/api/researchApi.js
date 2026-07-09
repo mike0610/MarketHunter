@@ -51,6 +51,15 @@ export async function getWorkerStatus() {
     return response.data;
 }
 
+
+export async function getResearchSetupReasonStatistics() {
+    const response = await api.get(
+        "/research/statistics/setup-reasons",
+    );
+
+    return response.data;
+}
+
 export async function getLatestScan() {
     const response = await api.get(
         "/research/latest-scan",
@@ -111,11 +120,13 @@ export async function getResearchTradeSetup(tradeId) {
 export async function loadResearchDashboardData() {
     const [
         statistics,
+        setupReasonStatistics,
         workerStatus,
         trades,
         latestScan,
     ] = await Promise.all([
         getResearchStatistics(),
+        getResearchSetupReasonStatistics(),
         getWorkerStatus(),
         getResearchTrades({
             limit: 100,
@@ -125,6 +136,7 @@ export async function loadResearchDashboardData() {
 
     return {
         statistics,
+        setupReasonStatistics,
         workerStatus,
         trades,
         latestScan,

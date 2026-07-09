@@ -33,6 +33,7 @@ import {
     extractApiError,
     getLatestScan,
     getResearchStatistics,
+    getResearchSetupReasonStatistics,
     getResearchTrades,
     getScanSignals,
     getWorkerStatus,
@@ -1264,12 +1265,263 @@ function TradeCard({
 }
 
 
+
+function compactObjectStats(value) {
+    if (
+        !value
+        || typeof value !== "object"
+        || Array.isArray(value)
+    ) {
+        return "—";
+    }
+
+    const entries = Object
+        .entries(value)
+        .sort((left, right) => Number(right[1]) - Number(left[1]))
+        .slice(0, 4);
+
+    if (!entries.length) {
+        return "—";
+    }
+
+    return entries
+        .map(([key, count]) => `${key}: ${count}`)
+        .join(" · ");
+}
+
+
+function StatsReasonRows({
+    title,
+    rows,
+    mode = "performance",
+}) {
+    const items = safeArray(rows).slice(0, 8);
+
+    return (
+        <Box sx={{ minWidth: 0 }}>
+            <Typography
+                variant="h6"
+                fontWeight={700}
+                sx={{ mb: 1.5 }}
+            >
+                {title}
+            </Typography>
+
+            {items.length === 0 ? (
+                <Typography
+                    variant="body2"
+                    color="text.secondary"
+                >
+                    No data yet.
+                </Typography>
+            ) : (
+                <Stack spacing={1.25}>
+                    {items.map((row, index) => (
+                        <Paper
+                            key={`${title}-${row.label || index}`}
+                            variant="outlined"
+                            sx={{
+                                p: 1.5,
+                                borderRadius: 2,
+                                bgcolor: "rgba(255,255,255,0.02)",
+                                minWidth: 0,
+                            }}
+                        >
+                            <Stack
+                                direction="row"
+                                spacing={1}
+                                useFlexGap
+                                flexWrap="wrap"
+                                alignItems="center"
+                                sx={{ mb: 1 }}
+                            >
+                                <Typography
+                                    variant="subtitle2"
+                                    fontWeight={700}
+                                    sx={{
+                                        wordBreak: "break-word",
+                                    }}
+                                >
+                                    {row.label || "Unknown"}
+                                </Typography>
+
+                                <Chip
+                                    size="small"
+                                    variant="outlined"
+                                    label={
+                                        mode === "blocks"
+                                            ? `Count: ${formatNumber(row.count, 0)}`
+                                            : `Total: ${formatNumber(row.total, 0)}`
+                                    }
+                                />
+                            </Stack>
+
+                            {mode === "blocks" ? (
+                                <Box
+                                    sx={{
+                                        display: "grid",
+                                        gap: 1.5,
+                                        gridTemplateColumns: {
+                                            xs: "1fr",
+                                            md: "repeat(2, minmax(0, 1fr))",
+                                        },
+                                    }}
+                                >
+                                    <InfoStat
+                                        label="Strategies"
+                                        value={compactObjectStats(row.strategies)}
+                                    />
+
+                                    <InfoStat
+                                        label="Directions"
+                                        value={compactObjectStats(row.directions)}
+                                    />
+                                </Box>
+                            ) : (
+                                <Box
+                                    sx={{
+                                        display: "grid",
+                                        gap: 1.5,
+                                        gridTemplateColumns: {
+                                            xs: "repeat(2, minmax(0, 1fr))",
+                                            md: "repeat(4, minmax(0, 1fr))",
+                                        },
+                                    }}
+                                >
+                                    <InfoStat
+                                        label="Completed"
+                                        value={formatNumber(row.completed, 0)}
+                                    />
+
+                                    <InfoStat
+                                        label="W/L"
+                                        value={`${formatNumber(row.wins, 0)} / ${formatNumber(row.losses, 0)}`}
+                                    />
+
+                                    <InfoStat
+                                        label="Win rate"
+                                        value={`${formatNumber(row.win_rate, 2)}%`}
+                                    />
+
+                                    <InfoStat
+                                        label="Avg RR"
+                                        value={formatNumber(row.average_rr, 2)}
+                                    />
+                                </Box>
+                            )}
+
+                            {mode === "blocks" && safeArray(row.examples).length > 0 && (
+                                <Typography
+                                    variant="body2"
+                                    color="text.secondary"
+                                    sx={{
+                                        mt: 1,
+                                        wordBreak: "break-word",
+                                    }}
+                                >
+                                    {safeArray(row.examples)[0]}
+                                </Typography>
+                            )}
+                        </Paper>
+                    ))}
+                </Stack>
+            )}
+        </Box>
+    );
+}
+
+
+function SetupReasonStatisticsPanel({
+    setupReasonStats,
+}) {
+    if (!setupReasonStats) {
+        return null;
+    }
+
+    return (
+        <Paper
+            variant="outlined"
+            sx={{
+                p: 3,
+                borderRadius: 4,
+                mb: 3,
+                minWidth: 0,
+            }}
+        >
+            <Stack
+                direction={{
+                    xs: "column",
+                    md: "row",
+                }}
+                justifyContent="space-between"
+                alignItems={{
+                    xs: "flex-start",
+                    md: "center",
+                }}
+                spacing={1.5}
+                sx={{ mb: 2 }}
+            >
+                <Box sx={{ minWidth: 0 }}>
+                    <Typography
+                        variant="h4"
+                        fontWeight={700}
+                    >
+                        Setup Reason Statistics
+                    </Typography>
+
+                    <Typography
+                        variant="body2"
+                        color="text.secondary"
+                        sx={{ mt: 0.75 }}
+                    >
+                        Performance by setup reason and blocked signal reasons.
+                    </Typography>
+                </Box>
+            </Stack>
+
+            <Box
+                sx={{
+                    display: "grid",
+                    gap: 2,
+                    gridTemplateColumns: {
+                        xs: "1fr",
+                        xl: "repeat(2, minmax(0, 1fr))",
+                    },
+                }}
+            >
+                <StatsReasonRows
+                    title="Setup reasons"
+                    rows={setupReasonStats.by_setup_reason}
+                />
+
+                <StatsReasonRows
+                    title="Block reasons"
+                    rows={setupReasonStats.signal_block_reasons}
+                    mode="blocks"
+                />
+
+                <StatsReasonRows
+                    title="Strategies"
+                    rows={setupReasonStats.by_strategy}
+                />
+
+                <StatsReasonRows
+                    title="Close reasons"
+                    rows={setupReasonStats.by_close_reason}
+                />
+            </Box>
+        </Paper>
+    );
+}
+
+
 export default function Research() {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState("");
 
     const [statistics, setStatistics] = useState(null);
+    const [setupReasonStats, setSetupReasonStats] = useState(null);
     const [workerStatus, setWorkerStatus] = useState(null);
     const [trades, setTrades] = useState([]);
 
@@ -1296,11 +1548,13 @@ export default function Research() {
 
             const [
                 statisticsData,
+                setupReasonStatsData,
                 workerStatusData,
                 tradesData,
                 latestScanData,
             ] = await Promise.all([
                 getResearchStatistics(),
+                getResearchSetupReasonStatistics(),
                 getWorkerStatus(),
                 getResearchTrades({
                     limit: 100,
@@ -1309,6 +1563,7 @@ export default function Research() {
             ]);
 
             setStatistics(statisticsData || null);
+            setSetupReasonStats(setupReasonStatsData || null);
             setWorkerStatus(workerStatusData || null);
             setTrades(safeArray(tradesData?.trades));
 
@@ -1858,6 +2113,10 @@ export default function Research() {
             <WorkerStatusPanel
                 workerStatus={workerStatus}
                 statistics={statistics}
+            />
+
+            <SetupReasonStatisticsPanel
+                setupReasonStats={setupReasonStats}
             />
 
             <Box

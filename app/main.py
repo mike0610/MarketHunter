@@ -28,6 +28,7 @@ from pipeline.handlers import (
 )
 from pipeline.signal_pipeline import SignalPipeline
 from probability.probability_engine import ProbabilityEngine
+from research.candidate_promotion_service import CandidatePromotionService
 from research.binance_candle_loader import (
     BinanceTradeCandleLoader,
 )
@@ -109,6 +110,44 @@ def build_pipeline(
     )
 
 
+async def promote_candidate_trades(
+    repository: ResearchRepository,
+    market_data: MarketDataService,
+) -> None:
+    """
+    Promote candidate/watchlist trades when conditions become valid.
+    """
+
+    service = CandidatePromotionService(
+        repository=repository,
+    )
+
+    candle_loader = BinanceTradeCandleLoader(
+        market_data=market_data,
+        limit=MONITOR_CANDLE_LIMIT,
+    )
+
+    result = await service.run_once(
+        candle_loader=candle_loader,
+    )
+
+    logger.info(
+        "Candidate promotion | Candidates: {} | Checked: {} | "
+        "Promoted: {} | Blocked: {} | Skipped: {}",
+        result.candidates,
+        result.checked,
+        result.promoted,
+        result.blocked,
+        result.skipped_without_candles,
+    )
+
+    for error in result.errors:
+        logger.warning(
+            "Candidate promotion error: {}",
+            error,
+        )
+
+
 async def monitor_open_trades(
     repository: ResearchRepository,
     market_data: MarketDataService,
@@ -176,6 +215,11 @@ async def main() -> None:
 
     try:
         await market_data.ping()
+
+        await promote_candidate_trades(
+            repository=repository,
+            market_data=market_data,
+        )
 
         await monitor_open_trades(
             repository=repository,

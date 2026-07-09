@@ -504,6 +504,31 @@ class ResearchRepository:
             for row in rows
         ]
 
+    def list_candidates(
+        self,
+    ) -> list[ResearchTrade]:
+        """
+        Return candidate/watchlist trades that can be promoted later.
+        """
+
+        with self._lock:
+            rows = self.connection.execute(
+                """
+                SELECT *
+                FROM research_trades
+                WHERE status = ?
+                ORDER BY created_at ASC
+                """,
+                (
+                    TradeStatus.CANDIDATE.value,
+                ),
+            ).fetchall()
+
+        return [
+            self._row_to_trade(row)
+            for row in rows
+        ]
+
     def list_open(
         self,
     ) -> list[ResearchTrade]:

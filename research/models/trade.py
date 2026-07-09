@@ -116,6 +116,32 @@ class ResearchTrade:
         if processed_at is not None:
             self.last_processed_candle_at = processed_at
 
+    def promote_to_waiting_entry(
+        self,
+        reason: str,
+        processed_at: datetime | None = None,
+    ) -> None:
+        """
+        Promote candidate/watchlist trade back to waiting-entry state.
+        """
+
+        if self.status != TradeStatus.CANDIDATE:
+            return
+
+        self.status = TradeStatus.WAITING_ENTRY
+        self.close_reason = reason
+        self.opened_at = None
+        self.closed_at = None
+        self.active_candles = 0
+        self.profit_amount = 0.0
+        self.profit_percent = 0.0
+        self.rr = 0.0
+        self.max_profit_percent = 0.0
+        self.max_drawdown_percent = 0.0
+
+        if processed_at is not None:
+            self.last_processed_candle_at = processed_at
+
     def activate(
         self,
         opened_at: datetime,

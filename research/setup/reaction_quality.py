@@ -15,6 +15,7 @@ from indicators.false_breakout_filter import FalseBreakoutFilter
 from indicators.double_pattern import DoublePatternDetector
 from indicators.liquidity_filter import LiquidityFilter
 from indicators.liquidity_buildup import LiquidityBuildupSweepDetector
+from indicators.retest_detector import RetestDetector
 from models.market_snapshot import MarketSnapshot
 
 
@@ -55,6 +56,7 @@ class ReactionQualityDetector:
         self.liquidity = LiquidityFilter()
         self.liquidity_buildup = LiquidityBuildupSweepDetector()
         self.double_pattern = DoublePatternDetector()
+        self.retest = RetestDetector()
 
     def assess(
         self,
@@ -69,6 +71,7 @@ class ReactionQualityDetector:
                 ("Bearish BOS", self.bos.bearish(snapshot)),
                 ("Bearish CHoCH", self.choch.bearish(snapshot)),
                 ("Bearish Breakout", self.breakout.bearish(snapshot)),
+                ("Bearish Retest", self.retest.bearish(snapshot.candles)),
                 (
                     "Bearish False Breakout",
                     self.false_breakout.bearish(snapshot),
@@ -93,6 +96,7 @@ class ReactionQualityDetector:
                 ("Bullish BOS", self.bos.bullish(snapshot)),
                 ("Bullish CHoCH", self.choch.bullish(snapshot)),
                 ("Bullish Breakout", self.breakout.bullish(snapshot)),
+                ("Bullish Retest", self.retest.bullish(snapshot.candles)),
                 (
                     "Bullish False Breakout",
                     self.false_breakout.bullish(snapshot),
@@ -137,9 +141,9 @@ class ReactionQualityDetector:
             )
         else:
             summary = (
-                "No confirmed reaction: missing BOS/CHoCH, "
-                "breakout, false breakout, liquidity sweep, liquidity buildup sweep, ""double top/bottom or "
-                "ATR impulse."
+                "No confirmed reaction: missing BOS/CHoCH, breakout, "
+                "retest, false breakout, liquidity sweep, "
+                "liquidity buildup sweep, double top/bottom or ATR impulse."
             )
 
         return ReactionQualityAssessment(

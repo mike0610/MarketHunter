@@ -1247,6 +1247,503 @@ class ResearchRepository:
         return payload
 
 
+    def get_target_block_statistics(
+        self,
+        *,
+        limit: int = 2000,
+    ) -> dict[str, object]:
+        """
+        Return target-block analytics from recent signal records.
+        """
+
+        def empty_payload() -> dict[str, object]:
+            return {
+                "summary": {
+                    "records": 0,
+                    "support_blocks": 0,
+                    "resistance_blocks": 0,
+                    "long_blocks": 0,
+                    "short_blocks": 0,
+                    "average_distance_to_entry_percent": 0.0,
+                    "average_distance_to_target_percent": 0.0,
+                },
+                "by_symbol": [],
+                "by_strategy": [],
+                "by_zone_type": [],
+                "by_direction": [],
+            }
+
+        def safe_float(value) -> float | None:
+            try:
+                if value is None:
+                    return None
+
+                return float(value)
+
+            except (
+                TypeError,
+                ValueError,
+            ):
+                return None
+
+        def parse_zone_type(summary: str) -> str:
+            normalized = summary.lower()
+
+            if "support zone" in normalized:
+                return "support"
+
+            if "resistance zone" in normalized:
+                return "resistance"
+
+            return "unknown"
+
+        def parse_zone_center(summary: str) -> float | None:
+            normalized = summary.lower()
+
+            if " around " not in normalized:
+                return None
+
+            raw = normalized.split(
+                " around ",
+                1,
+            )[1].strip()
+
+            raw = raw.split()[0].strip().rstrip(".")
+
+            return safe_float(raw)
+
+        def is_target_block(row, metadata: dict[str, object]) -> bool:
+            reason = str(
+                row["research_skipped"]
+                or row["rejected_reason"]
+                or metadata.get("research_skipped")
+                or metadata.get("target_summary")
+                or ""
+            ).lower()
+
+            if metadata.get("target_clear") is False:
+                return True
+
+            return (
+                "target quality" in reason
+                or "blocked by support" in reason
+                or "blocked by resistance" in reason
+                or "tp 1:3 is blocked" in reason
+            )
+
+        def new_group(label: str) -> dict[str, object]:
+            return {
+                "label": label,
+                "count": 0,
+                "support_blocks": 0,
+                "resistance_blocks": 0,
+                "long_blocks": 0,
+                "short_blocks": 0,
+                "symbols": set(),
+                "strategies": {},
+                "examples": [],
+                "_target_rr_sum": 0.0,
+                "_target_rr_count": 0,
+                "_zone_center_sum": 0.0,
+                "_zone_center_count": 0,
+                "_distance_entry_sum": 0.0,
+                "_distance_entry_count": 0,
+                "_distance_target_sum": 0.0,
+                "_distance_target_count": 0,
+            }
+
+        def bump_count_map(value: dict[str, int], key: str) -> None:
+            value[key] = int(
+                value.get(
+                    key,
+                    0,
+                )
+            ) + 1
+
+        def bump_group(
+            groups: dict[str, dict[str, object]],
+            *,
+            label: str,
+            symbol: str,
+            strategy: str,
+            direction: str,
+            zone_type: str,
+            target_rr: float | None,
+            zone_center: float | None,
+            distance_entry: float | None,
+            distance_target: float | None,
+            example: str,
+        ) -> None:
+            group = groups.setdefault(
+                label,
+                new_group(label),
+            )
+
+            group["count"] = int(group["count"]) + 1
+            group["symbols"].add(symbol)
+            bump_count_map(
+                group["strategies"],
+                strategy,
+            )
+
+            if zone_type == "support":
+                group["support_blocks"] = (
+                    int(group["support_blocks"])
+                    + 1
+                )
+
+            if zone_type == "resistance":
+                group["resistance_blocks"] = (
+                    int(group["resistance_blocks"])
+                    + 1
+                )
+
+            if direction == "LONG":
+                group["long_blocks"] = (
+                    int(group["long_blocks"])
+                    + 1
+                )
+
+            if direction == "SHORT":
+                group["short_blocks"] = (
+                    int(group["short_blocks"])
+                    + 1
+                )
+
+            if target_rr is not None:
+                group["_target_rr_sum"] = (
+                    float(group["_target_rr_sum"])
+                    + target_rr
+                )
+                group["_target_rr_count"] = (
+                    int(group["_target_rr_count"])
+                    + 1
+                )
+
+            if zone_center is not None:
+                group["_zone_center_sum"] = (
+                    float(group["_zone_center_sum"])
+                    + zone_center
+                )
+                group["_zone_center_count"] = (
+                    int(group["_zone_center_count"])
+                    + 1
+                )
+
+            if distance_entry is not None:
+                group["_distance_entry_sum"] = (
+                    float(group["_distance_entry_sum"])
+                    + distance_entry
+                )
+                group["_distance_entry_count"] = (
+                    int(group["_distance_entry_count"])
+                    + 1
+                )
+
+            if distance_target is not None:
+                group["_distance_target_sum"] = (
+                    float(group["_distance_target_sum"])
+                    + distance_target
+                )
+                group["_distance_target_count"] = (
+                    int(group["_distance_target_count"])
+                    + 1
+                )
+
+            examples = group["examples"]
+
+            if len(examples) < 5:
+                examples.append(example)
+
+        def serialize_group(group: dict[str, object]) -> dict[str, object]:
+            target_rr_count = int(group["_target_rr_count"])
+            zone_center_count = int(group["_zone_center_count"])
+            distance_entry_count = int(group["_distance_entry_count"])
+            distance_target_count = int(group["_distance_target_count"])
+
+            return {
+                "label": group["label"],
+                "count": int(group["count"]),
+                "support_blocks": int(group["support_blocks"]),
+                "resistance_blocks": int(group["resistance_blocks"]),
+                "long_blocks": int(group["long_blocks"]),
+                "short_blocks": int(group["short_blocks"]),
+                "average_target_rr": (
+                    float(group["_target_rr_sum"])
+                    / target_rr_count
+                    if target_rr_count > 0
+                    else 0.0
+                ),
+                "average_zone_center": (
+                    float(group["_zone_center_sum"])
+                    / zone_center_count
+                    if zone_center_count > 0
+                    else 0.0
+                ),
+                "average_distance_to_entry_percent": (
+                    float(group["_distance_entry_sum"])
+                    / distance_entry_count
+                    if distance_entry_count > 0
+                    else 0.0
+                ),
+                "average_distance_to_target_percent": (
+                    float(group["_distance_target_sum"])
+                    / distance_target_count
+                    if distance_target_count > 0
+                    else 0.0
+                ),
+                "symbols": sorted(group["symbols"]),
+                "strategies": dict(
+                    sorted(
+                        group["strategies"].items(),
+                        key=lambda item: item[1],
+                        reverse=True,
+                    )
+                ),
+                "examples": list(group["examples"]),
+            }
+
+        safe_limit = max(
+            1,
+            min(
+                int(limit),
+                5000,
+            ),
+        )
+
+        try:
+            with self._lock:
+                rows = self.connection.execute(
+                    """
+                    SELECT
+                        symbol,
+                        strategy,
+                        direction,
+                        rejected_reason,
+                        research_skipped,
+                        metadata
+                    FROM signal_records
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (
+                        safe_limit,
+                    ),
+                ).fetchall()
+
+        except sqlite3.OperationalError:
+            return empty_payload()
+
+        summary = {
+            "records": 0,
+            "support_blocks": 0,
+            "resistance_blocks": 0,
+            "long_blocks": 0,
+            "short_blocks": 0,
+            "_distance_entry_sum": 0.0,
+            "_distance_entry_count": 0,
+            "_distance_target_sum": 0.0,
+            "_distance_target_count": 0,
+        }
+
+        by_symbol: dict[str, dict[str, object]] = {}
+        by_strategy: dict[str, dict[str, object]] = {}
+        by_zone_type: dict[str, dict[str, object]] = {}
+        by_direction: dict[str, dict[str, object]] = {}
+
+        for row in rows:
+            metadata = self._safe_json_dict(
+                row["metadata"],
+            )
+
+            if not is_target_block(
+                row,
+                metadata,
+            ):
+                continue
+
+            symbol = str(
+                row["symbol"]
+                or "Unknown"
+            ).upper()
+
+            strategy = str(
+                row["strategy"]
+                or "Unknown"
+            )
+
+            direction = str(
+                row["direction"]
+                or "Unknown"
+            ).upper()
+
+            target_summary = str(
+                metadata.get("target_summary")
+                or row["research_skipped"]
+                or row["rejected_reason"]
+                or ""
+            )
+
+            zone_type = str(
+                metadata.get("target_blocking_zone_type")
+                or parse_zone_type(target_summary)
+                or "unknown"
+            ).lower()
+
+            target_rr = safe_float(
+                metadata.get("target_rr"),
+            )
+
+            zone_center = safe_float(
+                metadata.get("target_blocking_zone_center"),
+            )
+
+            if zone_center is None:
+                zone_center = parse_zone_center(
+                    target_summary,
+                )
+
+            distance_entry = safe_float(
+                metadata.get(
+                    "target_blocking_zone_distance_to_entry_percent",
+                ),
+            )
+
+            distance_target = safe_float(
+                metadata.get(
+                    "target_blocking_zone_distance_to_target_percent",
+                ),
+            )
+
+            example = (
+                f"{symbol} {direction} {strategy}: "
+                f"{target_summary}"
+            )
+
+            summary["records"] = int(summary["records"]) + 1
+
+            if zone_type == "support":
+                summary["support_blocks"] = (
+                    int(summary["support_blocks"])
+                    + 1
+                )
+
+            if zone_type == "resistance":
+                summary["resistance_blocks"] = (
+                    int(summary["resistance_blocks"])
+                    + 1
+                )
+
+            if direction == "LONG":
+                summary["long_blocks"] = (
+                    int(summary["long_blocks"])
+                    + 1
+                )
+
+            if direction == "SHORT":
+                summary["short_blocks"] = (
+                    int(summary["short_blocks"])
+                    + 1
+                )
+
+            if distance_entry is not None:
+                summary["_distance_entry_sum"] = (
+                    float(summary["_distance_entry_sum"])
+                    + distance_entry
+                )
+                summary["_distance_entry_count"] = (
+                    int(summary["_distance_entry_count"])
+                    + 1
+                )
+
+            if distance_target is not None:
+                summary["_distance_target_sum"] = (
+                    float(summary["_distance_target_sum"])
+                    + distance_target
+                )
+                summary["_distance_target_count"] = (
+                    int(summary["_distance_target_count"])
+                    + 1
+                )
+
+            for groups, label in [
+                (by_symbol, symbol),
+                (by_strategy, strategy),
+                (by_zone_type, zone_type),
+                (by_direction, direction),
+            ]:
+                bump_group(
+                    groups,
+                    label=label,
+                    symbol=symbol,
+                    strategy=strategy,
+                    direction=direction,
+                    zone_type=zone_type,
+                    target_rr=target_rr,
+                    zone_center=zone_center,
+                    distance_entry=distance_entry,
+                    distance_target=distance_target,
+                    example=example,
+                )
+
+        distance_entry_count = int(summary["_distance_entry_count"])
+        distance_target_count = int(summary["_distance_target_count"])
+
+        return {
+            "summary": {
+                "records": int(summary["records"]),
+                "support_blocks": int(summary["support_blocks"]),
+                "resistance_blocks": int(summary["resistance_blocks"]),
+                "long_blocks": int(summary["long_blocks"]),
+                "short_blocks": int(summary["short_blocks"]),
+                "average_distance_to_entry_percent": (
+                    float(summary["_distance_entry_sum"])
+                    / distance_entry_count
+                    if distance_entry_count > 0
+                    else 0.0
+                ),
+                "average_distance_to_target_percent": (
+                    float(summary["_distance_target_sum"])
+                    / distance_target_count
+                    if distance_target_count > 0
+                    else 0.0
+                ),
+            },
+            "by_symbol": sorted(
+                [
+                    serialize_group(group)
+                    for group in by_symbol.values()
+                ],
+                key=lambda item: int(item["count"]),
+                reverse=True,
+            )[:20],
+            "by_strategy": sorted(
+                [
+                    serialize_group(group)
+                    for group in by_strategy.values()
+                ],
+                key=lambda item: int(item["count"]),
+                reverse=True,
+            )[:20],
+            "by_zone_type": sorted(
+                [
+                    serialize_group(group)
+                    for group in by_zone_type.values()
+                ],
+                key=lambda item: int(item["count"]),
+                reverse=True,
+            ),
+            "by_direction": sorted(
+                [
+                    serialize_group(group)
+                    for group in by_direction.values()
+                ],
+                key=lambda item: int(item["count"]),
+                reverse=True,
+            ),
+        }
+
+
     def get_signal_block_reason_statistics(
         self,
         *,

@@ -889,6 +889,23 @@ def get_research_direction_conflict_statistics(
 
 
 @router.get(
+    "/statistics/target-blocks",
+)
+def get_research_target_block_statistics(
+    repository: ResearchRepository = Depends(
+        get_repository,
+    ),
+) -> dict[str, object]:
+    """
+    Return target-block analytics from scan journal.
+    """
+
+    return repository.get_target_block_statistics(
+        limit=2000,
+    )
+
+
+@router.get(
     "/trades/{trade_id}/setup",
     response_model=TradeSetupResponse,
 )

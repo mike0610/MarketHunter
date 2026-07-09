@@ -268,12 +268,9 @@ class ResearchTradeHandler(SignalHandler):
                 )
             )
 
-            context.signal.metadata["target_rr"] = self.target_rr
-            context.signal.metadata["target_clear"] = (
-                target_assessment.target_clear
-            )
-            context.signal.metadata["target_summary"] = (
-                target_assessment.summary
+            self._write_target_metadata(
+                metadata=context.signal.metadata,
+                assessment=target_assessment,
             )
 
             if not target_assessment.target_clear:
@@ -433,6 +430,72 @@ class ResearchTradeHandler(SignalHandler):
         context.signal.metadata["research_trade_id"] = (
             trade.id
         )
+
+    @staticmethod
+    def _write_target_metadata(
+        *,
+        metadata,
+        assessment,
+    ) -> None:
+        metadata["target_rr"] = assessment.target_rr
+        metadata["target_price"] = round(
+            assessment.target_price,
+            8,
+        )
+        metadata["target_clear"] = assessment.target_clear
+        metadata["target_summary"] = assessment.summary
+        metadata["target_blocking_zone_count"] = len(
+            assessment.blocking_zones,
+        )
+
+        if not assessment.blocking_zones:
+            metadata["target_blocking_zone_type"] = None
+            metadata["target_blocking_zone_center"] = None
+            metadata["target_blocking_zone_lower"] = None
+            metadata["target_blocking_zone_upper"] = None
+            metadata["target_blocking_zone_touches"] = 0
+            metadata["target_blocking_zone_strength"] = 0.0
+            metadata["target_blocking_zone_distance_to_entry_percent"] = None
+            metadata["target_blocking_zone_distance_to_target_percent"] = None
+            return
+
+        zone = assessment.blocking_zones[0]
+
+        metadata["target_blocking_zone_type"] = zone.zone_type
+        metadata["target_blocking_zone_center"] = round(
+            zone.center,
+            8,
+        )
+        metadata["target_blocking_zone_lower"] = round(
+            zone.lower,
+            8,
+        )
+        metadata["target_blocking_zone_upper"] = round(
+            zone.upper,
+            8,
+        )
+        metadata["target_blocking_zone_touches"] = zone.touches
+        metadata["target_blocking_zone_strength"] = round(
+            zone.strength,
+            4,
+        )
+        metadata["target_blocking_zone_distance_to_entry_percent"] = (
+            round(
+                zone.distance_to_entry_percent,
+                4,
+            )
+            if zone.distance_to_entry_percent is not None
+            else None
+        )
+        metadata["target_blocking_zone_distance_to_target_percent"] = (
+            round(
+                zone.distance_to_target_percent,
+                4,
+            )
+            if zone.distance_to_target_percent is not None
+            else None
+        )
+
 
     @staticmethod
     def _write_risk_geometry_metadata(

@@ -21,6 +21,7 @@ from pipeline.handler import SignalHandler
 from probability.probability_engine import ProbabilityEngine
 from research.setup.support_resistance import SupportResistanceDetector
 from research.setup.reaction_quality import ReactionQualityDetector
+from research.setup.risk_geometry import RiskGeometryDetector
 from research.manager import ResearchManager
 from risk.risk_manager import RiskManager
 
@@ -195,6 +196,7 @@ class ResearchTradeHandler(SignalHandler):
             max_zones=12,
         )
         self.reaction_quality = ReactionQualityDetector()
+        self.risk_geometry = RiskGeometryDetector()
         self.created_trades_this_cycle = 0
 
     async def handle(
@@ -230,6 +232,30 @@ class ResearchTradeHandler(SignalHandler):
             "candles",
             None,
         )
+
+        risk_geometry = self.risk_geometry.assess(
+            snapshot=snapshot,
+            direction=context.signal.direction,
+            entry_price=context.risk.entry,
+            stop_loss=context.risk.stop_loss,
+            strategy=context.signal.strategy,
+            signal_metadata=context.signal.metadata,
+        )
+
+        self._write_risk_geometry_metadata(
+            metadata=context.signal.metadata,
+            assessment=risk_geometry,
+        )
+
+        if not risk_geometry.valid:
+            self._skip(
+                context=context,
+                reason=(
+                    "Research trade blocked by risk geometry: "
+                    f"{risk_geometry.summary}"
+                ),
+            )
+            return
 
         if candles:
             target_assessment = (
@@ -406,6 +432,42 @@ class ResearchTradeHandler(SignalHandler):
 
         context.signal.metadata["research_trade_id"] = (
             trade.id
+        )
+
+    @staticmethod
+    def _write_risk_geometry_metadata(
+        *,
+        metadata,
+        assessment,
+    ) -> None:
+        metadata["risk_geometry_valid"] = assessment.valid
+        metadata["risk_geometry_summary"] = assessment.summary
+        metadata["risk_geometry_reasons"] = list(
+            assessment.reasons,
+        )
+        metadata["stop_distance"] = assessment.stop_distance
+        metadata["stop_distance_percent"] = round(
+            assessment.stop_distance_percent,
+            4,
+        )
+        metadata["stop_distance_atr"] = (
+            round(
+                assessment.stop_distance_atr,
+                4,
+            )
+            if assessment.stop_distance_atr is not None
+            else None
+        )
+        metadata["entry_zone_relation"] = (
+            assessment.entry_zone_relation
+        )
+        metadata["entry_zone_distance_percent"] = (
+            round(
+                assessment.entry_zone_distance_percent,
+                4,
+            )
+            if assessment.entry_zone_distance_percent is not None
+            else None
         )
 
     @staticmethod

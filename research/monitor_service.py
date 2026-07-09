@@ -23,6 +23,7 @@ from research.models.trade import ResearchTrade
 from research.models.trade_status import TradeStatus
 from research.monitor import TradeMonitor
 from research.setup.support_resistance import SupportResistanceDetector
+from research.setup.risk_geometry import RiskGeometryDetector
 from research.storage.repository import ResearchRepository
 
 
@@ -65,6 +66,7 @@ class ResearchMonitorService:
         monitor: TradeMonitor | None = None,
         target_rr: float = 3.0,
         support_resistance: SupportResistanceDetector | None = None,
+        risk_geometry: RiskGeometryDetector | None = None,
     ) -> None:
         self.repository = repository
         self.monitor = monitor or TradeMonitor(
@@ -79,6 +81,10 @@ class ResearchMonitorService:
                 min_touches=1,
                 max_zones=12,
             )
+        )
+        self.risk_geometry = (
+            risk_geometry
+            or RiskGeometryDetector()
         )
 
     async def run_once(
@@ -164,6 +170,27 @@ class ResearchMonitorService:
     ) -> bool:
         if not candles:
             return True
+
+        risk_geometry = self.risk_geometry.assess_values(
+            direction=trade.direction,
+            entry_price=trade.entry_price,
+            stop_loss=trade.stop_loss,
+        )
+
+        if not risk_geometry.valid:
+            reason = (
+                "WAITING_ENTRY_REVALIDATION_FAILED: "
+                f"{risk_geometry.summary}"
+            )
+
+            trade.move_to_candidate(
+                reason=reason,
+                processed_at=candles[-1].close_time,
+            )
+
+            self.repository.save(trade)
+
+            return False
 
         assessment = self.support_resistance.assess_rr_target(
             candles,

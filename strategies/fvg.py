@@ -153,6 +153,19 @@ class FVGStrategy(BaseStrategy):
                     f"Volume x{volume_ratio:.2f}"
                 )
 
+        signal.metadata.update(
+            {
+                "setup_zone_type": "FVG",
+                "setup_zone_lower": gap.lower,
+                "setup_zone_upper": gap.upper,
+                "setup_zone_distance": distance,
+                "setup_zone_distance_percent": self._distance_percent(
+                    snapshot,
+                    distance,
+                ),
+            }
+        )
+
         return signal
 
     def _build_short_signal(
@@ -245,6 +258,19 @@ class FVGStrategy(BaseStrategy):
                 signal.add_reason(
                     f"Volume x{volume_ratio:.2f}"
                 )
+
+        signal.metadata.update(
+            {
+                "setup_zone_type": "FVG",
+                "setup_zone_lower": gap.lower,
+                "setup_zone_upper": gap.upper,
+                "setup_zone_distance": distance,
+                "setup_zone_distance_percent": self._distance_percent(
+                    snapshot,
+                    distance,
+                ),
+            }
+        )
 
         return signal
 

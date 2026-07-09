@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from models.candle import Candle
 from research.models.trade import ResearchTrade
 from research.setup.reaction_quality import ReactionQualityDetector
+from research.setup.risk_geometry import RiskGeometryDetector
 from research.setup.support_resistance import SupportResistanceDetector
 from research.storage.repository import ResearchRepository
 from services.snapshot_builder import SnapshotBuilder
@@ -52,6 +53,7 @@ class CandidatePromotionService:
         target_rr: float = 3.0,
         support_resistance: SupportResistanceDetector | None = None,
         reaction_quality: ReactionQualityDetector | None = None,
+        risk_geometry: RiskGeometryDetector | None = None,
         snapshot_builder: SnapshotBuilder | None = None,
         max_promotions_per_cycle: int = 3,
     ) -> None:
@@ -79,6 +81,10 @@ class CandidatePromotionService:
         self.reaction_quality = (
             reaction_quality
             or ReactionQualityDetector()
+        )
+        self.risk_geometry = (
+            risk_geometry
+            or RiskGeometryDetector()
         )
         self.snapshot_builder = (
             snapshot_builder
@@ -119,17 +125,38 @@ class CandidatePromotionService:
 
                 result.checked += 1
 
+                snapshot = self.snapshot_builder.build(
+                    trade.symbol,
+                    completed_candles,
+                )
+
+                risk_geometry = self.risk_geometry.assess(
+                    snapshot=snapshot,
+                    direction=trade.direction,
+                    entry_price=trade.entry_price,
+                    stop_loss=trade.stop_loss,
+                    strategy=trade.strategy,
+                    signal_metadata=None,
+                )
+
+                if not risk_geometry.valid:
+                    self._block_candidate(
+                        trade=trade,
+                        reason=(
+                            "CANDIDATE_PROMOTION_BLOCKED: "
+                            f"{risk_geometry.summary}"
+                        ),
+                        processed_at=completed_candles[-1].close_time,
+                    )
+                    result.blocked += 1
+                    continue
+
                 if not self._candidate_still_actionable(
                     trade=trade,
                     candles=completed_candles,
                     result=result,
                 ):
                     continue
-
-                snapshot = self.snapshot_builder.build(
-                    trade.symbol,
-                    completed_candles,
-                )
 
                 reaction = self.reaction_quality.assess(
                     snapshot=snapshot,

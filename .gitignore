@@ -11,3 +11,5 @@ debug_sources.txt
 filter_sources.txt
 core_sources.txt
 architecture_sources.txt
+
+.env

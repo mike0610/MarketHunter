@@ -32,6 +32,7 @@ import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
 import {
     extractApiError,
     getLatestScan,
+    getResearchConflictStatistics,
     getResearchStatistics,
     getResearchSetupReasonStatistics,
     getResearchTrades,
@@ -1290,6 +1291,17 @@ function compactObjectStats(value) {
 }
 
 
+function compactArrayStats(value) {
+    if (!Array.isArray(value) || value.length === 0) {
+        return "—";
+    }
+
+    return value
+        .slice(0, 5)
+        .join(" · ");
+}
+
+
 function StatsReasonRows({
     title,
     rows,
@@ -1431,6 +1443,261 @@ function StatsReasonRows({
 }
 
 
+
+function DirectionConflictRows({
+    title,
+    rows,
+}) {
+    const items = safeArray(rows).slice(0, 8);
+
+    return (
+        <Box sx={{ minWidth: 0 }}>
+            <Typography
+                variant="h6"
+                fontWeight={700}
+                sx={{ mb: 1.5 }}
+            >
+                {title}
+            </Typography>
+
+            {items.length === 0 ? (
+                <Typography
+                    variant="body2"
+                    color="text.secondary"
+                >
+                    No conflict data yet.
+                </Typography>
+            ) : (
+                <Stack spacing={1.25}>
+                    {items.map((row, index) => (
+                        <Paper
+                            key={`${title}-${row.label || index}`}
+                            variant="outlined"
+                            sx={{
+                                p: 1.5,
+                                borderRadius: 2,
+                                bgcolor: "rgba(255,255,255,0.02)",
+                                minWidth: 0,
+                            }}
+                        >
+                            <Stack
+                                direction="row"
+                                spacing={1}
+                                useFlexGap
+                                flexWrap="wrap"
+                                alignItems="center"
+                                sx={{ mb: 1 }}
+                            >
+                                <Typography
+                                    variant="subtitle2"
+                                    fontWeight={700}
+                                    sx={{ wordBreak: "break-word" }}
+                                >
+                                    {row.label || "Unknown"}
+                                </Typography>
+
+                                <Chip
+                                    size="small"
+                                    variant="outlined"
+                                    label={`Count: ${formatNumber(row.count, 0)}`}
+                                />
+                            </Stack>
+
+                            <Box
+                                sx={{
+                                    display: "grid",
+                                    gap: 1.5,
+                                    gridTemplateColumns: {
+                                        xs: "repeat(2, minmax(0, 1fr))",
+                                        md: "repeat(4, minmax(0, 1fr))",
+                                    },
+                                }}
+                            >
+                                <InfoStat
+                                    label="Mixed"
+                                    value={formatNumber(row.mixed_rejected, 0)}
+                                />
+
+                                <InfoStat
+                                    label="Resolved"
+                                    value={formatNumber(row.resolved, 0)}
+                                />
+
+                                <InfoStat
+                                    label="Winner"
+                                    value={formatNumber(row.winner, 0)}
+                                />
+
+                                <InfoStat
+                                    label="Loser rejected"
+                                    value={formatNumber(row.loser_rejected, 0)}
+                                />
+
+                                <InfoStat
+                                    label="LONG wins"
+                                    value={formatNumber(row.long_winner, 0)}
+                                />
+
+                                <InfoStat
+                                    label="SHORT wins"
+                                    value={formatNumber(row.short_winner, 0)}
+                                />
+
+                                <InfoStat
+                                    label="Avg delta"
+                                    value={formatNumber(row.average_delta, 2)}
+                                />
+
+                                <InfoStat
+                                    label="Symbols"
+                                    value={compactArrayStats(row.symbols)}
+                                />
+                            </Box>
+
+                            {safeArray(row.examples).length > 0 && (
+                                <Typography
+                                    variant="body2"
+                                    color="text.secondary"
+                                    sx={{
+                                        mt: 1,
+                                        wordBreak: "break-word",
+                                    }}
+                                >
+                                    {safeArray(row.examples)[0]}
+                                </Typography>
+                            )}
+                        </Paper>
+                    ))}
+                </Stack>
+            )}
+        </Box>
+    );
+}
+
+
+function DirectionConflictStatisticsPanel({
+    conflictStats,
+}) {
+    if (!conflictStats) {
+        return null;
+    }
+
+    const summary = conflictStats.summary || {};
+
+    return (
+        <Paper
+            variant="outlined"
+            sx={{
+                p: 3,
+                borderRadius: 4,
+                mb: 3,
+                minWidth: 0,
+            }}
+        >
+            <Box sx={{ minWidth: 0, mb: 2 }}>
+                <Typography
+                    variant="h4"
+                    fontWeight={700}
+                >
+                    Direction Conflict Analytics
+                </Typography>
+
+                <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{ mt: 0.75 }}
+                >
+                    LONG/SHORT conflict events grouped by symbol, strategy and strategy pair.
+                </Typography>
+            </Box>
+
+            <Box
+                sx={{
+                    display: "grid",
+                    gap: 2,
+                    gridTemplateColumns: {
+                        xs: "repeat(2, minmax(0, 1fr))",
+                        md: "repeat(4, minmax(0, 1fr))",
+                    },
+                    mb: 3,
+                }}
+            >
+                <MetricCard
+                    label="Conflict records"
+                    value={formatNumber(summary.records, 0)}
+                />
+
+                <MetricCard
+                    label="Conflict events"
+                    value={formatNumber(summary.events, 0)}
+                />
+
+                <MetricCard
+                    label="Mixed rejected"
+                    value={formatNumber(summary.mixed_rejected, 0)}
+                />
+
+                <MetricCard
+                    label="Resolved"
+                    value={formatNumber(summary.resolved, 0)}
+                />
+
+                <MetricCard
+                    label="LONG winners"
+                    value={formatNumber(summary.long_winner, 0)}
+                />
+
+                <MetricCard
+                    label="SHORT winners"
+                    value={formatNumber(summary.short_winner, 0)}
+                />
+
+                <MetricCard
+                    label="Avg delta"
+                    value={formatNumber(summary.average_delta, 2)}
+                />
+
+                <MetricCard
+                    label="Avg LONG / SHORT"
+                    value={`${formatNumber(summary.average_long_score, 1)} / ${formatNumber(summary.average_short_score, 1)}`}
+                />
+            </Box>
+
+            <Box
+                sx={{
+                    display: "grid",
+                    gap: 2,
+                    gridTemplateColumns: {
+                        xs: "1fr",
+                        xl: "repeat(2, minmax(0, 1fr))",
+                    },
+                }}
+            >
+                <DirectionConflictRows
+                    title="By symbol"
+                    rows={conflictStats.by_symbol}
+                />
+
+                <DirectionConflictRows
+                    title="By strategy pair"
+                    rows={conflictStats.by_strategy_pair}
+                />
+
+                <DirectionConflictRows
+                    title="By strategy"
+                    rows={conflictStats.by_strategy}
+                />
+
+                <DirectionConflictRows
+                    title="By outcome"
+                    rows={conflictStats.by_outcome}
+                />
+            </Box>
+        </Paper>
+    );
+}
+
+
 function SetupReasonStatisticsPanel({
     setupReasonStats,
 }) {
@@ -1522,6 +1789,7 @@ export default function Research() {
 
     const [statistics, setStatistics] = useState(null);
     const [setupReasonStats, setSetupReasonStats] = useState(null);
+    const [conflictStats, setConflictStats] = useState(null);
     const [workerStatus, setWorkerStatus] = useState(null);
     const [trades, setTrades] = useState([]);
 
@@ -1549,12 +1817,14 @@ export default function Research() {
             const [
                 statisticsData,
                 setupReasonStatsData,
+                conflictStatsData,
                 workerStatusData,
                 tradesData,
                 latestScanData,
             ] = await Promise.all([
                 getResearchStatistics(),
                 getResearchSetupReasonStatistics(),
+                getResearchConflictStatistics(),
                 getWorkerStatus(),
                 getResearchTrades({
                     limit: 100,
@@ -1564,6 +1834,7 @@ export default function Research() {
 
             setStatistics(statisticsData || null);
             setSetupReasonStats(setupReasonStatsData || null);
+            setConflictStats(conflictStatsData || null);
             setWorkerStatus(workerStatusData || null);
             setTrades(safeArray(tradesData?.trades));
 
@@ -2117,6 +2388,10 @@ export default function Research() {
 
             <SetupReasonStatisticsPanel
                 setupReasonStats={setupReasonStats}
+            />
+
+            <DirectionConflictStatisticsPanel
+                conflictStats={conflictStats}
             />
 
             <Box

@@ -60,6 +60,15 @@ export async function getResearchSetupReasonStatistics() {
     return response.data;
 }
 
+
+export async function getResearchConflictStatistics() {
+    const response = await api.get(
+        "/research/statistics/conflicts",
+    );
+
+    return response.data;
+}
+
 export async function getLatestScan() {
     const response = await api.get(
         "/research/latest-scan",

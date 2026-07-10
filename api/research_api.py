@@ -27,7 +27,11 @@ from indicators.divergence_detector import (
     RSIDivergenceDetector,
 )
 from models.market_symbol import MarketSymbol
-from research.models.trade import ResearchTrade
+from research.models.trade import (
+    CORE_RESEARCH_GROUP,
+    EXPERIMENTAL_RESEARCH_GROUP,
+    ResearchTrade,
+)
 from research.models.trade_status import TradeStatus
 from research.setup.support_resistance import (
     SupportResistanceDetector,
@@ -84,6 +88,10 @@ class ResearchTradeResponse(BaseModel):
 
     reasons: list[str]
 
+    research_group: str
+    experiment_tag: str | None
+    is_experimental: bool
+
     status: str
 
     created_at: datetime
@@ -127,6 +135,9 @@ class ResearchTradeResponse(BaseModel):
             score=trade.score,
             notional=trade.notional,
             reasons=list(trade.reasons),
+            research_group=trade.research_group,
+            experiment_tag=trade.experiment_tag,
+            is_experimental=trade.is_experimental,
             status=trade.status.value,
             created_at=trade.created_at,
             opened_at=trade.opened_at,
@@ -735,6 +746,14 @@ def list_research_trades(
         default=None,
         description="Optional Binance symbol filter.",
     ),
+    research_group: str | None = Query(
+        default=None,
+        description="Optional research group filter: core or experimental.",
+    ),
+    experiment_tag: str | None = Query(
+        default=None,
+        description="Optional experiment tag filter, for example spot_research.",
+    ),
     limit: int = Query(
         default=50,
         ge=1,
@@ -762,6 +781,16 @@ def list_research_trades(
         else None
     )
 
+    normalized_research_group = _normalize_research_group(
+        research_group,
+    )
+
+    normalized_experiment_tag = (
+        experiment_tag.strip().lower()
+        if experiment_tag
+        else None
+    )
+
     trades = repository.list_all()
 
     if normalized_status is not None:
@@ -776,6 +805,20 @@ def list_research_trades(
             trade
             for trade in trades
             if trade.symbol.upper() == normalized_symbol
+        ]
+
+    if normalized_research_group is not None:
+        trades = [
+            trade
+            for trade in trades
+            if trade.research_group == normalized_research_group
+        ]
+
+    if normalized_experiment_tag is not None:
+        trades = [
+            trade
+            for trade in trades
+            if trade.experiment_tag == normalized_experiment_tag
         ]
 
     total = len(trades)
@@ -1240,6 +1283,39 @@ def _normalize_status(
             status_code=400,
             detail=(
                 f"Unsupported trade status: {status}. "
+                f"Allowed values: {allowed}."
+            ),
+        )
+
+    return normalized
+
+
+def _normalize_research_group(
+    research_group: str | None,
+) -> str | None:
+    """
+    Validate and normalize optional research group query parameter.
+    """
+
+    if research_group is None:
+        return None
+
+    normalized = research_group.strip().lower()
+
+    allowed_groups = {
+        CORE_RESEARCH_GROUP,
+        EXPERIMENTAL_RESEARCH_GROUP,
+    }
+
+    if normalized not in allowed_groups:
+        allowed = ", ".join(
+            sorted(allowed_groups)
+        )
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported research group: {research_group}. "
                 f"Allowed values: {allowed}."
             ),
         )

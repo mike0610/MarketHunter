@@ -1,13 +1,14 @@
 """
 MarketHunter
 
-Module:
-Research Manager
+research/manager.py
 
 Responsibilities:
-- Create virtual trades from candidate signals.
-- Enforce global and per-symbol open-trade limits.
-- Prevent duplicate same-direction research positions.
+- Create virtual research trades from qualified signals.
+- Classify trades as core or experimental research.
+- Enforce research duplicate protection.
+- Enforce open-trade limits.
+- Never send real orders to Binance or any exchange.
 """
 
 from __future__ import annotations
@@ -16,27 +17,35 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from models.signal import Signal
-from research.models.trade import ResearchTrade
+from research.models.trade import (
+    CORE_RESEARCH_GROUP,
+    EXPERIMENTAL_RESEARCH_GROUP,
+    ResearchTrade,
+)
 from research.storage.repository import ResearchRepository
 
 
-DEFAULT_MAX_OPEN_TRADES = 80
+DEFAULT_MAX_OPEN_TRADES = 10
 DEFAULT_MAX_OPEN_TRADES_PER_SYMBOL = 1
 
+SPOT_RESEARCH_EXPERIMENT_TAG = "spot_research"
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(slots=True)
 class ResearchTradeCreationResult:
     """
-    Result of an attempted virtual trade creation.
+    Result of attempting to create a virtual research trade.
     """
 
     trade: ResearchTrade | None = None
     reason: str | None = None
 
     @property
-    def created(self) -> bool:
+    def created(
+        self,
+    ) -> bool:
         """
-        Return True when a virtual trade was stored.
+        Return True when a trade was created.
         """
 
         return self.trade is not None
@@ -121,19 +130,21 @@ class ResearchManager:
 
         if self.repository.has_open_direction_trade(
             symbol=symbol,
+            market=market,
             timeframe=timeframe,
             direction=direction,
         ):
             return ResearchTradeCreationResult(
                 reason=(
                     "Open trade already exists for "
-                    f"{symbol} {timeframe} {direction}."
+                    f"{symbol} {market} {direction}."
                 )
             )
 
         symbol_open_trades = (
             self.repository.count_open_trades_for_symbol(
                 symbol=symbol,
+                market=market,
             )
         )
 
@@ -142,7 +153,7 @@ class ResearchManager:
         ):
             return ResearchTradeCreationResult(
                 reason=(
-                    f"Open trade limit for {symbol} reached: "
+                    f"Open trade limit for {symbol} {market} reached: "
                     f"{symbol_open_trades}/"
                     f"{self.max_open_trades_per_symbol}."
                 )
@@ -158,12 +169,29 @@ class ResearchManager:
                 )
             )
 
-        signal_id = signal.metadata.get("signal_id")
+        signal_id = signal.metadata.get(
+            "signal_id",
+        )
+
+        research_group = self.research_group_for_signal(
+            signal=signal,
+        )
+
+        experiment_tag = self.experiment_tag_for_signal(
+            signal=signal,
+        )
+
+        signal.metadata["research_group"] = research_group
+        signal.metadata["experiment_tag"] = experiment_tag
 
         trade = ResearchTrade(
-            id=str(uuid4()),
+            id=str(
+                uuid4(),
+            ),
             signal_id=(
-                str(signal_id)
+                str(
+                    signal_id,
+                )
                 if signal_id is not None
                 else None
             ),
@@ -178,11 +206,50 @@ class ResearchManager:
             probability=probability,
             score=signal.score,
             notional=notional,
-            reasons=list(signal.reasons),
+            reasons=list(
+                signal.reasons,
+            ),
+            research_group=research_group,
+            experiment_tag=experiment_tag,
         )
 
-        self.repository.save(trade)
+        self.repository.save(
+            trade,
+        )
 
         return ResearchTradeCreationResult(
             trade=trade,
         )
+
+    @staticmethod
+    def research_group_for_signal(
+        signal: Signal,
+    ) -> str:
+        """
+        Return research group for one signal.
+
+        Futures stays in the core research flow.
+        Spot is experimental while we collect separate statistics.
+        """
+
+        market = signal.market.strip().lower()
+
+        if market == "spot":
+            return EXPERIMENTAL_RESEARCH_GROUP
+
+        return CORE_RESEARCH_GROUP
+
+    @staticmethod
+    def experiment_tag_for_signal(
+        signal: Signal,
+    ) -> str | None:
+        """
+        Return experiment tag for one signal.
+        """
+
+        market = signal.market.strip().lower()
+
+        if market == "spot":
+            return SPOT_RESEARCH_EXPERIMENT_TAG
+
+        return None

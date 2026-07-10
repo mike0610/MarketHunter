@@ -109,6 +109,8 @@ class ResearchRepository:
                     score REAL NOT NULL,
                     notional REAL NOT NULL DEFAULT 100.0,
                     reasons TEXT NOT NULL,
+                    research_group TEXT NOT NULL DEFAULT 'core',
+                    experiment_tag TEXT,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     opened_at TEXT,
@@ -147,6 +149,12 @@ class ResearchRepository:
         """
 
         required_columns = {
+            "research_group": (
+                "research_group TEXT NOT NULL DEFAULT 'core'"
+            ),
+            "experiment_tag": (
+                "experiment_tag TEXT"
+            ),
             "notional": (
                 "notional REAL NOT NULL DEFAULT 100.0"
             ),
@@ -195,6 +203,35 @@ class ResearchRepository:
                         """
                     )
 
+            self.connection.execute(
+                """
+                UPDATE research_trades
+                SET
+                    research_group = 'experimental',
+                    experiment_tag = 'spot_research'
+                WHERE LOWER(market) = 'spot'
+                  AND (
+                      research_group IS NULL
+                      OR research_group = ''
+                      OR research_group = 'core'
+                  )
+                """
+            )
+
+            self.connection.execute(
+                """
+                UPDATE research_trades
+                SET
+                    research_group = 'core',
+                    experiment_tag = NULL
+                WHERE LOWER(market) != 'spot'
+                  AND (
+                      research_group IS NULL
+                      OR research_group = ''
+                  )
+                """
+            )
+
     def save(
         self,
         trade: ResearchTrade,
@@ -221,6 +258,8 @@ class ResearchRepository:
                 trade.reasons,
                 ensure_ascii=False,
             ),
+            "research_group": trade.research_group,
+            "experiment_tag": trade.experiment_tag,
             "status": trade.status.value,
             "created_at": trade.created_at.isoformat(),
             "opened_at": (
@@ -270,6 +309,8 @@ class ResearchRepository:
                     score,
                     notional,
                     reasons,
+                    research_group,
+                    experiment_tag,
                     status,
                     created_at,
                     opened_at,
@@ -299,6 +340,8 @@ class ResearchRepository:
                     :score,
                     :notional,
                     :reasons,
+                    :research_group,
+                    :experiment_tag,
                     :status,
                     :created_at,
                     :opened_at,
@@ -327,6 +370,8 @@ class ResearchRepository:
                     score = excluded.score,
                     notional = excluded.notional,
                     reasons = excluded.reasons,
+                    research_group = excluded.research_group,
+                    experiment_tag = excluded.experiment_tag,
                     status = excluded.status,
                     opened_at = excluded.opened_at,
                     closed_at = excluded.closed_at,
@@ -574,60 +619,118 @@ class ResearchRepository:
     def count_open_trades_for_symbol(
         self,
         symbol: str,
+        market: str | None = None,
     ) -> int:
         """
         Return count of open virtual trades for one symbol.
 
+        If market is provided, the limit applies to symbol + market.
         The limit applies across all strategies, directions and timeframes.
         """
 
+        normalized_market = (
+            market.strip().lower()
+            if market
+            else None
+        )
+
         with self._lock:
-            row = self.connection.execute(
-                """
-                SELECT COUNT(*) AS trade_count
-                FROM research_trades
-                WHERE UPPER(symbol) = UPPER(?)
-                  AND status IN (?, ?)
-                """,
-                (
-                    symbol,
-                    *self.OPEN_STATUSES,
-                ),
-            ).fetchone()
+            if normalized_market:
+                row = self.connection.execute(
+                    """
+                    SELECT COUNT(*) AS trade_count
+                    FROM research_trades
+                    WHERE UPPER(symbol) = UPPER(?)
+                      AND LOWER(market) = LOWER(?)
+                      AND status IN (?, ?)
+                    """,
+                    (
+                        symbol,
+                        normalized_market,
+                        *self.OPEN_STATUSES,
+                    ),
+                ).fetchone()
+
+            else:
+                row = self.connection.execute(
+                    """
+                    SELECT COUNT(*) AS trade_count
+                    FROM research_trades
+                    WHERE UPPER(symbol) = UPPER(?)
+                      AND status IN (?, ?)
+                    """,
+                    (
+                        symbol,
+                        *self.OPEN_STATUSES,
+                    ),
+                ).fetchone()
 
         return int(row["trade_count"])
 
     def has_open_direction_trade(
         self,
         symbol: str,
-        timeframe: str,
+        timeframe: str | None,
         direction: str,
+        market: str | None = None,
     ) -> bool:
         """
-        Return True for an open matching symbol, timeframe and direction.
+        Return True for a duplicate symbol, market and direction.
+
+        Timeframe is accepted for backward compatibility, but duplicate
+        protection intentionally ignores timeframe. If ZECUSDT futures LONG
+        is already candidate, waiting_entry or active, another ZECUSDT
+        futures LONG must not be created from a different timeframe or
+        strategy.
 
         Strategy is intentionally excluded from this check. Five strategies
         reporting the same LONG setup must not create five research trades.
         """
 
+        _ = timeframe
+
+        normalized_market = (
+            market.strip().lower()
+            if market
+            else None
+        )
+
         with self._lock:
-            row = self.connection.execute(
-                """
-                SELECT id
-                FROM research_trades
-                WHERE UPPER(symbol) = UPPER(?)
-                  AND timeframe = ?
-                  AND UPPER(direction) = UPPER(?)
-                  AND status IN (?, ?, ?)
-                LIMIT 1
-                """,
-                (
-                    symbol,
-                    timeframe,
-                    direction,
-                    *self.DUPLICATE_STATUSES,
-                ),
-            ).fetchone()
+            if normalized_market:
+                row = self.connection.execute(
+                    """
+                    SELECT id
+                    FROM research_trades
+                    WHERE UPPER(symbol) = UPPER(?)
+                      AND LOWER(market) = LOWER(?)
+                      AND UPPER(direction) = UPPER(?)
+                      AND status IN (?, ?, ?)
+                    LIMIT 1
+                    """,
+                    (
+                        symbol,
+                        normalized_market,
+                        direction,
+                        *self.DUPLICATE_STATUSES,
+                    ),
+                ).fetchone()
+
+            else:
+                row = self.connection.execute(
+                    """
+                    SELECT id
+                    FROM research_trades
+                    WHERE UPPER(symbol) = UPPER(?)
+                      AND UPPER(direction) = UPPER(?)
+                      AND status IN (?, ?, ?)
+                    LIMIT 1
+                    """,
+                    (
+                        symbol,
+                        direction,
+                        *self.DUPLICATE_STATUSES,
+                    ),
+                ).fetchone()
 
         return row is not None
 
@@ -637,21 +740,25 @@ class ResearchRepository:
         timeframe: str,
         strategy: str,
         direction: str,
+        market: str | None = None,
     ) -> bool:
         """
         Compatibility method for older callers.
 
         Strategy is deliberately ignored. Duplicate control now operates on
-        symbol, timeframe and direction only.
+        symbol, market and direction only. Timeframe is accepted for backward
+        compatibility but ignored by the duplicate check.
         """
 
         _ = strategy
 
         return self.has_open_direction_trade(
             symbol=symbol,
+            market=market,
             timeframe=timeframe,
             direction=direction,
         )
+
 
     def get_direction_conflict_statistics(
         self,
@@ -1945,6 +2052,8 @@ class ResearchRepository:
             score=row["score"],
             notional=row["notional"],
             reasons=json.loads(row["reasons"]),
+            research_group=row["research_group"],
+            experiment_tag=row["experiment_tag"],
             status=TradeStatus(row["status"]),
             created_at=datetime.fromisoformat(
                 row["created_at"]

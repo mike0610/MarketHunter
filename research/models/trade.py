@@ -6,6 +6,7 @@ Research Trade Model
 
 Responsibilities:
 - Store virtual trade state.
+- Separate core and experimental research trades.
 - Calculate virtual PnL and R-multiple.
 - Track trade lifecycle and candle processing state.
 """
@@ -18,12 +19,56 @@ from datetime import datetime, timezone
 from research.models.trade_status import TradeStatus
 
 
+CORE_RESEARCH_GROUP = "core"
+EXPERIMENTAL_RESEARCH_GROUP = "experimental"
+
+
 def utc_now() -> datetime:
     """
     Return timezone-aware UTC datetime.
     """
 
     return datetime.now(timezone.utc)
+
+
+def normalize_research_group(
+    value: str | None,
+) -> str:
+    """
+    Normalize research group value.
+    """
+
+    normalized = (
+        value.strip().lower()
+        if value
+        else CORE_RESEARCH_GROUP
+    )
+
+    if normalized not in {
+        CORE_RESEARCH_GROUP,
+        EXPERIMENTAL_RESEARCH_GROUP,
+    }:
+        return EXPERIMENTAL_RESEARCH_GROUP
+
+    return normalized
+
+
+def normalize_experiment_tag(
+    value: str | None,
+) -> str | None:
+    """
+    Normalize optional experiment tag.
+    """
+
+    if value is None:
+        return None
+
+    normalized = value.strip().lower()
+
+    if not normalized:
+        return None
+
+    return normalized
 
 
 @dataclass(slots=True)
@@ -33,6 +78,14 @@ class ResearchTrade:
 
     This model never sends orders to Binance or any other exchange.
     It stores how a signal would perform on real market candles.
+
+    research_group:
+    - core: stable research flow.
+    - experimental: spot research, new patterns, new strategies,
+      new management rules or other tests.
+
+    experiment_tag:
+    - optional label such as "spot_research" or "liquidity_sweep_v1".
     """
 
     id: str
@@ -54,6 +107,9 @@ class ResearchTrade:
     notional: float = 100.0
     reasons: list[str] = field(default_factory=list)
 
+    research_group: str = CORE_RESEARCH_GROUP
+    experiment_tag: str | None = None
+
     status: TradeStatus = TradeStatus.WAITING_ENTRY
 
     created_at: datetime = field(default_factory=utc_now)
@@ -73,6 +129,21 @@ class ResearchTrade:
     max_active_candles: int = 30
     last_processed_candle_at: datetime | None = None
 
+    def __post_init__(
+        self,
+    ) -> None:
+        """
+        Normalize research classification fields.
+        """
+
+        self.research_group = normalize_research_group(
+            self.research_group,
+        )
+
+        self.experiment_tag = normalize_experiment_tag(
+            self.experiment_tag,
+        )
+
     @property
     def is_open(self) -> bool:
         """
@@ -83,6 +154,28 @@ class ResearchTrade:
             TradeStatus.WAITING_ENTRY,
             TradeStatus.ACTIVE,
         }
+
+    @property
+    def is_experimental(self) -> bool:
+        """
+        Return True for experimental research trades.
+        """
+
+        return (
+            self.research_group
+            == EXPERIMENTAL_RESEARCH_GROUP
+        )
+
+    @property
+    def is_core(self) -> bool:
+        """
+        Return True for core research trades.
+        """
+
+        return (
+            self.research_group
+            == CORE_RESEARCH_GROUP
+        )
 
     def is_long(self) -> bool:
         """
@@ -223,6 +316,7 @@ class ResearchTrade:
                 (price - self.entry_price)
                 / self.entry_price
             ) * 100
+
         else:
             self.profit_percent = (
                 (self.entry_price - price)
@@ -236,7 +330,10 @@ class ResearchTrade:
         )
 
         risk_percent = (
-            abs(self.entry_price - self.stop_loss)
+            abs(
+                self.entry_price
+                - self.stop_loss
+            )
             / self.entry_price
         ) * 100
 

@@ -6,11 +6,13 @@ Application Entry Point
 
 Responsibilities:
 - Monitor existing virtual research trades.
+- Select liquid USDT Spot symbols.
 - Select liquid USDT perpetual Futures contracts.
-- Scan one configured timeframe.
+- Scan configured markets and timeframes.
 - Create virtual research trades for qualified signals.
 - Persist scan runs and every candidate signal.
 - Show only elite signals in Scanner output.
+- Send Telegram elite alerts only for Futures during Spot research phase.
 """
 
 from __future__ import annotations
@@ -42,6 +44,7 @@ from research.storage.scan_journal_repository import (
 from risk.risk_manager import RiskManager
 from services.market_data import MarketDataService
 from services.scanner import Scanner
+from telegram.elite_alerts import notify_elite_signals
 from strategies.breaker import BreakerStrategy
 from strategies.breakout import BreakoutStrategy
 from strategies.choch import CHoCHStrategy
@@ -49,6 +52,7 @@ from strategies.compression import CompressionStrategy
 from strategies.false_breakout import FalseBreakoutStrategy
 from strategies.fvg import FVGStrategy
 from strategies.liquidity_pool import LiquidityPoolStrategy
+from strategies.liquidity_sweep import LiquiditySweepStrategy
 from strategies.mitigation import MitigationStrategy
 from strategies.order_block import OrderBlockStrategy
 from strategies.premium_discount import PremiumDiscountStrategy
@@ -56,12 +60,25 @@ from strategies.premium_discount import PremiumDiscountStrategy
 
 DATABASE_PATH = "data/research.db"
 
-SCAN_TIMEFRAME = "1h"
+SCAN_MARKETS = (
+    "futures",
+    "spot",
+)
+
+SCAN_TIMEFRAMES = (
+    "1h",
+    "1d",
+)
+
 SCAN_CANDLE_LIMIT = 500
-SCAN_SYMBOL_LIMIT = 20
+
+FUTURES_SYMBOL_LIMIT = 20
+SPOT_SYMBOL_LIMIT = 20
+
 SCANNER_WORKERS = 10
 
 MINIMUM_FUTURES_QUOTE_VOLUME_USDT = 10_000_000.0
+MINIMUM_SPOT_QUOTE_VOLUME_USDT = 10_000_000.0
 
 RESEARCH_MINIMUM_PROBABILITY = 60
 ELITE_MINIMUM_PROBABILITY = 80
@@ -83,7 +100,9 @@ def build_pipeline(
 
     probability_engine = ProbabilityEngine()
     risk_manager = RiskManager()
-    research_manager = ResearchManager(repository)
+    research_manager = ResearchManager(
+        repository,
+    )
 
     return SignalPipeline(
         handlers=[
@@ -108,6 +127,84 @@ def build_pipeline(
             ),
         ]
     )
+
+
+def build_strategies():
+    """
+    Create strategy instances for one scanner run.
+    """
+
+    return [
+        BreakoutStrategy(),
+        FalseBreakoutStrategy(),
+        CompressionStrategy(),
+        CHoCHStrategy(),
+        FVGStrategy(),
+        OrderBlockStrategy(),
+        LiquidityPoolStrategy(),
+        LiquiditySweepStrategy(),
+        MitigationStrategy(),
+        BreakerStrategy(),
+        PremiumDiscountStrategy(),
+    ]
+
+
+def market_symbol_limit(
+    market: str,
+) -> int:
+    """
+    Return configured symbol limit for one market.
+    """
+
+    if market == "spot":
+        return SPOT_SYMBOL_LIMIT
+
+    return FUTURES_SYMBOL_LIMIT
+
+
+def market_min_quote_volume(
+    market: str,
+) -> float:
+    """
+    Return configured minimum 24h quote volume for one market.
+    """
+
+    if market == "spot":
+        return MINIMUM_SPOT_QUOTE_VOLUME_USDT
+
+    return MINIMUM_FUTURES_QUOTE_VOLUME_USDT
+
+
+async def load_symbols_for_market(
+    market_data: MarketDataService,
+    market: str,
+):
+    """
+    Load liquid symbols for one market.
+    """
+
+    symbol_limit = market_symbol_limit(
+        market,
+    )
+
+    min_quote_volume = market_min_quote_volume(
+        market,
+    )
+
+    symbols = await market_data.load_liquid_symbols(
+        market=market,
+        min_quote_volume_usdt=min_quote_volume,
+        max_symbols=symbol_limit,
+    )
+
+    logger.info(
+        "Loaded liquid {} symbols: {} | Min 24h quote volume: {:.0f} USDT",
+        market,
+        len(symbols),
+        min_quote_volume,
+    )
+
+    return symbols
 
 
 async def promote_candidate_trades(
@@ -189,98 +286,103 @@ async def monitor_open_trades(
         )
 
 
-async def main() -> None:
+def handle_elite_alerts(
+    *,
+    market: str,
+    elite_signals,
+) -> int:
     """
-    Run one MarketHunter research cycle.
+    Send Telegram elite alerts only for Futures.
+
+    Spot elite signals are kept in research/statistics during the
+    experimental Spot research phase.
     """
 
-    logger.info("=" * 60)
-    logger.info("MarketHunter вЂ” Research Engine MVP")
-    logger.info("=" * 60)
+    if not elite_signals:
+        logger.info(
+            "No signals passed elite threshold."
+        )
 
-    repository = ResearchRepository(
-        path=DATABASE_PATH,
+        return 0
+
+    if market != "futures":
+        logger.info(
+            "Spot elite signals found: {} | Telegram skipped for research phase.",
+            len(elite_signals),
+        )
+
+        return 0
+
+    telegram_alerts_sent = notify_elite_signals(
+        elite_signals,
     )
 
-    scan_journal = ScanJournalRepository(
-        path=DATABASE_PATH,
+    if telegram_alerts_sent:
+        logger.info(
+            "Telegram elite alerts sent: {}",
+            telegram_alerts_sent,
+        )
+
+    return telegram_alerts_sent
+
+
+async def run_scan_for_market_timeframe(
+    *,
+    market: str,
+    scan_timeframe: str,
+    symbols,
+    repository: ResearchRepository,
+    scan_journal: ScanJournalRepository,
+    market_data: MarketDataService,
+) -> tuple[int, int]:
+    """
+    Run scanner once for one market and one timeframe.
+
+    Returns:
+    - created research trades
+    - elite signals found
+    """
+
+    symbol_limit = market_symbol_limit(
+        market,
     )
 
-    market_data = MarketDataService()
+    min_quote_volume = market_min_quote_volume(
+        market,
+    )
 
-    scan_run_id: str | None = None
-    symbols_scanned = 0
-    created_trades = 0
-    elite_signals_found = 0
+    logger.info("=" * 60)
+    logger.info(
+        "Starting scan | Market: {} | Timeframe: {} | Symbols: {}",
+        market,
+        scan_timeframe,
+        len(symbols),
+    )
+
+    scan_run = scan_journal.create_scan_run(
+        timeframe=scan_timeframe,
+        candle_limit=SCAN_CANDLE_LIMIT,
+        symbol_limit=symbol_limit,
+        min_quote_volume_usdt=min_quote_volume,
+        research_minimum_probability=(
+            RESEARCH_MINIMUM_PROBABILITY
+        ),
+        elite_minimum_probability=(
+            ELITE_MINIMUM_PROBABILITY
+        ),
+        started_at=datetime.now(
+            UTC,
+        ),
+    )
+
+    scan_run_id = scan_run.id
 
     try:
-        await market_data.ping()
-
-        await promote_candidate_trades(
-            repository=repository,
-            market_data=market_data,
-        )
-
-        await monitor_open_trades(
-            repository=repository,
-            market_data=market_data,
-        )
-
-        symbols = await market_data.load_liquid_futures_symbols(
-            min_quote_volume_usdt=(
-                MINIMUM_FUTURES_QUOTE_VOLUME_USDT
-            ),
-            max_symbols=SCAN_SYMBOL_LIMIT,
-        )
-
-        if not symbols:
-            logger.warning(
-                "No liquid USDT perpetual Futures symbols found."
-            )
-            return
-
-        symbols_scanned = len(symbols)
-
         logger.info(
-            "Loaded liquid perpetual Futures: {}",
-            len(symbols),
-        )
-
-        logger.info(
-            "Scanner | Timeframe: {} | Candles: {} | "
-            "Min 24h quote volume: {:.0f} USDT",
-            SCAN_TIMEFRAME,
-            SCAN_CANDLE_LIMIT,
-            MINIMUM_FUTURES_QUOTE_VOLUME_USDT,
-        )
-
-        logger.info(
-            "Research threshold: {}% | Elite threshold: {}%",
-            RESEARCH_MINIMUM_PROBABILITY,
-            ELITE_MINIMUM_PROBABILITY,
-        )
-
-        scan_run = scan_journal.create_scan_run(
-            timeframe=SCAN_TIMEFRAME,
-            candle_limit=SCAN_CANDLE_LIMIT,
-            symbol_limit=SCAN_SYMBOL_LIMIT,
-            min_quote_volume_usdt=(
-                MINIMUM_FUTURES_QUOTE_VOLUME_USDT
-            ),
-            research_minimum_probability=(
-                RESEARCH_MINIMUM_PROBABILITY
-            ),
-            elite_minimum_probability=(
-                ELITE_MINIMUM_PROBABILITY
-            ),
-            started_at=datetime.now(UTC),
-        )
-
-        scan_run_id = scan_run.id
-
-        logger.info(
-            "Scan journal run started: {}",
+            "Scan journal run started: {} | Market: {} | Timeframe: {}",
             scan_run_id,
+            market,
+            scan_timeframe,
         )
 
         pipeline = build_pipeline(
@@ -293,21 +395,10 @@ async def main() -> None:
 
         scanner = Scanner(
             market_data=market_data,
-            strategies=[
-                BreakoutStrategy(),
-                FalseBreakoutStrategy(),
-                CompressionStrategy(),
-                CHoCHStrategy(),
-                FVGStrategy(),
-                OrderBlockStrategy(),
-                LiquidityPoolStrategy(),
-                MitigationStrategy(),
-                BreakerStrategy(),
-                PremiumDiscountStrategy(),
-            ],
+            strategies=build_strategies(),
             workers=SCANNER_WORKERS,
             pipeline=pipeline,
-            timeframe=SCAN_TIMEFRAME,
+            timeframe=scan_timeframe,
             candle_limit=SCAN_CANDLE_LIMIT,
             scan_journal=scan_journal,
             scan_run_id=scan_run_id,
@@ -317,26 +408,28 @@ async def main() -> None:
             symbols,
         )
 
-        trades = repository.list_all()
+        trades_after = repository.list_all()
 
         created_trades = max(
             0,
-            len(trades) - trades_before,
+            len(trades_after) - trades_before,
         )
 
-        elite_signals_found = len(elite_signals)
+        elite_signals_found = len(
+            elite_signals,
+        )
 
-        signal_summary = (
-            scan_journal.get_signal_record_summary(
-                scan_run_id=scan_run_id,
-            )
+        signal_summary = scan_journal.get_signal_record_summary(
+            scan_run_id=scan_run_id,
         )
 
         scan_journal.finish_scan_run(
             scan_run_id=scan_run_id,
             status="completed",
-            finished_at=datetime.now(UTC),
-            symbols_scanned=symbols_scanned,
+            finished_at=datetime.now(
+                UTC,
+            ),
+            symbols_scanned=len(symbols),
             candidate_signals=signal_summary["total"],
             research_trades_created=created_trades,
             elite_signals_found=elite_signals_found,
@@ -345,27 +438,32 @@ async def main() -> None:
         logger.info("")
         logger.info("=" * 60)
         logger.info(
-            "Scan journal | Total: {} | Rejected: {} | "
-            "Research: {} | Elite: {}",
+            "Scan journal | Market: {} | Timeframe: {} | Total: {} | "
+            "Rejected: {} | Research: {} | Elite: {}",
+            market,
+            scan_timeframe,
             signal_summary["total"],
             signal_summary["rejected"],
             signal_summary["research"],
             signal_summary["elite"],
         )
+
         logger.info(
             "Research trades created this scan: {}",
             created_trades,
         )
+
         logger.info(
             "Elite signals found: {}",
             elite_signals_found,
         )
+
         logger.info("=" * 60)
 
-        if not elite_signals:
-            logger.info(
-                "No signals passed elite threshold."
-            )
+        handle_elite_alerts(
+            market=market,
+            elite_signals=elite_signals,
+        )
 
         for signal in elite_signals:
             probability = signal.metadata.get(
@@ -400,11 +498,132 @@ async def main() -> None:
 
             for reason in signal.reasons:
                 logger.info(
-                    "    вЂў {}",
+                    "    • {}",
                     reason,
                 )
 
             logger.info("-" * 60)
+
+        return (
+            created_trades,
+            elite_signals_found,
+        )
+
+    except Exception as exc:
+        signal_summary = scan_journal.get_signal_record_summary(
+            scan_run_id=scan_run_id,
+        )
+
+        scan_journal.finish_scan_run(
+            scan_run_id=scan_run_id,
+            status="failed",
+            finished_at=datetime.now(
+                UTC,
+            ),
+            symbols_scanned=len(symbols),
+            candidate_signals=signal_summary["total"],
+            research_trades_created=0,
+            elite_signals_found=0,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+
+        raise
+
+
+async def main() -> None:
+    """
+    Run one MarketHunter research cycle.
+    """
+
+    logger.info("=" * 60)
+    logger.info("MarketHunter — Research Engine MVP")
+    logger.info("=" * 60)
+
+    repository = ResearchRepository(
+        path=DATABASE_PATH,
+    )
+
+    scan_journal = ScanJournalRepository(
+        path=DATABASE_PATH,
+    )
+
+    market_data = MarketDataService()
+
+    symbols_scanned = 0
+    created_trades_total = 0
+    elite_signals_found_total = 0
+
+    try:
+        await market_data.ping()
+
+        await promote_candidate_trades(
+            repository=repository,
+            market_data=market_data,
+        )
+
+        await monitor_open_trades(
+            repository=repository,
+            market_data=market_data,
+        )
+
+        logger.info(
+            "Scanner | Markets: {} | Timeframes: {} | Candles: {}",
+            ", ".join(SCAN_MARKETS),
+            ", ".join(SCAN_TIMEFRAMES),
+            SCAN_CANDLE_LIMIT,
+        )
+
+        logger.info(
+            "Research threshold: {}% | Elite threshold: {}%",
+            RESEARCH_MINIMUM_PROBABILITY,
+            ELITE_MINIMUM_PROBABILITY,
+        )
+
+        for market in SCAN_MARKETS:
+            symbols = await load_symbols_for_market(
+                market_data=market_data,
+                market=market,
+            )
+
+            if not symbols:
+                logger.warning(
+                    "No liquid {} symbols found.",
+                    market,
+                )
+
+                continue
+
+            symbols_scanned += len(
+                symbols,
+            )
+
+            for scan_timeframe in SCAN_TIMEFRAMES:
+                try:
+                    (
+                        created_trades,
+                        elite_signals_found,
+                    ) = await run_scan_for_market_timeframe(
+                        market=market,
+                        scan_timeframe=scan_timeframe,
+                        symbols=symbols,
+                        repository=repository,
+                        scan_journal=scan_journal,
+                        market_data=market_data,
+                    )
+
+                except Exception:
+                    logger.exception(
+                        "Scan failed | Market: {} | Timeframe: {}",
+                        market,
+                        scan_timeframe,
+                    )
+
+                    raise
+
+                created_trades_total += created_trades
+                elite_signals_found_total += elite_signals_found
+
+        trades = repository.list_all()
 
         statistics = ResearchStatistics().calculate(
             trades,
@@ -434,24 +653,13 @@ async def main() -> None:
             statistics["average_rr"],
         )
 
-    except Exception as exc:
-        if scan_run_id is not None:
-            summary = scan_journal.get_signal_record_summary(
-                scan_run_id=scan_run_id,
-            )
-
-            scan_journal.finish_scan_run(
-                scan_run_id=scan_run_id,
-                status="failed",
-                finished_at=datetime.now(UTC),
-                symbols_scanned=symbols_scanned,
-                candidate_signals=summary["total"],
-                research_trades_created=created_trades,
-                elite_signals_found=elite_signals_found,
-                error=f"{type(exc).__name__}: {exc}",
-            )
-
-        raise
+        logger.info(
+            "Cycle totals | Symbols loaded: {} | Research created: {} | "
+            "Elite found: {}",
+            symbols_scanned,
+            created_trades_total,
+            elite_signals_found_total,
+        )
 
     finally:
         repository.close()
@@ -460,4 +668,6 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(
+        main(),
+    )

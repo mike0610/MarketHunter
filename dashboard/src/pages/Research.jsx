@@ -287,6 +287,50 @@ function directionColor(value) {
 }
 
 
+function normalizeResearchGroup(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+
+    if (normalized === "experimental") {
+        return "experimental";
+    }
+
+    return "core";
+}
+
+
+function tradeResearchGroup(trade) {
+    return normalizeResearchGroup(
+        trade?.research_group
+        || (
+            trade?.is_experimental
+                ? "experimental"
+                : "core"
+        ),
+    );
+}
+
+
+function researchGroupLabel(value) {
+    return normalizeResearchGroup(value) === "experimental"
+        ? "EXPERIMENTAL"
+        : "CORE";
+}
+
+
+function researchGroupColor(value) {
+    return normalizeResearchGroup(value) === "experimental"
+        ? "secondary"
+        : "primary";
+}
+
+
+function normalizeExperimentTag(value) {
+    const normalized = String(value || "").trim();
+
+    return normalized || "";
+}
+
+
 function normalizeNumberKey(value) {
     if (value === null || value === undefined || value === "") {
         return "none";
@@ -1196,6 +1240,41 @@ function TradeCard({
                             label={tradeStatusLabel(trade.status)}
                         />
 
+                        <Chip
+                            size="small"
+                            variant="outlined"
+                            color="info"
+                            label={String(
+                                trade.market || "market",
+                            ).toUpperCase()}
+                        />
+
+                        <Chip
+                            size="small"
+                            color={researchGroupColor(
+                                tradeResearchGroup(trade),
+                            )}
+                            variant={
+                                tradeResearchGroup(trade) === "experimental"
+                                    ? "filled"
+                                    : "outlined"
+                            }
+                            label={researchGroupLabel(
+                                tradeResearchGroup(trade),
+                            )}
+                        />
+
+                        {normalizeExperimentTag(trade.experiment_tag) && (
+                            <Chip
+                                size="small"
+                                variant="outlined"
+                                color="secondary"
+                                label={normalizeExperimentTag(
+                                    trade.experiment_tag,
+                                )}
+                            />
+                        )}
+
                         <Typography
                             variant="body2"
                             color="text.secondary"
@@ -1802,6 +1881,7 @@ export default function Research() {
     const [scanRejectionFilter, setScanRejectionFilter] = useState("all");
     const [scanConflictFilter, setScanConflictFilter] = useState("all");
     const [scanResearchFilter, setScanResearchFilter] = useState("all");
+    const [tradeResearchFilter, setTradeResearchFilter] = useState("all");
 
     const [dialogOpen, setDialogOpen] = useState(false);
     const [dialogLoading, setDialogLoading] = useState(false);
@@ -2207,6 +2287,46 @@ export default function Research() {
         ).length,
         [
             normalizedScanEntries,
+        ],
+    );
+
+    const filteredTrades = useMemo(
+        () => trades.filter((trade) => (
+            tradeResearchFilter === "all"
+            || tradeResearchGroup(trade) === tradeResearchFilter
+        )),
+        [
+            trades,
+            tradeResearchFilter,
+        ],
+    );
+
+    const coreTradeCount = useMemo(
+        () => trades.filter(
+            (trade) => tradeResearchGroup(trade) === "core",
+        ).length,
+        [
+            trades,
+        ],
+    );
+
+    const experimentalTradeCount = useMemo(
+        () => trades.filter(
+            (trade) => tradeResearchGroup(trade) === "experimental",
+        ).length,
+        [
+            trades,
+        ],
+    );
+
+    const spotResearchTradeCount = useMemo(
+        () => trades.filter(
+            (trade) => normalizeExperimentTag(
+                trade.experiment_tag,
+            ) === "spot_research",
+        ).length,
+        [
+            trades,
         ],
     );
 
@@ -3036,12 +3156,119 @@ export default function Research() {
 
                     <Chip
                         color="info"
-                        label={`Угод: ${trades.length}`}
+                        label={`Угод: ${filteredTrades.length}/${trades.length}`}
                     />
                 </Stack>
 
+                <Stack
+                    direction={{
+                        xs: "column",
+                        sm: "row",
+                    }}
+                    spacing={1.5}
+                    useFlexGap
+                    flexWrap="wrap"
+                    alignItems={{
+                        xs: "stretch",
+                        sm: "center",
+                    }}
+                    sx={{
+                        mb: 2,
+                    }}
+                >
+                    <FormControl
+                        size="small"
+                        sx={{
+                            minWidth: {
+                                xs: "100%",
+                                sm: 190,
+                            },
+                        }}
+                    >
+                        <Select
+                            value={tradeResearchFilter}
+                            onChange={(event) => {
+                                setTradeResearchFilter(
+                                    event.target.value,
+                                );
+                            }}
+                        >
+                            <MenuItem value="all">
+                                Усі research-групи
+                            </MenuItem>
+
+                            <MenuItem value="core">
+                                Core
+                            </MenuItem>
+
+                            <MenuItem value="experimental">
+                                Experimental
+                            </MenuItem>
+                        </Select>
+                    </FormControl>
+
+                    <Chip
+                        size="small"
+                        color="primary"
+                        variant={
+                            tradeResearchFilter === "core"
+                                ? "filled"
+                                : "outlined"
+                        }
+                        label={`Core: ${coreTradeCount}`}
+                        onClick={() => {
+                            setTradeResearchFilter("core");
+                        }}
+                    />
+
+                    <Chip
+                        size="small"
+                        color="secondary"
+                        variant={
+                            tradeResearchFilter === "experimental"
+                                ? "filled"
+                                : "outlined"
+                        }
+                        label={`Experimental: ${experimentalTradeCount}`}
+                        onClick={() => {
+                            setTradeResearchFilter("experimental");
+                        }}
+                    />
+
+                    <Chip
+                        size="small"
+                        color="secondary"
+                        variant="outlined"
+                        label={`spot_research: ${spotResearchTradeCount}`}
+                        onClick={() => {
+                            setTradeResearchFilter("experimental");
+                        }}
+                    />
+
+                    <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={() => {
+                            setTradeResearchFilter("all");
+                        }}
+                        disabled={tradeResearchFilter === "all"}
+                        sx={{
+                            height: 40,
+                            minHeight: 40,
+                            whiteSpace: "nowrap",
+                            fontSize: "0.82rem",
+                            alignSelf: {
+                                xs: "stretch",
+                                sm: "center",
+                            },
+                        }}
+                    >
+                        Reset trades
+                    </Button>
+                </Stack>
+
                 <Stack spacing={2}>
-                    {trades.length === 0 ? (
+                    {filteredTrades.length === 0 ? (
                         <Paper
                             variant="outlined"
                             sx={{
@@ -3058,7 +3285,7 @@ export default function Research() {
                             </Typography>
                         </Paper>
                     ) : (
-                        trades.map((trade) => (
+                        filteredTrades.map((trade) => (
                             <TradeCard
                                 key={trade.id}
                                 trade={trade}
@@ -3147,6 +3374,42 @@ export default function Research() {
                                             variant="outlined"
                                             label={selectedTrade.strategy}
                                         />
+
+                                        <Chip
+                                            variant="outlined"
+                                            color="info"
+                                            label={String(
+                                                selectedTrade.market
+                                                || "market",
+                                            ).toUpperCase()}
+                                        />
+
+                                        <Chip
+                                            color={researchGroupColor(
+                                                tradeResearchGroup(selectedTrade),
+                                            )}
+                                            variant={
+                                                tradeResearchGroup(selectedTrade)
+                                                === "experimental"
+                                                    ? "filled"
+                                                    : "outlined"
+                                            }
+                                            label={researchGroupLabel(
+                                                tradeResearchGroup(selectedTrade),
+                                            )}
+                                        />
+
+                                        {normalizeExperimentTag(
+                                            selectedTrade.experiment_tag,
+                                        ) && (
+                                            <Chip
+                                                variant="outlined"
+                                                color="secondary"
+                                                label={normalizeExperimentTag(
+                                                    selectedTrade.experiment_tag,
+                                                )}
+                                            />
+                                        )}
                                     </Stack>
 
                                     <Box

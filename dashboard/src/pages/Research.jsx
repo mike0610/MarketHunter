@@ -611,6 +611,34 @@ function matchesTradeStateFilter(trade, filter) {
 }
 
 
+function matchesTradeResearchFilter(trade, filter) {
+    if (filter === "all") {
+        return true;
+    }
+
+    if (filter === "core" || filter === "experimental") {
+        return tradeResearchGroup(trade) === filter;
+    }
+
+    if (String(filter || "").startsWith("experiment:")) {
+        const experimentTag = String(filter).replace("experiment:", "");
+
+        return normalizeExperimentTag(trade?.experiment_tag) === experimentTag;
+    }
+
+    return false;
+}
+
+
+function countTradesByExperimentTag(trades, experimentTag) {
+    return trades.filter(
+        (trade) => normalizeExperimentTag(
+            trade.experiment_tag,
+        ) === experimentTag,
+    ).length;
+}
+
+
 function normalizeNumberKey(value) {
     if (value === null || value === undefined || value === "") {
         return "none";
@@ -1266,9 +1294,9 @@ export default function Research() {
 
     const filteredTrades = useMemo(
         () => trades.filter((trade) => (
-            (
-                tradeResearchFilter === "all"
-                || tradeResearchGroup(trade) === tradeResearchFilter
+            matchesTradeResearchFilter(
+                trade,
+                tradeResearchFilter,
             )
             && matchesTradeStateFilter(trade, tradeStateFilter)
         )),
@@ -1354,11 +1382,30 @@ export default function Research() {
     );
 
     const spotResearchTradeCount = useMemo(
-        () => trades.filter(
-            (trade) => normalizeExperimentTag(
-                trade.experiment_tag,
-            ) === "spot_research",
-        ).length,
+        () => countTradesByExperimentTag(
+            trades,
+            "spot_research",
+        ),
+        [
+            trades,
+        ],
+    );
+
+    const liquiditySweepTradeCount = useMemo(
+        () => countTradesByExperimentTag(
+            trades,
+            "liquidity_sweep_v1",
+        ),
+        [
+            trades,
+        ],
+    );
+
+    const dailyLevelsTradeCount = useMemo(
+        () => countTradesByExperimentTag(
+            trades,
+            "daily_levels_v1",
+        ),
         [
             trades,
         ],
@@ -1693,6 +1740,18 @@ export default function Research() {
                             <MenuItem value="experimental">
                                 Experimental
                             </MenuItem>
+
+                            <MenuItem value="experiment:spot_research">
+                                Spot research
+                            </MenuItem>
+
+                            <MenuItem value="experiment:liquidity_sweep_v1">
+                                Liquidity Sweep
+                            </MenuItem>
+
+                            <MenuItem value="experiment:daily_levels_v1">
+                                Daily Levels
+                            </MenuItem>
                         </Select>
                     </FormControl>
 
@@ -1755,10 +1814,46 @@ export default function Research() {
                     <Chip
                         size="small"
                         color="secondary"
-                        variant="outlined"
+                        variant={
+                            tradeResearchFilter === "experiment:spot_research"
+                                ? "filled"
+                                : "outlined"
+                        }
                         label={`spot_research: ${spotResearchTradeCount}`}
                         onClick={() => {
-                            setTradeResearchFilter("experimental");
+                            setTradeResearchFilter("experiment:spot_research");
+                        }}
+                    />
+
+                    <Chip
+                        size="small"
+                        color="secondary"
+                        variant={
+                            tradeResearchFilter === "experiment:liquidity_sweep_v1"
+                                ? "filled"
+                                : "outlined"
+                        }
+                        label={`liquidity_sweep_v1: ${liquiditySweepTradeCount}`}
+                        onClick={() => {
+                            setTradeResearchFilter(
+                                "experiment:liquidity_sweep_v1",
+                            );
+                        }}
+                    />
+
+                    <Chip
+                        size="small"
+                        color="secondary"
+                        variant={
+                            tradeResearchFilter === "experiment:daily_levels_v1"
+                                ? "filled"
+                                : "outlined"
+                        }
+                        label={`daily_levels_v1: ${dailyLevelsTradeCount}`}
+                        onClick={() => {
+                            setTradeResearchFilter(
+                                "experiment:daily_levels_v1",
+                            );
                         }}
                     />
 

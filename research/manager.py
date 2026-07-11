@@ -30,6 +30,7 @@ DEFAULT_MAX_OPEN_TRADES_PER_SYMBOL = 1
 
 SPOT_RESEARCH_EXPERIMENT_TAG = "spot_research"
 LIQUIDITY_SWEEP_EXPERIMENT_TAG = "liquidity_sweep_v1"
+DAILY_LEVELS_EXPERIMENT_TAG = "daily_levels_v1"
 
 
 @dataclass(slots=True)
@@ -243,7 +244,10 @@ class ResearchManager:
         if market == "spot":
             return EXPERIMENTAL_RESEARCH_GROUP
 
-        if strategy == "LiquiditySweep":
+        if strategy in {
+            "LiquiditySweep",
+            "DailyLevels",
+        }:
             return EXPERIMENTAL_RESEARCH_GROUP
 
         return CORE_RESEARCH_GROUP
@@ -259,10 +263,13 @@ class ResearchManager:
         market = signal.market.strip().lower()
         strategy = signal.strategy.strip()
 
-        if market == "spot":
-            return SPOT_RESEARCH_EXPERIMENT_TAG
+        if strategy == "DailyLevels":
+            return DAILY_LEVELS_EXPERIMENT_TAG
 
         if strategy == "LiquiditySweep":
             return LIQUIDITY_SWEEP_EXPERIMENT_TAG
+
+        if market == "spot":
+            return SPOT_RESEARCH_EXPERIMENT_TAG
 
         return None

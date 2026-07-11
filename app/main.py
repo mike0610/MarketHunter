@@ -49,6 +49,7 @@ from strategies.breaker import BreakerStrategy
 from strategies.breakout import BreakoutStrategy
 from strategies.choch import CHoCHStrategy
 from strategies.compression import CompressionStrategy
+from strategies.daily_levels import DailyLevelsStrategy
 from strategies.false_breakout import FalseBreakoutStrategy
 from strategies.fvg import FVGStrategy
 from strategies.liquidity_pool import LiquidityPoolStrategy
@@ -129,12 +130,20 @@ def build_pipeline(
     )
 
 
-def build_strategies():
+def build_strategies(
+    timeframe: str,
+):
     """
     Create strategy instances for one scanner run.
+
+    DailyLevelsStrategy is intentionally enabled only for 1D scans.
     """
 
-    return [
+    normalized_timeframe = str(
+        timeframe or "",
+    ).strip().lower()
+
+    strategies = [
         BreakoutStrategy(),
         FalseBreakoutStrategy(),
         CompressionStrategy(),
@@ -148,6 +157,12 @@ def build_strategies():
         PremiumDiscountStrategy(),
     ]
 
+    if normalized_timeframe == "1d":
+        strategies.append(
+            DailyLevelsStrategy(),
+        )
+
+    return strategies
 
 def market_symbol_limit(
     market: str,
@@ -395,7 +410,7 @@ async def run_scan_for_market_timeframe(
 
         scanner = Scanner(
             market_data=market_data,
-            strategies=build_strategies(),
+            strategies=build_strategies(timeframe=scan_timeframe),
             workers=SCANNER_WORKERS,
             pipeline=pipeline,
             timeframe=scan_timeframe,

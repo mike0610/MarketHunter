@@ -216,6 +216,162 @@ function tradeStatusColor(value) {
 }
 
 
+function numericPrice(value) {
+    const numeric = Number(value);
+
+    return Number.isFinite(numeric)
+        ? numeric
+        : null;
+}
+
+
+function isNearPrice(left, right) {
+    if (left === null || right === null) {
+        return false;
+    }
+
+    const tolerance = Math.max(
+        Math.abs(right) * 0.00001,
+        0.00000001,
+    );
+
+    return Math.abs(left - right) <= tolerance;
+}
+
+
+function activeStopManagementState(trade) {
+    const direction = normalizeDirection(trade?.direction);
+    const entry = numericPrice(trade?.entry_price);
+    const stopLoss = numericPrice(trade?.stop_loss);
+
+    if (entry === null || stopLoss === null) {
+        return {
+            label: "Initial SL",
+            color: "info",
+            variant: "outlined",
+        };
+    }
+
+    if (direction === "SHORT") {
+        if (stopLoss < entry && !isNearPrice(stopLoss, entry)) {
+            return {
+                label: "Profit lock",
+                color: "success",
+                variant: "filled",
+            };
+        }
+
+        if (stopLoss <= entry || isNearPrice(stopLoss, entry)) {
+            return {
+                label: "BE moved",
+                color: "success",
+                variant: "outlined",
+            };
+        }
+
+        return {
+            label: "Initial SL",
+            color: "info",
+            variant: "outlined",
+        };
+    }
+
+    if (stopLoss > entry && !isNearPrice(stopLoss, entry)) {
+        return {
+            label: "Profit lock",
+            color: "success",
+            variant: "filled",
+        };
+    }
+
+    if (stopLoss >= entry || isNearPrice(stopLoss, entry)) {
+        return {
+            label: "BE moved",
+            color: "success",
+            variant: "outlined",
+        };
+    }
+
+    return {
+        label: "Initial SL",
+        color: "info",
+        variant: "outlined",
+    };
+}
+
+
+function tradeManagementState(trade) {
+    const status = normalizeTradeStatus(trade?.status);
+    const closeReason = String(trade?.close_reason || "").toUpperCase();
+
+    if (status === "waiting_entry") {
+        return {
+            label: "Waiting entry",
+            color: "warning",
+            variant: "outlined",
+        };
+    }
+
+    if (status === "expired") {
+        return {
+            label: "Expired",
+            color: "default",
+            variant: "outlined",
+        };
+    }
+
+    if (status === "active") {
+        return activeStopManagementState(trade);
+    }
+
+    if (status === "closed") {
+        if (closeReason.includes("TAKE_PROFIT")) {
+            return {
+                label: "TP closed",
+                color: "success",
+                variant: "filled",
+            };
+        }
+
+        if (closeReason.includes("PROFIT_LOCK")) {
+            return {
+                label: "Profit lock closed",
+                color: "success",
+                variant: "filled",
+            };
+        }
+
+        if (closeReason.includes("BREAKEVEN")) {
+            return {
+                label: "BE closed",
+                color: "info",
+                variant: "outlined",
+            };
+        }
+
+        if (closeReason.includes("STOP_LOSS")) {
+            return {
+                label: "SL closed",
+                color: "error",
+                variant: "filled",
+            };
+        }
+
+        return {
+            label: "Closed",
+            color: "success",
+            variant: "outlined",
+        };
+    }
+
+    return {
+        label: "Unknown",
+        color: "default",
+        variant: "outlined",
+    };
+}
+
+
 function normalizeSignalStatus(value) {
     const normalized = String(value || "").trim().toLowerCase();
 
@@ -1181,6 +1337,8 @@ function TradeCard({
     trade,
     onOpen,
 }) {
+    const managementState = tradeManagementState(trade);
+
     return (
         <Paper
             variant="outlined"
@@ -1238,6 +1396,13 @@ function TradeCard({
                             size="small"
                             color={tradeStatusColor(trade.status)}
                             label={tradeStatusLabel(trade.status)}
+                        />
+
+                        <Chip
+                            size="small"
+                            color={managementState.color}
+                            variant={managementState.variant}
+                            label={managementState.label}
                         />
 
                         <Chip
@@ -2993,6 +3158,18 @@ export default function Research() {
                                             label={tradeStatusLabel(
                                                 selectedTrade.status,
                                             )}
+                                        />
+
+                                        <Chip
+                                            color={tradeManagementState(
+                                                selectedTrade,
+                                            ).color}
+                                            variant={tradeManagementState(
+                                                selectedTrade,
+                                            ).variant}
+                                            label={tradeManagementState(
+                                                selectedTrade,
+                                            ).label}
                                         />
 
                                         <Chip

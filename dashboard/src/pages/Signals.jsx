@@ -1114,7 +1114,7 @@ export default function Signals() {
                         <SignalGroup
                             key={group.key}
                             group={group}
-                            defaultExpanded={index < 2}
+                            defaultExpanded={false}
                         />
                     ))}
                 </Box>

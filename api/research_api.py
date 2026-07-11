@@ -983,13 +983,41 @@ async def get_research_trade_setup(
             trade.direction,
         )
 
+        setup_stop_loss = trade.stop_loss
+
+        if direction == "LONG" and setup_stop_loss >= trade.entry_price:
+            inferred_risk = (
+                trade.take_profit
+                - trade.entry_price
+            ) / 2.0
+
+            if inferred_risk <= 0:
+                raise ValueError(
+                    "LONG setup risk cannot be inferred from take_profit."
+                )
+
+            setup_stop_loss = trade.entry_price - inferred_risk
+
+        elif direction == "SHORT" and setup_stop_loss <= trade.entry_price:
+            inferred_risk = (
+                trade.entry_price
+                - trade.take_profit
+            ) / 2.0
+
+            if inferred_risk <= 0:
+                raise ValueError(
+                    "SHORT setup risk cannot be inferred from take_profit."
+                )
+
+            setup_stop_loss = trade.entry_price + inferred_risk
+
         rr_targets = [
             SetupTargetResponse(
                 rr=rr,
                 price=calculate_rr_target(
                     direction=direction,
                     entry_price=trade.entry_price,
-                    stop_loss=trade.stop_loss,
+                    stop_loss=setup_stop_loss,
                     risk_reward=rr,
                 ),
             )
@@ -1048,7 +1076,7 @@ async def get_research_trade_setup(
             candles,
             direction=direction,
             entry_price=trade.entry_price,
-            stop_loss=trade.stop_loss,
+            stop_loss=setup_stop_loss,
             target_rr=SETUP_TARGET_RR,
         )
 

@@ -2439,6 +2439,9 @@ export default function Research() {
                 }}
                 spacing={2}
                 sx={{
+                        position: "relative",
+                        width: "100%",
+                        pr: { md: 24 },
                     mb: 3,
                 }}
             >
@@ -2451,21 +2454,21 @@ export default function Research() {
                     </Typography>
 
                     <Typography
-                        variant="h6"
+                        variant="body1"
+                        fontWeight={400}
                         color="text.secondary"
                         sx={{
                             mt: 1,
                             wordBreak: "break-word",
                         }}
                     >
-                        Virtual trades, статистика, журнал
-                        сканувань та setup-аналіз.
+                        Virtual trades, статистика та setup-аналіз.
                     </Typography>
                 </Box>
 
                 <Button
                     variant="contained"
-                    size="large"
+                    size="medium"
                     startIcon={
                         refreshing
                             ? (
@@ -2479,11 +2482,24 @@ export default function Research() {
                     onClick={handleRefresh}
                     disabled={refreshing}
                     sx={{
-                        minWidth: 180,
-                        alignSelf: {
-                            xs: "stretch",
-                            md: "auto",
+                        minWidth: {
+                            xs: "100%",
+                            sm: 150,
                         },
+                        height: 44,
+                        px: 2.5,
+                        borderRadius: 3,
+                        position: {
+                            xs: "static",
+                            md: "absolute",
+                        },
+                        right: {
+                            md: 0,
+                        },
+                        top: {
+                            md: 40,
+                        },
+                        whiteSpace: "nowrap",
                     }}
                 >
                     {refreshing ? "Оновлення..." : "ОНОВИТИ"}
@@ -2495,6 +2511,7 @@ export default function Research() {
                     severity="error"
                     sx={{
                         mb: 3,
+                        width: "100%",
                     }}
                 >
                     {error}
@@ -2505,16 +2522,7 @@ export default function Research() {
                 workerStatus={workerStatus}
                 statistics={statistics}
             />
-
-            <SetupReasonStatisticsPanel
-                setupReasonStats={setupReasonStats}
-            />
-
-            <DirectionConflictStatisticsPanel
-                conflictStats={conflictStats}
-            />
-
-            <Box
+<Box
                 sx={{
                     display: "grid",
                     gap: 2,
@@ -2556,559 +2564,6 @@ export default function Research() {
                     value={`${formatNumber(statistics?.total_profit, 2)} USDT`}
                 />
             </Box>
-
-            <Paper
-                variant="outlined"
-                sx={{
-                    p: 3,
-                    borderRadius: 4,
-                    mb: 3,
-                    minWidth: 0,
-                }}
-            >
-                <Stack
-                    direction="column"
-                    justifyContent="flex-start"
-                    alignItems="stretch"
-                    spacing={2}
-                    sx={{
-                        mb: 2,
-                    }}
-                >
-                    <Box sx={{ minWidth: 0 }}>
-                        <Typography
-                            variant="h4"
-                            fontWeight={700}
-                        >
-                            Останнє сканування
-                        </Typography>
-
-                        <Typography
-                            variant="body1"
-                            color="text.secondary"
-                            sx={{
-                                mt: 1,
-                                wordBreak: "break-word",
-                            }}
-                        >
-                            Дублі по одному symbol / direction /
-                            entry / SL / TP згруповані в одну картку.
-                        </Typography>
-                    </Box>
-
-                    <Stack
-                        direction={{
-                            xs: "column",
-                            sm: "row",
-                        }}
-                        spacing={1.5}
-                        useFlexGap
-                        flexWrap="wrap"
-                        justifyContent="flex-start"
-                        sx={{
-                            width: "100%",
-                            alignItems: {
-                                xs: "stretch",
-                                sm: "center",
-                            },
-                        }}
-                    >
-                        <Chip
-                            color={
-                                latestScanRun?.status === "completed"
-                                    ? "success"
-                                    : latestScanRun?.status === "failed"
-                                        ? "error"
-                                        : "default"
-                            }
-                            label={latestScanRun?.status || "unknown"}
-                            sx={{
-                                alignSelf: {
-                                    xs: "flex-start",
-                                    sm: "center",
-                                },
-                            }}
-                        />
-
-                        <FormControl
-                            size="small"
-                            sx={{
-                                minWidth: {
-                                    xs: "100%",
-                                    sm: 135,
-                                },
-                            }}
-                        >
-                            <Select
-                                value={scanStatusFilter}
-                                onChange={(event) => {
-                                    setScanStatusFilter(
-                                        event.target.value,
-                                    );
-                                }}
-                            >
-                                <MenuItem value="all">
-                                    Сигнали
-                                </MenuItem>
-
-                                <MenuItem value="candidate">
-                                    Candidate
-                                </MenuItem>
-
-                                <MenuItem value="rejected">
-                                    Rejected
-                                </MenuItem>
-
-                                <MenuItem value="research">
-                                    Research
-                                </MenuItem>
-
-                                <MenuItem value="elite">
-                                    Elite
-                                </MenuItem>
-                            </Select>
-                        </FormControl>
-
-                        <FormControl
-                            size="small"
-                            sx={{
-                                minWidth: {
-                                    xs: "100%",
-                                    sm: 135,
-                                },
-                            }}
-                        >
-                            <Select
-                                value={scanDirectionFilter}
-                                onChange={(event) => {
-                                    setScanDirectionFilter(
-                                        event.target.value,
-                                    );
-                                }}
-                            >
-                                <MenuItem value="all">
-                                    Напрямок
-                                </MenuItem>
-
-                                <MenuItem value="LONG">
-                                    LONG
-                                </MenuItem>
-
-                                <MenuItem value="SHORT">
-                                    SHORT
-                                </MenuItem>
-                            </Select>
-                        </FormControl>
-
-                        <FormControl
-                            size="small"
-                            sx={{
-                                minWidth: {
-                                    xs: "100%",
-                                    sm: 175,
-                                },
-                            }}
-                        >
-                            <Select
-                                value={scanRejectionFilter}
-                                onChange={(event) => {
-                                    setScanRejectionFilter(
-                                        event.target.value,
-                                    );
-                                    setScanConflictFilter("all");
-                                }}
-                            >
-                                <MenuItem value="all">
-                                    Причина відхилення
-                                </MenuItem>
-
-                                <MenuItem value="conflict">
-                                    Direction conflict
-                                </MenuItem>
-
-                                <MenuItem value="research_threshold">
-                                    Research threshold
-                                </MenuItem>
-
-                                <MenuItem value="elite_threshold">
-                                    Elite threshold
-                                </MenuItem>
-
-                                <MenuItem value="open_trade">
-                                    Open trade exists
-                                </MenuItem>
-
-                                <MenuItem value="cycle_limit">
-                                    Cycle limit
-                                </MenuItem>
-
-                                <MenuItem value="risk">
-                                    Risk error
-                                </MenuItem>
-
-                                <MenuItem value="duplicate">
-                                    Duplicate
-                                </MenuItem>
-
-                                <MenuItem value="other">
-                                    Other rejected
-                                </MenuItem>
-                            </Select>
-                        </FormControl>
-
-                        <FormControl
-                            size="small"
-                            sx={{
-                                minWidth: {
-                                    xs: "100%",
-                                    sm: 165,
-                                },
-                            }}
-                        >
-                            <Select
-                                value={scanResearchFilter}
-                                onChange={(event) => {
-                                    setScanResearchFilter(
-                                        event.target.value,
-                                    );
-                                }}
-                            >
-                                <MenuItem value="all">
-                                    Research стан
-                                </MenuItem>
-
-                                <MenuItem value="qualified">
-                                    Research-qualified
-                                </MenuItem>
-
-                                <MenuItem value="blocked">
-                                    Research blocked
-                                </MenuItem>
-                            </Select>
-                        </FormControl>
-
-                        <Button
-                            variant="outlined"
-                            size="small"
-                            onClick={() => {
-                                setScanStatusFilter("all");
-                                setScanDirectionFilter("all");
-                                setScanRejectionFilter("all");
-                                setScanConflictFilter("all");
-                                setScanResearchFilter("all");
-                            }}
-                            disabled={
-                                scanStatusFilter === "all"
-                                && scanDirectionFilter === "all"
-                                && scanRejectionFilter === "all"
-                                && scanConflictFilter === "all"
-                                && scanResearchFilter === "all"
-                            }
-                            sx={{
-                                height: 40,
-                                minHeight: 40,
-                                whiteSpace: "nowrap",
-                                fontSize: "0.82rem",
-                                alignSelf: {
-                                    xs: "stretch",
-                                    sm: "center",
-                                },
-                                minWidth: {
-                                    xs: "100%",
-                                    sm: 115,
-                                },
-                            }}
-                        >
-                            Reset filters
-                        </Button>
-                    </Stack>
-                </Stack>
-
-                <Box
-                    sx={{
-                        display: "grid",
-                        gap: 2,
-                        gridTemplateColumns: {
-                            xs: "1fr",
-                            sm: "repeat(2, minmax(0, 1fr))",
-                            md: "repeat(3, minmax(0, 1fr))",
-                            xl: "repeat(8, minmax(0, 1fr))",
-                        },
-                        mb: 2,
-                    }}
-                >
-                    <InfoStat
-                        label="Початок"
-                        value={formatDateTime(latestScanRun?.started_at)}
-                    />
-
-                    <InfoStat
-                        label="Завершено"
-                        value={formatDateTime(latestScanRun?.finished_at)}
-                    />
-
-                    <InfoStat
-                        label="TF"
-                        value={latestScanRun?.timeframe || "—"}
-                    />
-
-                    <InfoStat
-                        label="Перевірено пар"
-                        value={formatNumber(
-                            latestScanRun?.symbols_scanned,
-                            0,
-                        )}
-                    />
-
-                    <InfoStat
-                        label="Кандидатів"
-                        value={formatNumber(
-                            latestScanRun?.candidate_signals,
-                            0,
-                        )}
-                    />
-
-                    <InfoStat
-                        label="Research trades"
-                        value={formatNumber(
-                            latestScanRun?.research_trades_created,
-                            0,
-                        )}
-                    />
-
-                    <InfoStat
-                        label="Elite signals"
-                        value={formatNumber(
-                            latestScanRun?.elite_signals_found,
-                            0,
-                        )}
-                    />
-
-                    <InfoStat
-                        label="Показано"
-                        value={
-                            `${filteredGroupedSignals.length}/${groupedScanEntries.length}`
-                        }
-                    />
-                </Box>
-
-                <Box
-                    sx={{
-                        display: "grid",
-                        gap: 2,
-                        gridTemplateColumns: {
-                            xs: "1fr",
-                            sm: "repeat(2, minmax(0, 1fr))",
-                            lg: "repeat(4, minmax(0, 1fr))",
-                        },
-                        mb: 2,
-                    }}
-                >
-                    <InfoStat
-                        label="LONG записів"
-                        value={formatNumber(scanLongCount, 0)}
-                    />
-
-                    <InfoStat
-                        label="SHORT записів"
-                        value={formatNumber(scanShortCount, 0)}
-                    />
-
-                    <InfoStat
-                        label="Статус scan-run"
-                        value={latestScanRun?.status || "—"}
-                    />
-
-                    <InfoStat
-                        label="Записів API"
-                        value={
-                            `${latestScanEntries.length}/${latestScanEntriesTotal}`
-                        }
-                    />
-                </Box>
-
-                <Box
-                    sx={{
-                        display: "grid",
-                        gap: 2,
-                        gridTemplateColumns: {
-                            xs: "1fr",
-                            sm: "repeat(2, minmax(0, 1fr))",
-                            lg: "repeat(4, minmax(0, 1fr))",
-                        },
-                        mb: 2,
-                    }}
-                >
-                    <InfoStat
-                        label="Conflict записів"
-                        value={formatNumber(scanConflictCount, 0)}
-                        onClick={() => {
-                            setScanRejectionFilter("conflict");
-                            setScanConflictFilter("all");
-                        }}
-                        active={
-                            scanRejectionFilter === "conflict"
-                            && scanConflictFilter === "all"
-                        }
-                    />
-
-                    <InfoStat
-                        label="Winner"
-                        value={formatNumber(scanConflictWinnerCount, 0)}
-                        onClick={() => {
-                            setScanRejectionFilter("all");
-                            setScanConflictFilter("winner");
-                        }}
-                        active={scanConflictFilter === "winner"}
-                    />
-
-                    <InfoStat
-                        label="Loser rejected"
-                        value={formatNumber(scanConflictLoserCount, 0)}
-                        onClick={() => {
-                            setScanRejectionFilter("all");
-                            setScanConflictFilter("loser_rejected");
-                        }}
-                        active={scanConflictFilter === "loser_rejected"}
-                    />
-
-                    <InfoStat
-                        label="Mixed conflict"
-                        value={formatNumber(scanConflictMixedCount, 0)}
-                        onClick={() => {
-                            setScanRejectionFilter("all");
-                            setScanConflictFilter("mixed_rejected");
-                        }}
-                        active={scanConflictFilter === "mixed_rejected"}
-                    />
-                </Box>
-
-                <Box
-                    sx={{
-                        display: "grid",
-                        gap: 2,
-                        gridTemplateColumns: {
-                            xs: "1fr",
-                            sm: "repeat(2, minmax(0, 1fr))",
-                            lg: "repeat(6, minmax(0, 1fr))",
-                        },
-                        mb: 2,
-                    }}
-                >
-                    <InfoStat
-                        label="Research threshold"
-                        value={formatNumber(
-                            scanResearchThresholdRejectedCount,
-                            0,
-                        )}
-                        onClick={() => {
-                            setScanRejectionFilter("research_threshold");
-                            setScanConflictFilter("all");
-                        }}
-                        active={scanRejectionFilter === "research_threshold"}
-                    />
-
-                    <InfoStat
-                        label="Elite threshold"
-                        value={formatNumber(
-                            scanEliteThresholdRejectedCount,
-                            0,
-                        )}
-                        onClick={() => {
-                            setScanRejectionFilter("elite_threshold");
-                            setScanConflictFilter("all");
-                        }}
-                        active={scanRejectionFilter === "elite_threshold"}
-                    />
-
-                    <InfoStat
-                        label="Open trade exists"
-                        value={formatNumber(
-                            scanOpenTradeRejectedCount,
-                            0,
-                        )}
-                        onClick={() => {
-                            setScanRejectionFilter("open_trade");
-                            setScanConflictFilter("all");
-                        }}
-                        active={scanRejectionFilter === "open_trade"}
-                    />
-
-                    <InfoStat
-                        label="Cycle limit"
-                        value={formatNumber(
-                            scanCycleLimitRejectedCount,
-                            0,
-                        )}
-                        onClick={() => {
-                            setScanRejectionFilter("cycle_limit");
-                            setScanConflictFilter("all");
-                        }}
-                        active={scanRejectionFilter === "cycle_limit"}
-                    />
-
-                    <InfoStat
-                        label="Risk error"
-                        value={formatNumber(scanRiskRejectedCount, 0)}
-                        onClick={() => {
-                            setScanRejectionFilter("risk");
-                            setScanConflictFilter("all");
-                        }}
-                        active={scanRejectionFilter === "risk"}
-                    />
-
-                    <InfoStat
-                        label="Other rejected"
-                        value={formatNumber(scanOtherRejectedCount, 0)}
-                        onClick={() => {
-                            setScanRejectionFilter("other");
-                            setScanConflictFilter("all");
-                        }}
-                        active={scanRejectionFilter === "other"}
-                    />
-                </Box>
-
-                {scanShortCount === 0 && scanLongCount > 0 && (
-                    <Alert
-                        severity="warning"
-                        icon={<WarningAmberRoundedIcon />}
-                        sx={{
-                            mb: 2,
-                        }}
-                    >
-                        У цьому scan-run немає жодного SHORT.
-                        Dashboard їх не ховає — backend scanner зараз
-                        повернув тільки LONG-сигнали.
-                    </Alert>
-                )}
-
-                <Stack spacing={2}>
-                    {filteredGroupedSignals.length === 0 ? (
-                        <Paper
-                            variant="outlined"
-                            sx={{
-                                p: 3,
-                                borderRadius: 3,
-                                textAlign: "center",
-                            }}
-                        >
-                            <Typography
-                                variant="body1"
-                                color="text.secondary"
-                            >
-                                Немає записів для поточного фільтра.
-                            </Typography>
-                        </Paper>
-                    ) : (
-                        filteredGroupedSignals.map((item) => (
-                            <ScanGroupCard
-                                key={item.key}
-                                item={item}
-                            />
-                        ))
-                    )}
-                </Stack>
-            </Paper>
 
             <Paper
                 variant="outlined"

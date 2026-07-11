@@ -106,6 +106,38 @@ function formatPrice(value) {
 }
 
 
+function formatPercentValue(value) {
+    if (value === null || value === undefined || value === "") {
+        return "";
+    }
+
+    const numeric = Number(value);
+
+    if (!Number.isFinite(numeric)) {
+        return "";
+    }
+
+    return `${formatNumber(numeric, 2)}%`;
+}
+
+
+function compactCloseReason(value) {
+    const reason = String(value || "").trim();
+
+    if (!reason) {
+        return "";
+    }
+
+    return reason
+        .replace(/^LIVE_/i, "")
+        .split("_")
+        .join(" ")
+        .toLowerCase()
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+
+
 function normalizeWorkerState(value) {
     const normalized = String(value || "").trim().toLowerCase();
 
@@ -1486,6 +1518,43 @@ function TradeCard({
                         <InfoStat
                             label="PnL"
                             value={`${formatNumber(trade.profit_amount, 2)} USDT`}
+                        />
+                    </Box>
+
+                    <Box
+                        sx={{
+                            display: "grid",
+                            gap: 2,
+                            gridTemplateColumns: {
+                                xs: "repeat(2, minmax(0, 1fr))",
+                                md: "repeat(5, minmax(0, 1fr))",
+                            },
+                            mt: 2,
+                        }}
+                    >
+                        <InfoStat
+                            label="Max profit"
+                            value={formatPercentValue(trade.max_profit_percent)}
+                        />
+
+                        <InfoStat
+                            label="Max drawdown"
+                            value={formatPercentValue(trade.max_drawdown_percent)}
+                        />
+
+                        <InfoStat
+                            label="Close reason"
+                            value={compactCloseReason(trade.close_reason)}
+                        />
+
+                        <InfoStat
+                            label="Opened"
+                            value={formatDateTime(trade.opened_at)}
+                        />
+
+                        <InfoStat
+                            label="Closed"
+                            value={formatDateTime(trade.closed_at)}
                         />
                     </Box>
                 </Box>

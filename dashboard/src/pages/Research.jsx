@@ -1346,6 +1346,125 @@ function TradeCard({
 
 
 
+function countTradesByResearchGroup(trades, group) {
+    return trades.filter(
+        (trade) => tradeResearchGroup(trade) === group,
+    ).length;
+}
+
+
+function countTradesByMarket(trades, market) {
+    return trades.filter(
+        (trade) => String(trade.market || "").toLowerCase() === market,
+    ).length;
+}
+
+
+function TradeSection({
+    title,
+    subtitle,
+    trades,
+    onOpen,
+}) {
+    return (
+        <Paper
+            variant="outlined"
+            sx={{
+                p: 2,
+                borderRadius: 3,
+                bgcolor: "rgba(255,255,255,0.02)",
+                minWidth: 0,
+            }}
+        >
+            <Stack
+                direction={{
+                    xs: "column",
+                    md: "row",
+                }}
+                justifyContent="space-between"
+                alignItems={{
+                    xs: "flex-start",
+                    md: "center",
+                }}
+                spacing={1.5}
+                sx={{
+                    mb: 2,
+                }}
+            >
+                <Box sx={{ minWidth: 0 }}>
+                    <Typography
+                        variant="h5"
+                        fontWeight={700}
+                    >
+                        {title}
+                    </Typography>
+
+                    <Typography
+                        variant="body2"
+                        color="text.secondary"
+                        sx={{
+                            mt: 0.5,
+                            wordBreak: "break-word",
+                        }}
+                    >
+                        {subtitle}
+                    </Typography>
+                </Box>
+
+                <Stack
+                    direction="row"
+                    spacing={1}
+                    useFlexGap
+                    flexWrap="wrap"
+                >
+                    <Chip
+                        size="small"
+                        color="info"
+                        label={`Trades: ${trades.length}`}
+                    />
+
+                    <Chip
+                        size="small"
+                        variant="outlined"
+                        color="primary"
+                        label={`Core: ${countTradesByResearchGroup(trades, "core")}`}
+                    />
+
+                    <Chip
+                        size="small"
+                        variant="outlined"
+                        color="secondary"
+                        label={`Experimental: ${countTradesByResearchGroup(trades, "experimental")}`}
+                    />
+
+                    <Chip
+                        size="small"
+                        variant="outlined"
+                        label={`Futures: ${countTradesByMarket(trades, "futures")}`}
+                    />
+
+                    <Chip
+                        size="small"
+                        variant="outlined"
+                        label={`Spot: ${countTradesByMarket(trades, "spot")}`}
+                    />
+                </Stack>
+            </Stack>
+
+            <Stack spacing={2}>
+                {trades.map((trade) => (
+                    <TradeCard
+                        key={trade.id}
+                        trade={trade}
+                        onOpen={onOpen}
+                    />
+                ))}
+            </Stack>
+        </Paper>
+    );
+}
+
+
 function compactObjectStats(value) {
     if (
         !value
@@ -2301,6 +2420,62 @@ export default function Research() {
         ],
     );
 
+    const tradeSections = useMemo(
+        () => {
+            const definitions = [
+                {
+                    key: "active",
+                    title: "Active trades",
+                    subtitle: "Угоди, які вже активовані й зараз у ринку.",
+                },
+                {
+                    key: "waiting_entry",
+                    title: "Waiting entry",
+                    subtitle: "Сетапи створені, але entry ще не активований.",
+                },
+                {
+                    key: "closed",
+                    title: "Closed / completed",
+                    subtitle: "Закриті, завершені або протерміновані research-угоди.",
+                },
+                {
+                    key: "other",
+                    title: "Other",
+                    subtitle: "Угоди з нестандартним або невідомим статусом.",
+                },
+            ];
+
+            const grouped = new Map(
+                definitions.map((definition) => [
+                    definition.key,
+                    [],
+                ]),
+            );
+
+            filteredTrades.forEach((trade) => {
+                const status = normalizeTradeStatus(trade.status);
+                const key = status === "expired"
+                    ? "closed"
+                    : grouped.has(status)
+                        ? status
+                        : "other";
+
+                grouped.get(key).push(trade);
+            });
+
+            return definitions
+                .map((definition) => ({
+                    ...definition,
+                    trades: grouped.get(definition.key),
+                }))
+                .filter((section) => section.trades.length > 0);
+        },
+        [
+            filteredTrades,
+        ],
+    );
+
+
     const coreTradeCount = useMemo(
         () => trades.filter(
             (trade) => tradeResearchGroup(trade) === "core",
@@ -2740,10 +2915,12 @@ export default function Research() {
                             </Typography>
                         </Paper>
                     ) : (
-                        filteredTrades.map((trade) => (
-                            <TradeCard
-                                key={trade.id}
-                                trade={trade}
+                        tradeSections.map((section) => (
+                            <TradeSection
+                                key={section.key}
+                                title={section.title}
+                                subtitle={section.subtitle}
+                                trades={section.trades}
                                 onOpen={handleOpenTrade}
                             />
                         ))

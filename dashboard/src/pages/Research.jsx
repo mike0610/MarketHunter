@@ -5,6 +5,9 @@ import {
     useState,
 } from "react";
 
+import Accordion from "@mui/material/Accordion";
+import AccordionDetails from "@mui/material/AccordionDetails";
+import AccordionSummary from "@mui/material/AccordionSummary";
 import {
     Alert,
     Box,
@@ -1599,410 +1602,106 @@ function TradeSection({
     subtitle,
     trades,
     onOpen,
+    defaultExpanded = false,
 }) {
     return (
-        <Paper
-            variant="outlined"
+        <Accordion
+            defaultExpanded={defaultExpanded}
+            disableGutters
             sx={{
-                p: 2,
+                border: "1px solid",
+                borderColor: "divider",
                 borderRadius: 3,
-                bgcolor: "rgba(255,255,255,0.02)",
-                minWidth: 0,
+                bgcolor: "background.paper",
+                overflow: "hidden",
+                "&:before": {
+                    display: "none",
+                },
             }}
         >
-            <Stack
-                direction={{
-                    xs: "column",
-                    md: "row",
-                }}
-                justifyContent="space-between"
-                alignItems={{
-                    xs: "flex-start",
-                    md: "center",
-                }}
-                spacing={1.5}
+            <AccordionSummary
+                expandIcon={(
+                    <Box
+                        component="span"
+                        sx={{
+                            color: "text.secondary",
+                            fontSize: 22,
+                            lineHeight: 1,
+                        }}
+                    >
+                        
+                    </Box>
+                )}
                 sx={{
-                    mb: 2,
+                    px: 2,
+                    py: 1,
+                    minHeight: 72,
+                    "& .MuiAccordionSummary-content": {
+                        my: 1,
+                    },
                 }}
             >
-                <Box sx={{ minWidth: 0 }}>
-                    <Typography
-                        variant="h5"
-                        fontWeight={700}
+                <Box
+                    sx={{
+                        flex: 1,
+                        minWidth: 0,
+                        pr: 2,
+                    }}
+                >
+                    <Stack
+                        direction="row"
+                        spacing={1}
+                        alignItems="center"
+                        flexWrap="wrap"
                     >
-                        {title}
-                    </Typography>
+                        <Typography
+                            variant="h6"
+                            fontWeight={800}
+                        >
+                            {title}
+                        </Typography>
+
+                        <Chip
+                            label={formatNumber(
+                                trades.length,
+                                0,
+                            )}
+                            size="small"
+                            color={defaultExpanded ? "primary" : "default"}
+                            variant={defaultExpanded ? "filled" : "outlined"}
+                        />
+                    </Stack>
 
                     <Typography
                         variant="body2"
                         color="text.secondary"
                         sx={{
                             mt: 0.5,
-                            wordBreak: "break-word",
                         }}
                     >
                         {subtitle}
                     </Typography>
                 </Box>
+            </AccordionSummary>
 
-                <Stack
-                    direction="row"
-                    spacing={1}
-                    useFlexGap
-                    flexWrap="wrap"
-                >
-                    <Chip
-                        size="small"
-                        color="info"
-                        label={`Trades: ${trades.length}`}
-                    />
-
-                    <Chip
-                        size="small"
-                        variant="outlined"
-                        color="primary"
-                        label={`Core: ${countTradesByResearchGroup(trades, "core")}`}
-                    />
-
-                    <Chip
-                        size="small"
-                        variant="outlined"
-                        color="secondary"
-                        label={`Experimental: ${countTradesByResearchGroup(trades, "experimental")}`}
-                    />
-
-                    <Chip
-                        size="small"
-                        variant="outlined"
-                        label={`Futures: ${countTradesByMarket(trades, "futures")}`}
-                    />
-
-                    <Chip
-                        size="small"
-                        variant="outlined"
-                        label={`Spot: ${countTradesByMarket(trades, "spot")}`}
-                    />
-                </Stack>
-            </Stack>
-
-            <Stack spacing={2}>
-                {trades.map((trade) => (
-                    <TradeCard
-                        key={trade.id}
-                        trade={trade}
-                        onOpen={onOpen}
-                    />
-                ))}
-            </Stack>
-        </Paper>
-    );
-}
-
-
-function compactObjectStats(value) {
-    if (
-        !value
-        || typeof value !== "object"
-        || Array.isArray(value)
-    ) {
-        return "—";
-    }
-
-    const entries = Object
-        .entries(value)
-        .sort((left, right) => Number(right[1]) - Number(left[1]))
-        .slice(0, 4);
-
-    if (!entries.length) {
-        return "—";
-    }
-
-    return entries
-        .map(([key, count]) => `${key}: ${count}`)
-        .join(" · ");
-}
-
-
-function compactArrayStats(value) {
-    if (!Array.isArray(value) || value.length === 0) {
-        return "—";
-    }
-
-    return value
-        .slice(0, 5)
-        .join(" · ");
-}
-
-
-function StatsReasonRows({
-    title,
-    rows,
-    mode = "performance",
-}) {
-    const items = safeArray(rows).slice(0, 8);
-
-    return (
-        <Box sx={{ minWidth: 0 }}>
-            <Typography
-                variant="h6"
-                fontWeight={700}
-                sx={{ mb: 1.5 }}
+            <AccordionDetails
+                sx={{
+                    px: 2,
+                    pt: 0,
+                    pb: 2,
+                }}
             >
-                {title}
-            </Typography>
-
-            {items.length === 0 ? (
-                <Typography
-                    variant="body2"
-                    color="text.secondary"
-                >
-                    No data yet.
-                </Typography>
-            ) : (
-                <Stack spacing={1.25}>
-                    {items.map((row, index) => (
-                        <Paper
-                            key={`${title}-${row.label || index}`}
-                            variant="outlined"
-                            sx={{
-                                p: 1.5,
-                                borderRadius: 2,
-                                bgcolor: "rgba(255,255,255,0.02)",
-                                minWidth: 0,
-                            }}
-                        >
-                            <Stack
-                                direction="row"
-                                spacing={1}
-                                useFlexGap
-                                flexWrap="wrap"
-                                alignItems="center"
-                                sx={{ mb: 1 }}
-                            >
-                                <Typography
-                                    variant="subtitle2"
-                                    fontWeight={700}
-                                    sx={{
-                                        wordBreak: "break-word",
-                                    }}
-                                >
-                                    {row.label || "Unknown"}
-                                </Typography>
-
-                                <Chip
-                                    size="small"
-                                    variant="outlined"
-                                    label={
-                                        mode === "blocks"
-                                            ? `Count: ${formatNumber(row.count, 0)}`
-                                            : `Total: ${formatNumber(row.total, 0)}`
-                                    }
-                                />
-                            </Stack>
-
-                            {mode === "blocks" ? (
-                                <Box
-                                    sx={{
-                                        display: "grid",
-                                        gap: 1.5,
-                                        gridTemplateColumns: {
-                                            xs: "1fr",
-                                            md: "repeat(2, minmax(0, 1fr))",
-                                        },
-                                    }}
-                                >
-                                    <InfoStat
-                                        label="Strategies"
-                                        value={compactObjectStats(row.strategies)}
-                                    />
-
-                                    <InfoStat
-                                        label="Directions"
-                                        value={compactObjectStats(row.directions)}
-                                    />
-                                </Box>
-                            ) : (
-                                <Box
-                                    sx={{
-                                        display: "grid",
-                                        gap: 1.5,
-                                        gridTemplateColumns: {
-                                            xs: "repeat(2, minmax(0, 1fr))",
-                                            md: "repeat(4, minmax(0, 1fr))",
-                                        },
-                                    }}
-                                >
-                                    <InfoStat
-                                        label="Completed"
-                                        value={formatNumber(row.completed, 0)}
-                                    />
-
-                                    <InfoStat
-                                        label="W/L"
-                                        value={`${formatNumber(row.wins, 0)} / ${formatNumber(row.losses, 0)}`}
-                                    />
-
-                                    <InfoStat
-                                        label="Win rate"
-                                        value={`${formatNumber(row.win_rate, 2)}%`}
-                                    />
-
-                                    <InfoStat
-                                        label="Avg RR"
-                                        value={formatNumber(row.average_rr, 2)}
-                                    />
-                                </Box>
-                            )}
-
-                            {mode === "blocks" && safeArray(row.examples).length > 0 && (
-                                <Typography
-                                    variant="body2"
-                                    color="text.secondary"
-                                    sx={{
-                                        mt: 1,
-                                        wordBreak: "break-word",
-                                    }}
-                                >
-                                    {safeArray(row.examples)[0]}
-                                </Typography>
-                            )}
-                        </Paper>
+                <Stack spacing={2}>
+                    {trades.map((trade) => (
+                        <TradeCard
+                            key={trade.id}
+                            trade={trade}
+                            onOpen={onOpen}
+                        />
                     ))}
                 </Stack>
-            )}
-        </Box>
-    );
-}
-
-
-
-function DirectionConflictRows({
-    title,
-    rows,
-}) {
-    const items = safeArray(rows).slice(0, 8);
-
-    return (
-        <Box sx={{ minWidth: 0 }}>
-            <Typography
-                variant="h6"
-                fontWeight={700}
-                sx={{ mb: 1.5 }}
-            >
-                {title}
-            </Typography>
-
-            {items.length === 0 ? (
-                <Typography
-                    variant="body2"
-                    color="text.secondary"
-                >
-                    No conflict data yet.
-                </Typography>
-            ) : (
-                <Stack spacing={1.25}>
-                    {items.map((row, index) => (
-                        <Paper
-                            key={`${title}-${row.label || index}`}
-                            variant="outlined"
-                            sx={{
-                                p: 1.5,
-                                borderRadius: 2,
-                                bgcolor: "rgba(255,255,255,0.02)",
-                                minWidth: 0,
-                            }}
-                        >
-                            <Stack
-                                direction="row"
-                                spacing={1}
-                                useFlexGap
-                                flexWrap="wrap"
-                                alignItems="center"
-                                sx={{ mb: 1 }}
-                            >
-                                <Typography
-                                    variant="subtitle2"
-                                    fontWeight={700}
-                                    sx={{ wordBreak: "break-word" }}
-                                >
-                                    {row.label || "Unknown"}
-                                </Typography>
-
-                                <Chip
-                                    size="small"
-                                    variant="outlined"
-                                    label={`Count: ${formatNumber(row.count, 0)}`}
-                                />
-                            </Stack>
-
-                            <Box
-                                sx={{
-                                    display: "grid",
-                                    gap: 1.5,
-                                    gridTemplateColumns: {
-                                        xs: "repeat(2, minmax(0, 1fr))",
-                                        md: "repeat(4, minmax(0, 1fr))",
-                                    },
-                                }}
-                            >
-                                <InfoStat
-                                    label="Mixed"
-                                    value={formatNumber(row.mixed_rejected, 0)}
-                                />
-
-                                <InfoStat
-                                    label="Resolved"
-                                    value={formatNumber(row.resolved, 0)}
-                                />
-
-                                <InfoStat
-                                    label="Winner"
-                                    value={formatNumber(row.winner, 0)}
-                                />
-
-                                <InfoStat
-                                    label="Loser rejected"
-                                    value={formatNumber(row.loser_rejected, 0)}
-                                />
-
-                                <InfoStat
-                                    label="LONG wins"
-                                    value={formatNumber(row.long_winner, 0)}
-                                />
-
-                                <InfoStat
-                                    label="SHORT wins"
-                                    value={formatNumber(row.short_winner, 0)}
-                                />
-
-                                <InfoStat
-                                    label="Avg delta"
-                                    value={formatNumber(row.average_delta, 2)}
-                                />
-
-                                <InfoStat
-                                    label="Symbols"
-                                    value={compactArrayStats(row.symbols)}
-                                />
-                            </Box>
-
-                            {safeArray(row.examples).length > 0 && (
-                                <Typography
-                                    variant="body2"
-                                    color="text.secondary"
-                                    sx={{
-                                        mt: 1,
-                                        wordBreak: "break-word",
-                                    }}
-                                >
-                                    {safeArray(row.examples)[0]}
-                                </Typography>
-                            )}
-                        </Paper>
-                    ))}
-                </Stack>
-            )}
-        </Box>
+            </AccordionDetails>
+        </Accordion>
     );
 }
 
@@ -3156,6 +2855,10 @@ export default function Research() {
                                 subtitle={section.subtitle}
                                 trades={section.trades}
                                 onOpen={handleOpenTrade}
+                                defaultExpanded={
+                                    section.key === "active"
+                                    || section.key === "waiting_entry"
+                                }
                             />
                         ))
                     )}

@@ -557,6 +557,60 @@ function normalizeExperimentTag(value) {
 }
 
 
+const TRADE_STATE_FILTERS = [
+    { value: "all", label: "Усі стани" },
+    { value: "active", label: "Active" },
+    { value: "waiting_entry", label: "Waiting entry" },
+    { value: "closed", label: "Closed" },
+    { value: "expired", label: "Expired" },
+    { value: "initial_sl", label: "Initial SL" },
+    { value: "be_moved", label: "BE moved" },
+    { value: "profit_lock", label: "Profit lock" },
+];
+
+
+function tradeStateFilterValue(trade) {
+    const status = normalizeTradeStatus(trade?.status);
+
+    if (status === "active") {
+        const managementLabel = tradeManagementState(trade).label;
+
+        if (managementLabel === "BE moved") {
+            return "be_moved";
+        }
+
+        if (managementLabel === "Profit lock") {
+            return "profit_lock";
+        }
+
+        return "initial_sl";
+    }
+
+    if (
+        status === "waiting_entry"
+        || status === "closed"
+        || status === "expired"
+    ) {
+        return status;
+    }
+
+    return "other";
+}
+
+
+function matchesTradeStateFilter(trade, filter) {
+    if (filter === "all") {
+        return true;
+    }
+
+    if (filter === "active") {
+        return normalizeTradeStatus(trade?.status) === "active";
+    }
+
+    return tradeStateFilterValue(trade) === filter;
+}
+
+
 function normalizeNumberKey(value) {
     if (value === null || value === undefined || value === "") {
         return "none";
@@ -1132,6 +1186,7 @@ export default function Research() {
 
 
     const [tradeResearchFilter, setTradeResearchFilter] = useState("all");
+    const [tradeStateFilter, setTradeStateFilter] = useState("all");
 
     const [dialogOpen, setDialogOpen] = useState(false);
     const [dialogLoading, setDialogLoading] = useState(false);
@@ -1211,12 +1266,16 @@ export default function Research() {
 
     const filteredTrades = useMemo(
         () => trades.filter((trade) => (
-            tradeResearchFilter === "all"
-            || tradeResearchGroup(trade) === tradeResearchFilter
+            (
+                tradeResearchFilter === "all"
+                || tradeResearchGroup(trade) === tradeResearchFilter
+            )
+            && matchesTradeStateFilter(trade, tradeStateFilter)
         )),
         [
             trades,
             tradeResearchFilter,
+            tradeStateFilter,
         ],
     );
 
@@ -1637,6 +1696,34 @@ export default function Research() {
                         </Select>
                     </FormControl>
 
+                    <FormControl
+                        size="small"
+                        sx={{
+                            minWidth: {
+                                xs: "100%",
+                                sm: 170,
+                            },
+                        }}
+                    >
+                        <Select
+                            value={tradeStateFilter}
+                            onChange={(event) => {
+                                setTradeStateFilter(
+                                    event.target.value,
+                                );
+                            }}
+                        >
+                            {TRADE_STATE_FILTERS.map((item) => (
+                                <MenuItem
+                                    key={item.value}
+                                    value={item.value}
+                                >
+                                    {item.label}
+                                </MenuItem>
+                            ))}
+                        </Select>
+                    </FormControl>
+
                     <Chip
                         size="small"
                         color="primary"
@@ -1680,8 +1767,12 @@ export default function Research() {
                         size="small"
                         onClick={() => {
                             setTradeResearchFilter("all");
+                            setTradeStateFilter("all");
                         }}
-                        disabled={tradeResearchFilter === "all"}
+                        disabled={
+                            tradeResearchFilter === "all"
+                            && tradeStateFilter === "all"
+                        }
                         sx={{
                             height: 40,
                             minHeight: 40,

@@ -55,6 +55,7 @@ class DailyLevelsStrategy(BaseStrategy):
     breakout_buffer_percent = 0.15
     sweep_buffer_percent = 0.15
     min_level_range_percent = 3.0
+    max_estimated_stop_distance_percent = 8.0
 
     def __init__(self) -> None:
         pass
@@ -139,6 +140,35 @@ class DailyLevelsStrategy(BaseStrategy):
 
         if setup is None:
             return None
+
+        estimated_stop_reference = (
+            support
+            if setup.direction == "LONG"
+            else resistance
+        )
+
+        estimated_stop_distance_percent = self._percent_distance(
+            signal_candle.close,
+            estimated_stop_reference,
+        )
+
+        if (
+            estimated_stop_distance_percent
+            > self.max_estimated_stop_distance_percent
+        ):
+            return None
+
+        setup.metadata["estimated_stop_reference"] = round(
+            estimated_stop_reference,
+            8,
+        )
+        setup.metadata["estimated_stop_distance_percent"] = round(
+            estimated_stop_distance_percent,
+            4,
+        )
+        setup.metadata["max_estimated_stop_distance_percent"] = (
+            self.max_estimated_stop_distance_percent
+        )
 
         signal = Signal(
             symbol=snapshot.symbol,

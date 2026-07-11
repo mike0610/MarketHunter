@@ -1806,19 +1806,51 @@ export default function Research() {
                             </Typography>
                         </Paper>
                     ) : (
-                        tradeSections.map((section) => (
-                            <TradeSection
-                                key={section.key}
-                                title={section.title}
-                                subtitle={section.subtitle}
-                                trades={section.trades}
-                                onOpen={handleOpenTrade}
-                                defaultExpanded={
-                                    section.key === "active"
-                                    || section.key === "waiting_entry"
+                        tradeSections
+                            .flatMap((section) => {
+                                if (section.key !== "active") {
+                                    return [section];
                                 }
-                            />
-                        ))
+
+                                return [
+                                    {
+                                        ...section,
+                                        key: "active_futures",
+                                        title: "Futures active trades",
+                                        subtitle: "Активні futures-угоди, які зараз у ринку.",
+                                        trades: section.trades.filter(
+                                            (trade) => String(
+                                                trade.market || "",
+                                            ).toLowerCase() === "futures",
+                                        ),
+                                    },
+                                    {
+                                        ...section,
+                                        key: "active_spot",
+                                        title: "Spot active trades",
+                                        subtitle: "Активні spot-угоди, які зараз у ринку.",
+                                        trades: section.trades.filter(
+                                            (trade) => String(
+                                                trade.market || "",
+                                            ).toLowerCase() === "spot",
+                                        ),
+                                    },
+                                ].filter((item) => item.trades.length > 0);
+                            })
+                            .map((section) => (
+                                <TradeSection
+                                    key={section.key}
+                                    title={section.title}
+                                    subtitle={section.subtitle}
+                                    trades={section.trades}
+                                    onOpen={handleOpenTrade}
+                                    defaultExpanded={
+                                        section.key === "active_futures"
+                                        || section.key === "active_spot"
+                                        || section.key === "waiting_entry"
+                                    }
+                                />
+                            ))
                     )}
                 </Stack>
             </Paper>

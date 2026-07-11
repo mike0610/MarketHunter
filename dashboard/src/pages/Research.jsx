@@ -571,333 +571,6 @@ function normalizeNumberKey(value) {
     return numeric.toFixed(8);
 }
 
-function parseMetadata(value) {
-    if (!value) {
-        return {};
-    }
-
-    if (
-        typeof value === "object"
-        && !Array.isArray(value)
-    ) {
-        return value;
-    }
-
-    if (typeof value !== "string") {
-        return {};
-    }
-
-    try {
-        const parsed = JSON.parse(value);
-
-        if (
-            parsed
-            && typeof parsed === "object"
-            && !Array.isArray(parsed)
-        ) {
-            return parsed;
-        }
-    } catch {
-        return {};
-    }
-
-    return {};
-}
-
-
-function normalizeConflictInfo(metadata) {
-    const source = parseMetadata(metadata);
-
-    if (!source?.direction_conflict) {
-        return {
-            active: false,
-            outcome: "",
-            resolution: "",
-            winnerDirection: "",
-            longScore: null,
-            shortScore: null,
-            scoreDelta: null,
-            minScoreDelta: null,
-            longSignalCount: null,
-            shortSignalCount: null,
-        };
-    }
-
-    return {
-        active: true,
-        outcome: String(
-            source.conflict_signal_outcome || "",
-        ),
-        resolution: String(
-            source.conflict_resolution || "",
-        ),
-        winnerDirection: String(
-            source.conflict_winner_direction || "",
-        ),
-        longScore: source.conflict_long_score ?? null,
-        shortScore: source.conflict_short_score ?? null,
-        scoreDelta: source.conflict_score_delta ?? null,
-        minScoreDelta: source.conflict_min_score_delta ?? null,
-        longSignalCount: source.conflict_long_signal_count ?? null,
-        shortSignalCount: source.conflict_short_signal_count ?? null,
-    };
-}
-
-
-function conflictOutcomeLabel(value) {
-    switch (String(value || "")) {
-        case "winner":
-            return "Переможець напряму";
-        case "loser_rejected":
-            return "Слабший напрям";
-        case "mixed_rejected":
-            return "Змішаний конфлікт";
-        default:
-            return "Conflict resolver";
-    }
-}
-
-
-function conflictResolutionLabel(value) {
-    switch (String(value || "")) {
-        case "winner_selected":
-            return "Обрано сильніший напрям";
-        case "loser_rejected":
-            return "Слабший напрям відхилено";
-        case "mixed_rejected":
-            return "LONG і SHORT рівні — setup пропущено";
-        default:
-            return "Конфлікт напрямів";
-    }
-}
-
-
-function conflictOutcomeColor(value) {
-    switch (String(value || "")) {
-        case "winner":
-            return "success";
-        case "loser_rejected":
-            return "error";
-        case "mixed_rejected":
-            return "warning";
-        default:
-            return "info";
-    }
-}
-
-
-function rejectionCategory(value) {
-    const reason = String(value || "").toLowerCase();
-
-    if (!reason) {
-        return "";
-    }
-
-    if (reason.includes("direction conflict")) {
-        return "conflict";
-    }
-
-    if (
-        reason.includes("probability")
-        && reason.includes("below research")
-    ) {
-        return "research_threshold";
-    }
-
-    if (
-        reason.includes("probability")
-        && reason.includes("below elite")
-    ) {
-        return "elite_threshold";
-    }
-
-    if (reason.includes("research cycle limit")) {
-        return "cycle_limit";
-    }
-
-    if (reason.includes("open trade already exists")) {
-        return "open_trade";
-    }
-
-    if (
-        reason.includes("duplicate")
-        || reason.includes("already tracked")
-    ) {
-        return "duplicate";
-    }
-
-    if (reason.includes("risk")) {
-        return "risk";
-    }
-
-    return "other";
-}
-
-
-function rejectionCategoryLabel(value) {
-    switch (String(value || "")) {
-        case "conflict":
-            return "Direction conflict";
-        case "research_threshold":
-            return "Research threshold";
-        case "elite_threshold":
-            return "Elite threshold";
-        case "open_trade":
-            return "Open trade exists";
-        case "cycle_limit":
-            return "Cycle limit";
-        case "risk":
-            return "Risk error";
-        case "duplicate":
-            return "Duplicate";
-        case "other":
-            return "Other rejected";
-        default:
-            return "";
-    }
-}
-
-
-function rejectionCategoryColor(value) {
-    switch (String(value || "")) {
-        case "conflict":
-            return "warning";
-        case "research_threshold":
-            return "default";
-        case "elite_threshold":
-            return "info";
-        case "open_trade":
-            return "primary";
-        case "cycle_limit":
-            return "secondary";
-        case "risk":
-            return "error";
-        case "duplicate":
-            return "primary";
-        case "other":
-            return "default";
-        default:
-            return "default";
-    }
-}
-
-
-
-function buildGroupKey(item) {
-    return [
-        item.symbol,
-        item.direction,
-        item.timeframe,
-        normalizeNumberKey(item.entry),
-        normalizeNumberKey(item.stopLoss),
-        normalizeNumberKey(item.takeProfit),
-        normalizeNumberKey(item.rr),
-    ].join("|");
-}
-
-
-function normalizeJournalEntry(raw, index = 0) {
-    const metadata = parseMetadata(
-        raw?.metadata || raw?.signal?.metadata || {},
-    );
-
-    const risk = raw?.risk || metadata?.risk || {};
-
-    const entry = (
-        raw?.entry
-        ?? raw?.entry_price
-        ?? risk?.entry
-        ?? metadata?.entry
-        ?? null
-    );
-
-    const stopLoss = (
-        raw?.stop_loss
-        ?? raw?.sl
-        ?? risk?.stop_loss
-        ?? metadata?.stop_loss
-        ?? null
-    );
-
-    const takeProfit = (
-        raw?.take_profit
-        ?? raw?.tp
-        ?? risk?.take_profit
-        ?? metadata?.take_profit
-        ?? null
-    );
-
-    const rr = (
-        raw?.rr
-        ?? raw?.risk_reward
-        ?? risk?.risk_reward
-        ?? metadata?.risk_reward
-        ?? null
-    );
-
-    const reason = (
-        raw?.research_skipped
-        || raw?.rejected_reason
-        || raw?.reason
-        || raw?.message
-        || raw?.decision_reason
-        || ""
-    );
-
-    const conflict = normalizeConflictInfo(metadata);
-    const rejectCategory = rejectionCategory(reason);
-
-    return {
-        id: raw?.id || raw?.signal_id || `${raw?.symbol || "signal"}-${index}`,
-        symbol: raw?.symbol || raw?.signal?.symbol || "—",
-        strategy: raw?.strategy || raw?.signal?.strategy || "—",
-        direction: normalizeDirection(
-            raw?.direction || raw?.signal?.direction,
-        ),
-        timeframe: raw?.timeframe || raw?.signal?.timeframe || "—",
-        probability: raw?.probability ?? metadata?.probability ?? null,
-        score: raw?.score ?? raw?.signal?.score ?? null,
-        entry,
-        stopLoss,
-        takeProfit,
-        rr,
-        reason,
-        metadata,
-        conflict,
-        rejectCategory,
-        researchQualified: Number(raw?.probability ?? metadata?.probability ?? 0) >= 40,
-        researchBlocked: (
-            Number(raw?.probability ?? metadata?.probability ?? 0) >= 40
-            && (
-                rejectCategory === "open_trade"
-                || rejectCategory === "cycle_limit"
-                || rejectCategory === "duplicate"
-            )
-        ),
-        status: normalizeSignalStatus(
-            raw?.status
-            ?? raw?.signal_status
-            ?? raw?.journal_status,
-        ),
-        createdAt: (
-            raw?.created_at
-            || raw?.started_at
-            || raw?.timestamp
-            || null
-        ),
-    };
-}
-
-function getLatestScanRun(data) {
-    return (
-        data?.scan_run
-        || data?.latest_scan
-        || data?.run
-        || null
-    );
-}
-
-
 function MetricCard({
     label,
     value,
@@ -1099,114 +772,119 @@ function TradeCard({
                 minWidth: 0,
             }}
         >
-            <Stack
-                direction={{
-                    xs: "column",
-                    lg: "row",
+            <Box
+                sx={{
+                    display: "grid",
+                    gap: 2,
+                    minWidth: 0,
                 }}
-                justifyContent="space-between"
-                alignItems={{
-                    xs: "flex-start",
-                    lg: "center",
-                }}
-                spacing={2}
             >
-                <Box
+                <Stack
+                    direction="row"
+                    spacing={1}
+                    useFlexGap
+                    flexWrap="wrap"
+                    alignItems="center"
                     sx={{
                         minWidth: 0,
-                        flex: 1,
                     }}
                 >
-                    <Stack
-                        direction="row"
-                        spacing={1}
-                        useFlexGap
-                        flexWrap="wrap"
-                        alignItems="center"
+                    <Typography
+                        variant="h6"
+                        fontWeight={700}
                         sx={{
-                            mb: 1.25,
+                            wordBreak: "break-word",
                         }}
                     >
-                        <Typography
-                            variant="h6"
-                            fontWeight={700}
-                            sx={{
-                                wordBreak: "break-word",
-                            }}
-                        >
-                            {trade.symbol}
-                        </Typography>
+                        {trade.symbol}
+                    </Typography>
 
-                        <Chip
-                            size="small"
-                            color={directionColor(trade.direction)}
-                            label={trade.direction}
-                        />
+                    <Chip
+                        size="small"
+                        color={directionColor(trade.direction)}
+                        label={trade.direction}
+                    />
 
-                        <Chip
-                            size="small"
-                            color={tradeStatusColor(trade.status)}
-                            label={tradeStatusLabel(trade.status)}
-                        />
+                    <Chip
+                        size="small"
+                        color={tradeStatusColor(trade.status)}
+                        label={tradeStatusLabel(trade.status)}
+                    />
 
-                        <Chip
-                            size="small"
-                            color={managementState.color}
-                            variant={managementState.variant}
-                            label={managementState.label}
-                        />
+                    <Chip
+                        size="small"
+                        color={managementState.color}
+                        variant={managementState.variant}
+                        label={managementState.label}
+                    />
 
+                    <Chip
+                        size="small"
+                        variant="outlined"
+                        color="info"
+                        label={String(
+                            trade.market || "market",
+                        ).toUpperCase()}
+                    />
+
+                    <Chip
+                        size="small"
+                        color={researchGroupColor(
+                            tradeResearchGroup(trade),
+                        )}
+                        variant={
+                            tradeResearchGroup(trade) === "experimental"
+                                ? "filled"
+                                : "outlined"
+                        }
+                        label={researchGroupLabel(
+                            tradeResearchGroup(trade),
+                        )}
+                    />
+
+                    {normalizeExperimentTag(trade.experiment_tag) && (
                         <Chip
                             size="small"
                             variant="outlined"
-                            color="info"
-                            label={String(
-                                trade.market || "market",
-                            ).toUpperCase()}
-                        />
-
-                        <Chip
-                            size="small"
-                            color={researchGroupColor(
-                                tradeResearchGroup(trade),
-                            )}
-                            variant={
-                                tradeResearchGroup(trade) === "experimental"
-                                    ? "filled"
-                                    : "outlined"
-                            }
-                            label={researchGroupLabel(
-                                tradeResearchGroup(trade),
+                            color="secondary"
+                            label={normalizeExperimentTag(
+                                trade.experiment_tag,
                             )}
                         />
+                    )}
 
-                        {normalizeExperimentTag(trade.experiment_tag) && (
-                            <Chip
-                                size="small"
-                                variant="outlined"
-                                color="secondary"
-                                label={normalizeExperimentTag(
-                                    trade.experiment_tag,
-                                )}
-                            />
-                        )}
+                    <Typography
+                        variant="body2"
+                        color="text.secondary"
+                    >
+                        {trade.strategy} · {trade.timeframe}
+                    </Typography>
+                </Stack>
 
-                        <Typography
-                            variant="body2"
-                            color="text.secondary"
-                        >
-                            {trade.strategy} · {trade.timeframe}
-                        </Typography>
-                    </Stack>
-
+                <Box
+                    sx={{
+                        display: "grid",
+                        gridTemplateColumns: {
+                            xs: "1fr",
+                            lg: "minmax(0, 1fr) 170px",
+                        },
+                        gap: 2,
+                        alignItems: "stretch",
+                        minWidth: 0,
+                    }}
+                >
                     <Box
                         sx={{
                             display: "grid",
                             gap: 2,
                             gridTemplateColumns: {
                                 xs: "repeat(2, minmax(0, 1fr))",
-                                md: "repeat(6, minmax(0, 1fr))",
+                                sm: "repeat(3, minmax(0, 1fr))",
+                                md: "repeat(4, minmax(0, 1fr))",
+                                xl: "repeat(5, minmax(0, 1fr))",
                             },
+                            alignItems: "start",
+                            minWidth: 0,
                         }}
                     >
                         <InfoStat
@@ -1238,19 +916,7 @@ function TradeCard({
                             label="PnL"
                             value={`${formatNumber(trade.profit_amount, 2)} USDT`}
                         />
-                    </Box>
 
-                    <Box
-                        sx={{
-                            display: "grid",
-                            gap: 2,
-                            gridTemplateColumns: {
-                                xs: "repeat(2, minmax(0, 1fr))",
-                                md: "repeat(5, minmax(0, 1fr))",
-                            },
-                            mt: 2,
-                        }}
-                    >
                         <InfoStat
                             label="Max profit"
                             value={formatPercentValue(trade.max_profit_percent)}
@@ -1275,19 +941,7 @@ function TradeCard({
                             label="Closed"
                             value={formatDateTime(trade.closed_at)}
                         />
-                    </Box>
 
-                    <Box
-                        sx={{
-                            display: "grid",
-                            gap: 2,
-                            gridTemplateColumns: {
-                                xs: "repeat(2, minmax(0, 1fr))",
-                                md: "repeat(4, minmax(0, 1fr))",
-                            },
-                            mt: 2,
-                        }}
-                    >
                         <InfoStat
                             label="R progress"
                             value={formatTradeRProgress(trade)}
@@ -1308,27 +962,40 @@ function TradeCard({
                             value="1.50R"
                         />
                     </Box>
-                </Box>
 
-                <Button
-                    variant="outlined"
-                    startIcon={<VisibilityOutlinedIcon />}
-                    onClick={() => onOpen(trade)}
-                    sx={{
-                        alignSelf: {
-                            xs: "stretch",
-                            lg: "center",
-                        },
-                        minWidth: 150,
-                    }}
-                >
-                    Відкрити
-                </Button>
-            </Stack>
+                    <Box
+                        sx={{
+                            display: "flex",
+                            alignItems: {
+                                xs: "stretch",
+                                lg: "center",
+                            },
+                            justifyContent: {
+                                xs: "stretch",
+                                lg: "flex-end",
+                            },
+                            minWidth: 0,
+                        }}
+                    >
+                        <Button
+                            variant="outlined"
+                            startIcon={<VisibilityOutlinedIcon />}
+                            onClick={() => onOpen(trade)}
+                            fullWidth
+                            sx={{
+                                minHeight: 44,
+                                minWidth: 0,
+                                whiteSpace: "nowrap",
+                            }}
+                        >
+                            Відкрити
+                        </Button>
+                    </Box>
+                </Box>
+            </Box>
         </Paper>
     );
 }
-
 
 
 function countTradesByResearchGroup(trades, group) {

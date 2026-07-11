@@ -330,6 +330,105 @@ function activeStopManagementState(trade) {
 }
 
 
+function oneRPercentFromTrade(trade) {
+    const entry = numericPrice(trade?.entry_price);
+    const takeProfit = numericPrice(trade?.take_profit);
+
+    if (entry === null || takeProfit === null || entry === 0) {
+        return null;
+    }
+
+    const oneRDistance = Math.abs(takeProfit - entry) / 2;
+    const oneRPercent = oneRDistance / Math.abs(entry) * 100;
+
+    return Number.isFinite(oneRPercent) && oneRPercent > 0
+        ? oneRPercent
+        : null;
+}
+
+
+function tradeRProgress(trade) {
+    const oneRPercent = oneRPercentFromTrade(trade);
+    const maxProfit = Number(trade?.max_profit_percent);
+
+    if (
+        oneRPercent === null
+        || !Number.isFinite(maxProfit)
+    ) {
+        return null;
+    }
+
+    return maxProfit / oneRPercent;
+}
+
+
+function formatTradeRProgress(trade) {
+    const progress = tradeRProgress(trade);
+
+    if (progress === null) {
+        return "—";
+    }
+
+    return `${formatNumber(progress, 2)}R`;
+}
+
+
+function tradeRiskReward(trade) {
+    const directValue = Number(
+        trade?.rr
+        ?? trade?.risk_reward
+        ?? trade?.riskReward
+    );
+
+    if (Number.isFinite(directValue) && directValue > 0) {
+        return directValue;
+    }
+
+    const entry = numericPrice(trade?.entry_price);
+    const stopLoss = numericPrice(trade?.stop_loss);
+    const takeProfit = numericPrice(trade?.take_profit);
+
+    if (entry === null || stopLoss === null || takeProfit === null) {
+        return null;
+    }
+
+    const risk = Math.abs(entry - stopLoss);
+    const reward = Math.abs(takeProfit - entry);
+
+    if (risk <= 0) {
+        return null;
+    }
+
+    const rr = reward / risk;
+
+    return Number.isFinite(rr) && rr > 0
+        ? rr
+        : null;
+}
+
+
+function formatTradeRiskReward(trade) {
+    const rr = tradeRiskReward(trade);
+
+    if (rr === null) {
+        return "—";
+    }
+
+    return formatNumber(rr, 2);
+}
+
+
+function formatOneRDistance(trade) {
+    const oneRPercent = oneRPercentFromTrade(trade);
+
+    if (oneRPercent === null) {
+        return "—";
+    }
+
+    return formatPercentValue(oneRPercent);
+}
+
+
 function tradeManagementState(trade) {
     const status = normalizeTradeStatus(trade?.status);
     const closeReason = String(trade?.close_reason || "").toUpperCase();
@@ -1132,7 +1231,7 @@ function TradeCard({
 
                         <InfoStat
                             label="RR"
-                            value={formatNumber(trade.rr, 2)}
+                            value={formatTradeRiskReward(trade)}
                         />
 
                         <InfoStat
@@ -1175,6 +1274,38 @@ function TradeCard({
                         <InfoStat
                             label="Closed"
                             value={formatDateTime(trade.closed_at)}
+                        />
+                    </Box>
+
+                    <Box
+                        sx={{
+                            display: "grid",
+                            gap: 2,
+                            gridTemplateColumns: {
+                                xs: "repeat(2, minmax(0, 1fr))",
+                                md: "repeat(4, minmax(0, 1fr))",
+                            },
+                            mt: 2,
+                        }}
+                    >
+                        <InfoStat
+                            label="R progress"
+                            value={formatTradeRProgress(trade)}
+                        />
+
+                        <InfoStat
+                            label="1R distance"
+                            value={formatOneRDistance(trade)}
+                        />
+
+                        <InfoStat
+                            label="BE trigger"
+                            value="1.00R"
+                        />
+
+                        <InfoStat
+                            label="Profit lock"
+                            value="1.50R"
                         />
                     </Box>
                 </Box>
@@ -2134,10 +2265,7 @@ export default function Research() {
 
                                         <InfoStat
                                             label="RR"
-                                            value={formatNumber(
-                                                selectedTrade.rr,
-                                                2,
-                                            )}
+                                            value={formatTradeRiskReward(selectedTrade)}
                                         />
 
                                         <InfoStat
@@ -2167,6 +2295,39 @@ export default function Research() {
                                                 selectedTrade.close_reason
                                                 || "—"
                                             }
+                                        />
+                                    </Box>
+
+                                    <Box
+                                        sx={{
+                                            display: "grid",
+                                            gap: 2,
+                                            gridTemplateColumns: {
+                                                xs: "1fr",
+                                                sm: "repeat(2, minmax(0, 1fr))",
+                                                md: "repeat(4, minmax(0, 1fr))",
+                                            },
+                                            mt: 2,
+                                        }}
+                                    >
+                                        <InfoStat
+                                            label="R progress"
+                                            value={formatTradeRProgress(selectedTrade)}
+                                        />
+
+                                        <InfoStat
+                                            label="1R distance"
+                                            value={formatOneRDistance(selectedTrade)}
+                                        />
+
+                                        <InfoStat
+                                            label="BE trigger"
+                                            value="1.00R"
+                                        />
+
+                                        <InfoStat
+                                            label="Profit lock"
+                                            value="1.50R"
                                         />
                                     </Box>
 

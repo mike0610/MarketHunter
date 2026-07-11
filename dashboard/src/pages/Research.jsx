@@ -283,19 +283,19 @@ function activeStopManagementState(trade) {
     }
 
     if (direction === "SHORT") {
-        if (stopLoss < entry && !isNearPrice(stopLoss, entry)) {
-            return {
-                label: "Profit lock",
-                color: "success",
-                variant: "filled",
-            };
-        }
-
-        if (stopLoss <= entry || isNearPrice(stopLoss, entry)) {
+        if (isBreakEvenStopPrice(stopLoss, entry)) {
             return {
                 label: "BE moved",
                 color: "success",
                 variant: "outlined",
+            };
+        }
+
+        if (stopLoss < entry) {
+            return {
+                label: "Profit lock",
+                color: "success",
+                variant: "filled",
             };
         }
 
@@ -306,19 +306,19 @@ function activeStopManagementState(trade) {
         };
     }
 
-    if (stopLoss > entry && !isNearPrice(stopLoss, entry)) {
-        return {
-            label: "Profit lock",
-            color: "success",
-            variant: "filled",
-        };
-    }
-
-    if (stopLoss >= entry || isNearPrice(stopLoss, entry)) {
+    if (isBreakEvenStopPrice(stopLoss, entry)) {
         return {
             label: "BE moved",
             color: "success",
             variant: "outlined",
+        };
+    }
+
+    if (stopLoss > entry) {
+        return {
+            label: "Profit lock",
+            color: "success",
+            variant: "filled",
         };
     }
 
@@ -327,6 +327,21 @@ function activeStopManagementState(trade) {
         color: "info",
         variant: "outlined",
     };
+}
+
+
+function isBreakEvenStopPrice(stopLoss, entry) {
+    if (stopLoss === null || entry === null || entry === 0) {
+        return false;
+    }
+
+    const scale = Math.max(
+        Math.abs(stopLoss),
+        Math.abs(entry),
+        Number.EPSILON,
+    );
+
+    return Math.abs(stopLoss - entry) <= scale * 0.00000001;
 }
 
 

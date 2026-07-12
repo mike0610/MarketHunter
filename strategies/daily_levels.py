@@ -125,6 +125,16 @@ class DailyLevelsStrategy(BaseStrategy):
     level_approach_min_smaller_range_count = 2
     level_approach_large_bar_multiplier = 1.5
 
+    # Compression-aware breakout v1 - activates Approach Context v1
+    # for the plain breakout/breakdown setups only. Confirmed
+    # pre-breakout compression raises the score and cap; a large-bar
+    # approach without compression instead applies a penalty.
+    # Compression always takes priority over the large-bar penalty
+    # when both are true.
+    breakout_context_compression_bonus = 6.0
+    breakout_context_compression_cap = 84.0
+    breakout_context_large_bar_penalty = 4.0
+
     def __init__(self) -> None:
         pass
 
@@ -311,6 +321,13 @@ class DailyLevelsStrategy(BaseStrategy):
     ) -> DailyLevelSetup | None:
         """
         LONG: daily candle closes above previous resistance.
+
+        Compression-aware breakout v1: a confirmed pre-breakout
+        compression (Approach Context v1) reclassifies this as
+        daily_breakout_compression with a score bonus and a raised
+        cap. Absent compression, a large-bar approach instead applies
+        a score penalty. Compression always takes priority over the
+        large-bar penalty when both are true.
         """
 
         close_distance = self._percent_distance(
@@ -338,24 +355,55 @@ class DailyLevelsStrategy(BaseStrategy):
         if close_distance >= 0.5:
             score += 3.0
 
+        setup_type = "daily_breakout"
+        score_cap = 78.0
+        breakout_context = "neutral"
+        breakout_context_score_adjustment = 0.0
+
+        reasons = [
+            "Daily close confirmed above previous resistance.",
+            "Breakout is based only on 1D levels.",
+            "No indicators used.",
+        ]
+
+        if resistance_approach.is_compression:
+            setup_type = "daily_breakout_compression"
+            breakout_context = "compression"
+            breakout_context_score_adjustment = (
+                self.breakout_context_compression_bonus
+            )
+            score += self.breakout_context_compression_bonus
+            score_cap = self.breakout_context_compression_cap
+
+            reasons.append(
+                "Pre-breakout compression confirmed over 4 bars",
+            )
+
+        elif resistance_approach.is_large_bar_approach:
+            breakout_context = "large_bar"
+            breakout_context_score_adjustment = (
+                -self.breakout_context_large_bar_penalty
+            )
+            score -= self.breakout_context_large_bar_penalty
+
+            reasons.append(
+                "Large-bar approach weakens breakout quality",
+            )
+
         score = min(
             score,
-            78.0,
+            score_cap,
         )
 
         return DailyLevelSetup(
             direction="LONG",
-            setup_type="daily_breakout",
+            setup_type=setup_type,
             level_name="daily_resistance",
             level_price=resistance,
             score=score,
-            reasons=[
-                "Daily close confirmed above previous resistance.",
-                "Breakout is based only on 1D levels.",
-                "No indicators used.",
-            ],
+            reasons=reasons,
             metadata=self._metadata(
-                setup_type="daily_breakout",
+                setup_type=setup_type,
                 level_name="daily_resistance",
                 level_price=resistance,
                 support=support,
@@ -368,6 +416,10 @@ class DailyLevelsStrategy(BaseStrategy):
                 support_quality=support_quality,
                 resistance_approach=resistance_approach,
                 support_approach=support_approach,
+                breakout_context=breakout_context,
+                breakout_context_score_adjustment=(
+                    breakout_context_score_adjustment
+                ),
             ),
         )
 
@@ -385,6 +437,13 @@ class DailyLevelsStrategy(BaseStrategy):
     ) -> DailyLevelSetup | None:
         """
         SHORT: daily candle closes below previous support.
+
+        Compression-aware breakout v1: mirrors _detect_breakout_long
+        via support_approach. A confirmed pre-breakdown compression
+        reclassifies this as daily_breakdown_compression with a score
+        bonus and a raised cap. Absent compression, a large-bar
+        approach instead applies a score penalty. Compression always
+        takes priority over the large-bar penalty when both are true.
         """
 
         close_distance = self._percent_distance(
@@ -412,24 +471,55 @@ class DailyLevelsStrategy(BaseStrategy):
         if close_distance >= 0.5:
             score += 3.0
 
+        setup_type = "daily_breakdown"
+        score_cap = 78.0
+        breakout_context = "neutral"
+        breakout_context_score_adjustment = 0.0
+
+        reasons = [
+            "Daily close confirmed below previous support.",
+            "Breakdown is based only on 1D levels.",
+            "No indicators used.",
+        ]
+
+        if support_approach.is_compression:
+            setup_type = "daily_breakdown_compression"
+            breakout_context = "compression"
+            breakout_context_score_adjustment = (
+                self.breakout_context_compression_bonus
+            )
+            score += self.breakout_context_compression_bonus
+            score_cap = self.breakout_context_compression_cap
+
+            reasons.append(
+                "Pre-breakdown compression confirmed over 4 bars",
+            )
+
+        elif support_approach.is_large_bar_approach:
+            breakout_context = "large_bar"
+            breakout_context_score_adjustment = (
+                -self.breakout_context_large_bar_penalty
+            )
+            score -= self.breakout_context_large_bar_penalty
+
+            reasons.append(
+                "Large-bar approach weakens breakdown quality",
+            )
+
         score = min(
             score,
-            78.0,
+            score_cap,
         )
 
         return DailyLevelSetup(
             direction="SHORT",
-            setup_type="daily_breakdown",
+            setup_type=setup_type,
             level_name="daily_support",
             level_price=support,
             score=score,
-            reasons=[
-                "Daily close confirmed below previous support.",
-                "Breakdown is based only on 1D levels.",
-                "No indicators used.",
-            ],
+            reasons=reasons,
             metadata=self._metadata(
-                setup_type="daily_breakdown",
+                setup_type=setup_type,
                 level_name="daily_support",
                 level_price=support,
                 support=support,
@@ -442,6 +532,10 @@ class DailyLevelsStrategy(BaseStrategy):
                 support_quality=support_quality,
                 resistance_approach=resistance_approach,
                 support_approach=support_approach,
+                breakout_context=breakout_context,
+                breakout_context_score_adjustment=(
+                    breakout_context_score_adjustment
+                ),
             ),
         )
 
@@ -519,6 +613,8 @@ class DailyLevelsStrategy(BaseStrategy):
                 support_quality=support_quality,
                 resistance_approach=resistance_approach,
                 support_approach=support_approach,
+                breakout_context="not_applicable",
+                breakout_context_score_adjustment=0.0,
             ),
         )
 
@@ -596,6 +692,8 @@ class DailyLevelsStrategy(BaseStrategy):
                 support_quality=support_quality,
                 resistance_approach=resistance_approach,
                 support_approach=support_approach,
+                breakout_context="not_applicable",
+                breakout_context_score_adjustment=0.0,
             ),
         )
 
@@ -614,6 +712,8 @@ class DailyLevelsStrategy(BaseStrategy):
         support_quality: LevelQuality,
         resistance_approach: LevelApproachContext,
         support_approach: LevelApproachContext,
+        breakout_context: str,
+        breakout_context_score_adjustment: float,
     ) -> dict:
         """
         Build metadata for scan journal and research trade storage.
@@ -669,6 +769,11 @@ class DailyLevelsStrategy(BaseStrategy):
             "approach_context_version": "v1",
             "daily_support_is_compression": support_approach.is_compression,
             "daily_resistance_is_compression": resistance_approach.is_compression,
+            "breakout_context": breakout_context,
+            "breakout_context_score_adjustment": (
+                breakout_context_score_adjustment
+            ),
+            "breakout_context_version": "v1",
         }
 
     def _score_level_quality(

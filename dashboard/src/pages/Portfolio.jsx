@@ -194,6 +194,20 @@ function toFiniteNumber(value) {
 
 
 /**
+ * Relative-tolerance equality, not strict === - float stop/entry
+ * prices coming out of the DB can differ by float noise even when the
+ * trade is conceptually "stopped at breakeven". Scaled by magnitude so
+ * this works the same for a $0.008 TFUELUSDT price and a $977 MUBUSDT
+ * price.
+ */
+function isApproximatelyEqual(a, b) {
+    const scale = Math.max(Math.abs(a), Math.abs(b), 1);
+
+    return Math.abs(a - b) / scale < 1e-6;
+}
+
+
+/**
  * Planned risk block: purely a projection of entry/stop_loss/notional
  * already present on each open trade (active + waiting_entry alike -
  * a waiting trade is planned exposure too). This is NOT a live PnL
@@ -203,12 +217,20 @@ function toFiniteNumber(value) {
  * A trade lands in exactly one bucket:
  * - "without valid SL" when entry_price / stop_loss / notional is
  *   missing, non-numeric, or entry_price is 0 (division guard);
- * - "invalid SL geometry" when all three fields are numeric but the
- *   stop sits on the wrong side of entry for the trade's direction
- *   (LONG needs stop_loss < entry_price, SHORT needs
- *   stop_loss > entry_price) - these are excluded from the risk sum
- *   entirely, per spec, but still counted so nothing is silently
- *   dropped;
+ * - "breakeven stop" when stop_loss ~= entry_price (within relative
+ *   tolerance) - this is a legitimate, valid stop (risk_percent=0,
+ *   risk_amount=0), NOT bad data. It's counted into the average stop
+ *   distance as zero and does count as a "valid" trade, it just adds
+ *   nothing to the risk sum. Distinguishing this from "invalid
+ *   geometry" matters: a stop moved to breakeven is intentional risk
+ *   management, while a stop on the wrong side of entry is data that
+ *   cannot be trusted at all;
+ * - "invalid SL geometry" when the stop sits strictly on the wrong
+ *   side of entry for the trade's direction (LONG needs
+ *   stop_loss < entry_price, SHORT needs stop_loss > entry_price,
+ *   excluding the breakeven case already handled above) - these are
+ *   excluded from the risk sum entirely, per spec, but still counted
+ *   so nothing is silently dropped;
  * - otherwise it contributes risk_percent/risk_amount to the totals.
  */
 function computeRiskSummary(trades) {
@@ -217,6 +239,7 @@ function computeRiskSummary(trades) {
     let validRiskCount = 0;
     let tradesWithoutValidSl = 0;
     let invalidGeometryCount = 0;
+    let breakevenCount = 0;
 
     for (const trade of trades) {
         const entryPrice = toFiniteNumber(trade?.entry_price);
@@ -230,6 +253,17 @@ function computeRiskSummary(trades) {
             || entryPrice === 0
         ) {
             tradesWithoutValidSl += 1;
+            continue;
+        }
+
+        if (isApproximatelyEqual(entryPrice, stopLoss)) {
+            breakevenCount += 1;
+            validRiskCount += 1;
+
+            // risk_percent/risk_amount are both 0 here - explicitly
+            // not added below, but validRiskCount still increments so
+            // this trade pulls the average stop distance toward zero
+            // exactly as the spec asks.
             continue;
         }
 
@@ -269,6 +303,7 @@ function computeRiskSummary(trades) {
         averageStopDistance,
         tradesWithoutValidSl,
         invalidGeometryCount,
+        breakevenCount,
     };
 }
 
@@ -644,6 +679,12 @@ export default function Portfolio() {
                         label="Invalid SL geometry"
                         value={riskSummary.invalidGeometryCount}
                         caption="Stop loss по невірний бік від entry для напрямку"
+                    />
+
+                    <MetricCard
+                        label="Breakeven stop"
+                        value={riskSummary.breakevenCount}
+                        caption="Stop loss ≈ entry price - валідний нульовий ризик"
                     />
                 </Box>
             </Box>

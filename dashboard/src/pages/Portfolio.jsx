@@ -184,6 +184,95 @@ function computeExposureBreakdown(trades) {
 }
 
 
+function toFiniteNumber(value) {
+    const numeric = Number(value);
+
+    return Number.isFinite(numeric)
+        ? numeric
+        : null;
+}
+
+
+/**
+ * Planned risk block: purely a projection of entry/stop_loss/notional
+ * already present on each open trade (active + waiting_entry alike -
+ * a waiting trade is planned exposure too). This is NOT a live PnL
+ * figure - there is no current market price involved anywhere here,
+ * only the trade's own planned entry and stop.
+ *
+ * A trade lands in exactly one bucket:
+ * - "without valid SL" when entry_price / stop_loss / notional is
+ *   missing, non-numeric, or entry_price is 0 (division guard);
+ * - "invalid SL geometry" when all three fields are numeric but the
+ *   stop sits on the wrong side of entry for the trade's direction
+ *   (LONG needs stop_loss < entry_price, SHORT needs
+ *   stop_loss > entry_price) - these are excluded from the risk sum
+ *   entirely, per spec, but still counted so nothing is silently
+ *   dropped;
+ * - otherwise it contributes risk_percent/risk_amount to the totals.
+ */
+function computeRiskSummary(trades) {
+    let totalRisk = 0;
+    let riskPercentSum = 0;
+    let validRiskCount = 0;
+    let tradesWithoutValidSl = 0;
+    let invalidGeometryCount = 0;
+
+    for (const trade of trades) {
+        const entryPrice = toFiniteNumber(trade?.entry_price);
+        const stopLoss = toFiniteNumber(trade?.stop_loss);
+        const notional = toFiniteNumber(trade?.notional);
+
+        if (
+            entryPrice === null
+            || stopLoss === null
+            || notional === null
+            || entryPrice === 0
+        ) {
+            tradesWithoutValidSl += 1;
+            continue;
+        }
+
+        const isShort = normalizeDirection(trade?.direction) === "SHORT";
+
+        const geometryValid = isShort
+            ? stopLoss > entryPrice
+            : stopLoss < entryPrice;
+
+        if (!geometryValid) {
+            invalidGeometryCount += 1;
+            continue;
+        }
+
+        const riskPercent = (
+            Math.abs(entryPrice - stopLoss)
+            / entryPrice
+        ) * 100;
+
+        const riskAmount = (
+            notional
+            * riskPercent
+            / 100
+        );
+
+        totalRisk += riskAmount;
+        riskPercentSum += riskPercent;
+        validRiskCount += 1;
+    }
+
+    const averageStopDistance = validRiskCount > 0
+        ? riskPercentSum / validRiskCount
+        : 0;
+
+    return {
+        totalRisk,
+        averageStopDistance,
+        tradesWithoutValidSl,
+        invalidGeometryCount,
+    };
+}
+
+
 /**
  * Portfolio v1: frontend-only view over currently open Research trades
  * (active + waiting_entry). There is no separate positions table and no
@@ -304,6 +393,11 @@ export default function Portfolio() {
     const netBias = (
         exposureBreakdown.long.notional
         - exposureBreakdown.short.notional
+    );
+
+    const riskSummary = useMemo(
+        () => computeRiskSummary(positions),
+        [positions],
     );
 
     if (loading) {
@@ -446,6 +540,60 @@ export default function Portfolio() {
                         {formatNumber(netBias, 2)}
                     </Typography>
                 </Paper>
+            </Box>
+
+            <Box sx={{ mb: 3, minWidth: 0 }}>
+                <Typography
+                    variant="subtitle1"
+                    fontWeight={600}
+                >
+                    Плановий ризик
+                </Typography>
+
+                <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: "block", mb: 1.5 }}
+                >
+                    Оцінка на основі entry price і stop loss кожної угоди (active
+                    і waiting_entry разом) — не фактичний збиток і не PnL.
+                </Typography>
+
+                <Box
+                    sx={{
+                        display: "grid",
+                        gap: 2,
+                        gridTemplateColumns: {
+                            xs: "1fr",
+                            sm: "repeat(2, minmax(0, 1fr))",
+                            md: "repeat(4, minmax(0, 1fr))",
+                        },
+                    }}
+                >
+                    <MetricCard
+                        label="Total planned risk"
+                        value={formatNumber(riskSummary.totalRisk, 2)}
+                        caption="Сума risk_amount по угодах з коректною SL-геометрією"
+                    />
+
+                    <MetricCard
+                        label="Average stop distance"
+                        value={`${formatNumber(riskSummary.averageStopDistance, 2)}%`}
+                        caption="Середній risk_percent по тих самих угодах"
+                    />
+
+                    <MetricCard
+                        label="Trades without valid SL"
+                        value={riskSummary.tradesWithoutValidSl}
+                        caption="Немає валідних entry_price, stop_loss або notional"
+                    />
+
+                    <MetricCard
+                        label="Invalid SL geometry"
+                        value={riskSummary.invalidGeometryCount}
+                        caption="Stop loss по невірний бік від entry для напрямку"
+                    />
+                </Box>
             </Box>
 
             {positions.length === 0 ? (

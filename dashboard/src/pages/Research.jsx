@@ -501,6 +501,96 @@ function tradeManagementState(trade) {
 }
 
 
+const OUTCOME_TYPE_LABELS = {
+    take_profit: "Take Profit",
+    stop_loss: "Stop Loss",
+    live_stop_loss: "Live Stop Loss",
+    expired_profit: "Expired (у плюсі)",
+    expired_loss: "Expired (у мінусі)",
+    expired_neutral: "Expired (у нулі)",
+    universe_cleanup: "Universe cleanup",
+    invalid_legacy: "Invalid legacy",
+    open_active: "Відкрита",
+    unclassified: "Не класифіковано",
+};
+
+
+function outcomeTypeLabel(outcomeType) {
+    const normalized = String(outcomeType || "").trim().toLowerCase();
+
+    return OUTCOME_TYPE_LABELS[normalized] || outcomeType;
+}
+
+
+function tradeOutcomeBadge(trade) {
+    const group = String(trade?.outcome_group || "").trim().toLowerCase();
+    const type = String(trade?.outcome_type || "").trim().toLowerCase();
+
+    if (!type || type === "open_active" || type === "unclassified") {
+        return null;
+    }
+
+    if (group === "excluded") {
+        return {
+            label: `Excluded · ${outcomeTypeLabel(type)}`,
+            color: "warning",
+            variant: "filled",
+        };
+    }
+
+    if (trade?.is_profitable_expired) {
+        return {
+            label: "Expired +profit",
+            color: "success",
+            variant: "filled",
+        };
+    }
+
+    if (group === "positive") {
+        return {
+            label: outcomeTypeLabel(type),
+            color: "success",
+            variant: "outlined",
+        };
+    }
+
+    if (group === "negative") {
+        return {
+            label: outcomeTypeLabel(type),
+            color: "error",
+            variant: "outlined",
+        };
+    }
+
+    if (group === "neutral") {
+        return {
+            label: outcomeTypeLabel(type),
+            color: "default",
+            variant: "outlined",
+        };
+    }
+
+    return null;
+}
+
+
+function tradeOutcomeTitle(trade) {
+    const parts = [];
+
+    if (trade?.outcome_note) {
+        parts.push(String(trade.outcome_note));
+    }
+
+    if (trade?.outcome_locked) {
+        parts.push("Classification locked");
+    }
+
+    return parts.length > 0
+        ? parts.join(" · ")
+        : undefined;
+}
+
+
 function normalizeDirection(value) {
     return String(value || "LONG").trim().toUpperCase();
 }
@@ -732,13 +822,13 @@ function WorkerStatusPanel({
                     xs: "column",
                     lg: "row",
                 }}
-                justifyContent="space-between"
-                alignItems={{
-                    xs: "flex-start",
-                    lg: "center",
-                }}
                 spacing={1.5}
                 sx={{
+                    justifyContent: "space-between",
+                    alignItems: {
+                        xs: "flex-start",
+                        lg: "center",
+                    },
                     mb: 2,
                 }}
             >
@@ -829,6 +919,8 @@ function TradeCard({
     onOpen,
 }) {
     const managementState = tradeManagementState(trade);
+    const outcomeBadge = tradeOutcomeBadge(trade);
+    const outcomeTitle = outcomeBadge ? tradeOutcomeTitle(trade) : "";
 
     return (
         <Paper
@@ -850,9 +942,9 @@ function TradeCard({
                     direction="row"
                     spacing={1}
                     useFlexGap
-                    flexWrap="wrap"
-                    alignItems="center"
                     sx={{
+                        flexWrap: "wrap",
+                        alignItems: "center",
                         minWidth: 0,
                     }}
                 >
@@ -884,6 +976,16 @@ function TradeCard({
                         variant={managementState.variant}
                         label={managementState.label}
                     />
+
+                    {outcomeBadge && (
+                        <Chip
+                            size="small"
+                            color={outcomeBadge.color}
+                            variant={outcomeBadge.variant}
+                            label={outcomeBadge.label}
+                            title={outcomeTitle}
+                        />
+                    )}
 
                     <Chip
                         size="small"
@@ -1118,8 +1220,10 @@ function TradeSection({
                     <Stack
                         direction="row"
                         spacing={1}
-                        alignItems="center"
-                        flexWrap="wrap"
+                        sx={{
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                        }}
                     >
                         <Typography
                             variant="h6"
@@ -1483,13 +1587,13 @@ export default function Research() {
                     xs: "column",
                     md: "row",
                 }}
-                justifyContent="space-between"
-                alignItems={{
-                    xs: "flex-start",
-                    md: "center",
-                }}
                 spacing={2}
                 sx={{
+                        justifyContent: "space-between",
+                        alignItems: {
+                            xs: "flex-start",
+                            md: "center",
+                        },
                         position: "relative",
                         width: "100%",
                         pr: { md: 24 },
@@ -1629,13 +1733,13 @@ export default function Research() {
                         xs: "column",
                         md: "row",
                     }}
-                    justifyContent="space-between"
-                    alignItems={{
-                        xs: "flex-start",
-                        md: "center",
-                    }}
                     spacing={2}
                     sx={{
+                        justifyContent: "space-between",
+                        alignItems: {
+                            xs: "flex-start",
+                            md: "center",
+                        },
                         mb: 2,
                     }}
                 >
@@ -1673,12 +1777,12 @@ export default function Research() {
                     }}
                     spacing={1.5}
                     useFlexGap
-                    flexWrap="wrap"
-                    alignItems={{
-                        xs: "stretch",
-                        sm: "center",
-                    }}
                     sx={{
+                        flexWrap: "wrap",
+                        alignItems: {
+                            xs: "stretch",
+                            sm: "center",
+                        },
                         mb: 2,
                     }}
                 >
@@ -1972,9 +2076,9 @@ export default function Research() {
                                         direction="row"
                                         spacing={1}
                                         useFlexGap
-                                        flexWrap="wrap"
-                                        alignItems="center"
                                         sx={{
+                                            flexWrap: "wrap",
+                                            alignItems: "center",
                                             mb: 2,
                                         }}
                                     >

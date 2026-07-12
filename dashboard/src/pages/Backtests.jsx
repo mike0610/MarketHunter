@@ -81,7 +81,7 @@ export default function Backtests() {
             >
                 <Stack
                     spacing={2}
-                    alignItems="flex-start"
+                    sx={{ alignItems: "flex-start" }}
                 >
                     <Typography
                         variant="h6"

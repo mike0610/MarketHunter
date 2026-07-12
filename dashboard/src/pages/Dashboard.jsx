@@ -246,12 +246,14 @@ export default function Dashboard() {
                         xs: "column",
                         sm: "row",
                     }}
-                    justifyContent="space-between"
-                    alignItems={{
-                        xs: "flex-start",
-                        sm: "center",
-                    }}
                     spacing={2}
+                    sx={{
+                        justifyContent: "space-between",
+                        alignItems: {
+                            xs: "flex-start",
+                            sm: "center",
+                        },
+                    }}
                 >
                     <Box>
                         <Typography
@@ -462,8 +464,10 @@ export default function Dashboard() {
                         <Stack
                             direction="row"
                             spacing={1.5}
-                            alignItems="center"
-                            sx={{ mb: 1 }}
+                            sx={{
+                                alignItems: "center",
+                                mb: 1,
+                            }}
                         >
                             {link.icon}
 

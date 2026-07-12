@@ -28,13 +28,13 @@ export default function PageHeader({
                 xs: "column",
                 md: "row",
             }}
-            justifyContent="space-between"
-            alignItems={{
-                xs: "flex-start",
-                md: "center",
-            }}
             spacing={2}
             sx={{
+                justifyContent: "space-between",
+                alignItems: {
+                    xs: "flex-start",
+                    md: "center",
+                },
                 width: "100%",
                 mb: 3,
             }}

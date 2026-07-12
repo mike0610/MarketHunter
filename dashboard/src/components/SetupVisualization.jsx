@@ -366,8 +366,10 @@ function TargetCard({
                 <Stack
                     direction="row"
                     spacing={1}
-                    alignItems="center"
-                    justifyContent="space-between"
+                    sx={{
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                    }}
                 >
                     <Typography
                         variant="body2"
@@ -421,10 +423,12 @@ function ZoneCard({
                 <Stack
                     direction="row"
                     spacing={1}
-                    alignItems="center"
-                    justifyContent="space-between"
-                    flexWrap="wrap"
                     useFlexGap
+                    sx={{
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        flexWrap: "wrap",
+                    }}
                 >
                     <Chip
                         size="small"
@@ -452,8 +456,10 @@ function ZoneCard({
                 <Stack
                     direction="row"
                     spacing={2}
-                    flexWrap="wrap"
                     useFlexGap
+                    sx={{
+                        flexWrap: "wrap",
+                    }}
                 >
                     <Typography
                         variant="caption"
@@ -552,10 +558,12 @@ export default function SetupVisualization({
                         sm: "row",
                     }}
                     spacing={1}
-                    justifyContent="space-between"
-                    alignItems={{
-                        xs: "flex-start",
-                        sm: "center",
+                    sx={{
+                        justifyContent: "space-between",
+                        alignItems: {
+                            xs: "flex-start",
+                            sm: "center",
+                        },
                     }}
                 >
                     <Box>
@@ -578,8 +586,10 @@ export default function SetupVisualization({
                     <Stack
                         direction="row"
                         spacing={1}
-                        flexWrap="wrap"
                         useFlexGap
+                        sx={{
+                            flexWrap: "wrap",
+                        }}
                     >
                         <Chip
                             size="small"
@@ -698,8 +708,8 @@ export default function SetupVisualization({
 
                     <Stack
                         direction="row"
-                        justifyContent="space-between"
                         sx={{
+                            justifyContent: "space-between",
                             mt: 1,
                         }}
                     >
@@ -732,8 +742,10 @@ export default function SetupVisualization({
                     <Stack
                         direction="row"
                         spacing={1}
-                        flexWrap="wrap"
                         useFlexGap
+                        sx={{
+                            flexWrap: "wrap",
+                        }}
                     >
                         {targets.map((target) => (
                             <TargetCard
@@ -751,8 +763,8 @@ export default function SetupVisualization({
                     <Stack
                         direction="row"
                         spacing={1}
-                        alignItems="center"
                         sx={{
+                            alignItems: "center",
                             mb: 1,
                         }}
                     >
@@ -795,8 +807,8 @@ export default function SetupVisualization({
                     <Stack
                         direction="row"
                         spacing={1}
-                        alignItems="center"
                         sx={{
+                            alignItems: "center",
                             mb: 1,
                         }}
                     >

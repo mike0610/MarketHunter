@@ -73,6 +73,10 @@ class DailyLevelsMtfConfirmationTests(unittest.IsolatedAsyncioTestCase):
             snapshot, entry_candles=entry_candles,
         )
 
+        plain_signal = await self.strategy.analyze(
+            make_snapshot(build_candles(signal_candle)),
+        )
+
         self.assertIsNotNone(signal)
         self.assertEqual(signal.metadata["setup_type"], "daily_breakout")
         self.assertEqual(
@@ -84,9 +88,14 @@ class DailyLevelsMtfConfirmationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             signal.metadata["mtf_entry_confirmation_is_confirmed"],
         )
-        self.assertFalse(
+        # MTF Confirmation Bonus v1: a confirmed context now actually
+        # applies a +4 bonus, so mtf_entry_confirmation_applied is
+        # True here (it means "bonus really added" as of this task,
+        # not merely "confirmation was observed").
+        self.assertTrue(
             signal.metadata["mtf_entry_confirmation_applied"],
         )
+        self.assertEqual(signal.score, plain_signal.score + 4)
 
     async def test_long_breakout_confirms_via_retest_hold(self) -> None:
         """
@@ -438,13 +447,15 @@ class DailyLevelsMtfConfirmationTests(unittest.IsolatedAsyncioTestCase):
             confirmation_candle.open_time.isoformat(),
         )
 
-    async def test_confirmation_does_not_change_direction_score_or_reasons(
+    async def test_unconfirmed_context_does_not_change_direction_score_or_reasons(
         self,
     ) -> None:
         """
-        Attaching mtf_entry_confirmation_* metadata never changes
-        direction, score, setup_type, or reasons versus a plain
-        analyze() call on the same snapshot.
+        An unconfirmed context (weak close, fails the decisive-candle
+        check) never changes direction, score, setup_type, or reasons
+        versus a plain analyze() call on the same snapshot - only a
+        confirmed context adds the MTF Confirmation Bonus v1 +4 (see
+        test_long_breakout_confirms_via_breakout_close for that case).
         """
 
         signal_candle = make_candle(
@@ -458,8 +469,11 @@ class DailyLevelsMtfConfirmationTests(unittest.IsolatedAsyncioTestCase):
 
         entry_candles = [
             flat_candle(100.5, day_index=100),
-            make_candle(99.95, 100.40, 99.90, 100.30, day_index=101),
-            flat_candle(100.30, day_index=102),
+            # close < open - fails the decisive-LONG check, so this
+            # support bounce does NOT confirm despite an otherwise
+            # in-tolerance low.
+            make_candle(100.30, 100.40, 99.90, 100.10, day_index=101),
+            flat_candle(100.10, day_index=102),
         ]
 
         mtf_signal = await self.strategy.analyze_with_entry_candles(
@@ -468,6 +482,12 @@ class DailyLevelsMtfConfirmationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(plain_signal)
         self.assertIsNotNone(mtf_signal)
+        self.assertFalse(
+            mtf_signal.metadata["mtf_entry_confirmation_is_confirmed"],
+        )
+        self.assertFalse(
+            mtf_signal.metadata["mtf_entry_confirmation_applied"],
+        )
         self.assertEqual(mtf_signal.direction, plain_signal.direction)
         self.assertEqual(mtf_signal.score, plain_signal.score)
         self.assertEqual(

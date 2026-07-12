@@ -247,6 +247,12 @@ class DailyLevelsStrategy(BaseStrategy):
         "daily_false_breakdown_confirmed": "false_break_reclaim",
     }
 
+    # MTF Confirmation Bonus v1 - a confirmed 1h entry context adds
+    # this small, capped bonus to the daily signal's score. No
+    # penalty exists for an unconfirmed/insufficient context: the
+    # score simply stays unchanged.
+    _MTF_ENTRY_CONFIRMATION_BONUS = 4
+
     def __init__(self) -> None:
         pass
 
@@ -463,6 +469,18 @@ class DailyLevelsStrategy(BaseStrategy):
         before anything else - including confirmation scoring - ever
         sees it. Pre-close 1h candles can never confirm a daily
         setup that hadn't closed yet.
+
+        MTF Confirmation Bonus v1: a confirmed 1h context adds a
+        small, capped bonus to signal.score; anything else (weak
+        context, insufficient_data, unknown setup, empty aligned
+        list) leaves the score untouched. direction/setup_type/
+        reasons are never affected either way.
+
+        Order of operations matters here: the daily signal, then
+        alignment, then confirmation are all resolved first; only
+        then is base_score captured and the bonus applied, and only
+        after signal.score is final does every mtf_* metadata field
+        get written in one place.
         """
 
         signal = await self.analyze(snapshot)
@@ -480,6 +498,21 @@ class DailyLevelsStrategy(BaseStrategy):
         )
 
         aligned_entry_candle_count = len(aligned_entry_candles)
+
+        confirmation = self._score_mtf_entry_confirmation(
+            signal, aligned_entry_candles,
+        )
+
+        base_score = signal.score
+
+        score_delta, final_score, confirmation_applied = (
+            self._apply_mtf_confirmation_bonus(
+                base_score,
+                confirmation.is_confirmed,
+            )
+        )
+
+        signal.score = final_score
 
         signal.metadata["mtf_context_version"] = "v1"
         signal.metadata["mtf_primary_timeframe"] = "1d"
@@ -504,10 +537,6 @@ class DailyLevelsStrategy(BaseStrategy):
         )
         signal.metadata["mtf_entry_discarded_candle_count"] = (
             raw_entry_candle_count - aligned_entry_candle_count
-        )
-
-        confirmation = self._score_mtf_entry_confirmation(
-            signal, aligned_entry_candles,
         )
 
         signal.metadata["mtf_entry_expected_pattern"] = (
@@ -547,10 +576,28 @@ class DailyLevelsStrategy(BaseStrategy):
         )
         signal.metadata["mtf_entry_confirmation_version"] = "v1"
 
-        # Purely observational in v1: this stays False regardless of
-        # confirmation.is_confirmed above - nothing yet acts on this
-        # context.
-        signal.metadata["mtf_entry_confirmation_applied"] = False
+        signal.metadata["mtf_entry_confirmation_policy_version"] = (
+            "bonus_v1"
+        )
+        signal.metadata["mtf_entry_confirmation_base_score"] = (
+            base_score
+        )
+        signal.metadata["mtf_entry_confirmation_score_delta"] = (
+            score_delta
+        )
+        signal.metadata["mtf_entry_confirmation_final_score"] = (
+            final_score
+        )
+
+        # True only when the bonus actually changed signal.score off
+        # base_score - not just whenever confirmation.is_confirmed is
+        # True (guards the 100-point cap: a base_score already at or
+        # above 100 would leave final_score == base_score even though
+        # confirmed; unreachable with any current setup's own scoring
+        # today, but not assumed impossible here).
+        signal.metadata["mtf_entry_confirmation_applied"] = (
+            confirmation_applied
+        )
 
         return signal
 
@@ -2057,6 +2104,39 @@ class DailyLevelsStrategy(BaseStrategy):
             for candle in entry_candles
             if candle.open_time > daily_close_time
         ]
+
+    def _apply_mtf_confirmation_bonus(
+        self,
+        base_score: float,
+        is_confirmed: bool,
+    ) -> tuple[float, float, bool]:
+        """
+        MTF Confirmation Bonus v1.
+
+        Returns (score_delta, final_score, applied):
+        - score_delta is the nominal bonus decision -
+          _MTF_ENTRY_CONFIRMATION_BONUS when is_confirmed, else 0.
+          Never negative - an unconfirmed/insufficient context never
+          penalizes the score, it just leaves it alone.
+        - final_score is base_score + score_delta, capped at 100.
+        - applied is True only when final_score actually differs from
+          base_score (guards the cap: a base_score already at or
+          above 100 would leave final_score == base_score even when
+          is_confirmed is True).
+        """
+
+        score_delta = (
+            self._MTF_ENTRY_CONFIRMATION_BONUS if is_confirmed else 0
+        )
+
+        final_score = min(
+            100,
+            base_score + score_delta,
+        )
+
+        applied = final_score != base_score
+
+        return score_delta, final_score, applied
 
     def _score_mtf_entry_confirmation(
         self,

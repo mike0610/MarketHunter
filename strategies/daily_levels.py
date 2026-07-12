@@ -105,6 +105,37 @@ class FalseBreakContext:
     is_confirmed: bool
 
 
+@dataclass(frozen=True)
+class MTFEntryConfirmation:
+    """
+    1D level -> 1h Confirmation Context v1 - result of checking
+    whether the last two CLOSED entry-timeframe (1h) candles confirm
+    the daily setup that just fired.
+
+    entry_candles[-2] is treated as the confirmation candle and
+    entry_candles[-3] as the prior candle; the most recent
+    entry_candles[-1] is treated as potentially unclosed and is
+    never read.
+
+    This context is observation-only in v1: it never blocks a
+    signal, never changes direction/score/setup_type/reasons, and
+    Signal.metadata["mtf_entry_confirmation_applied"] stays False
+    regardless of is_confirmed here.
+    """
+
+    expected_pattern: str
+    confirmation_type: str
+    analyzed_candle_count: int
+    is_confirmed: bool
+    touched_level: bool
+    crossed_level: bool
+    retested_level: bool
+    penetration_percent: float
+    distance_from_level_percent: float
+    close_position_percent: float
+    confirmation_candle_open_time: object | None
+
+
 class DailyLevelsStrategy(BaseStrategy):
     """
     Daily levels strategy.
@@ -193,6 +224,28 @@ class DailyLevelsStrategy(BaseStrategy):
     # No trading logic reads entry_candles yet.
     entry_timeframe = "1h"
     entry_candle_limit = 200
+
+    # 1D level -> 1h Confirmation Context v1 - observation-only
+    # scoring of whether the last two CLOSED 1h entry candles confirm
+    # the daily setup. Never blocks a signal, never changes its
+    # direction/score/setup_type/reasons.
+    mtf_confirmation_tolerance_percent = 0.15
+    mtf_confirmation_breakout_threshold_percent = 0.05
+    mtf_confirmation_close_position_long_percent = 60.0
+    mtf_confirmation_close_position_short_percent = 40.0
+
+    _MTF_EXPECTED_PATTERN_BY_SETUP_TYPE = {
+        "daily_breakout": "continuation",
+        "daily_breakout_compression": "continuation",
+        "daily_breakdown": "continuation",
+        "daily_breakdown_compression": "continuation",
+        "daily_support_bounce": "bounce",
+        "daily_resistance_bounce": "bounce",
+        "daily_false_breakout": "false_break_reclaim",
+        "daily_false_breakout_confirmed": "false_break_reclaim",
+        "daily_false_breakdown": "false_break_reclaim",
+        "daily_false_breakdown_confirmed": "false_break_reclaim",
+    }
 
     def __init__(self) -> None:
         pass
@@ -419,6 +472,49 @@ class DailyLevelsStrategy(BaseStrategy):
         signal.metadata["mtf_entry_data_available"] = (
             entry_candle_count > 0
         )
+
+        confirmation = self._score_mtf_entry_confirmation(
+            signal, entry_candles,
+        )
+
+        signal.metadata["mtf_entry_expected_pattern"] = (
+            confirmation.expected_pattern
+        )
+        signal.metadata["mtf_entry_confirmation_type"] = (
+            confirmation.confirmation_type
+        )
+        signal.metadata["mtf_entry_confirmation_is_confirmed"] = (
+            confirmation.is_confirmed
+        )
+        signal.metadata["mtf_entry_confirmation_analyzed_candles"] = (
+            confirmation.analyzed_candle_count
+        )
+        signal.metadata["mtf_entry_confirmation_touched_level"] = (
+            confirmation.touched_level
+        )
+        signal.metadata["mtf_entry_confirmation_crossed_level"] = (
+            confirmation.crossed_level
+        )
+        signal.metadata["mtf_entry_confirmation_retested_level"] = (
+            confirmation.retested_level
+        )
+        signal.metadata[
+            "mtf_entry_confirmation_penetration_percent"
+        ] = confirmation.penetration_percent
+        signal.metadata["mtf_entry_confirmation_distance_percent"] = (
+            confirmation.distance_from_level_percent
+        )
+        signal.metadata[
+            "mtf_entry_confirmation_close_position_percent"
+        ] = confirmation.close_position_percent
+        signal.metadata["mtf_entry_confirmation_candle_open_time"] = (
+            confirmation.confirmation_candle_open_time
+        )
+        signal.metadata["mtf_entry_confirmation_version"] = "v1"
+
+        # Purely observational in v1: this stays False regardless of
+        # confirmation.is_confirmed above - nothing yet acts on this
+        # context.
         signal.metadata["mtf_entry_confirmation_applied"] = False
 
         return signal
@@ -1903,6 +1999,318 @@ class DailyLevelsStrategy(BaseStrategy):
             close_position_percent=close_position_percent,
             is_confirmed=is_confirmed,
         )
+
+    def _score_mtf_entry_confirmation(
+        self,
+        signal: Signal,
+        entry_candles: list[Candle],
+    ) -> MTFEntryConfirmation:
+        """
+        1D level -> 1h Confirmation Context v1.
+
+        Reads only the last two CLOSED entry-timeframe candles:
+        entry_candles[-2] as the confirmation candle and
+        entry_candles[-3] as the prior candle. entry_candles[-1] is
+        treated as potentially unclosed and is never read.
+
+        Fewer than three entry candles means there is no closed
+        confirmation candle to read yet, so this returns
+        confirmation_type="insufficient_data" without raising.
+        """
+
+        setup_type = signal.metadata["setup_type"]
+        expected_pattern = self._MTF_EXPECTED_PATTERN_BY_SETUP_TYPE.get(
+            setup_type, "unknown",
+        )
+
+        if len(entry_candles) < 3:
+            return MTFEntryConfirmation(
+                expected_pattern=expected_pattern,
+                confirmation_type="insufficient_data",
+                analyzed_candle_count=len(entry_candles),
+                is_confirmed=False,
+                touched_level=False,
+                crossed_level=False,
+                retested_level=False,
+                penetration_percent=0.0,
+                distance_from_level_percent=0.0,
+                close_position_percent=0.0,
+                confirmation_candle_open_time=None,
+            )
+
+        level = signal.metadata["level_price"]
+        last_candle = entry_candles[-2]
+        previous_candle = entry_candles[-3]
+
+        if last_candle.high <= last_candle.low:
+            close_position_percent = 50.0
+        else:
+            close_position_percent = (
+                (last_candle.close - last_candle.low)
+                / (last_candle.high - last_candle.low)
+                * 100
+            )
+
+        is_decisive_long = (
+            last_candle.close > last_candle.open
+            and close_position_percent
+            >= self.mtf_confirmation_close_position_long_percent
+        )
+        is_decisive_short = (
+            last_candle.close < last_candle.open
+            and close_position_percent
+            <= self.mtf_confirmation_close_position_short_percent
+        )
+
+        touched_level, crossed_level, retested_level = (
+            self._mtf_level_interaction_flags(
+                level, previous_candle, last_candle, signal.direction,
+            )
+        )
+
+        if signal.direction == "SHORT":
+            penetration_percent = (
+                (last_candle.high - level) / level * 100
+            )
+        else:
+            penetration_percent = (
+                (level - last_candle.low) / level * 100
+            )
+
+        distance_from_level_percent = self._percent_distance(
+            last_candle.close, level,
+        )
+
+        if expected_pattern == "continuation":
+            confirmation_type, is_confirmed = (
+                self._score_continuation_confirmation(
+                    signal.direction,
+                    level,
+                    previous_candle,
+                    last_candle,
+                    is_decisive_long,
+                    is_decisive_short,
+                )
+            )
+        elif expected_pattern == "bounce":
+            confirmation_type, is_confirmed = (
+                self._score_bounce_confirmation(
+                    signal.direction,
+                    level,
+                    last_candle,
+                    is_decisive_long,
+                    is_decisive_short,
+                )
+            )
+        elif expected_pattern == "false_break_reclaim":
+            confirmation_type, is_confirmed = (
+                self._score_false_break_reclaim_confirmation(
+                    signal.direction,
+                    level,
+                    last_candle,
+                    is_decisive_long,
+                    is_decisive_short,
+                )
+            )
+        else:
+            confirmation_type = "unsupported_setup"
+            is_confirmed = False
+
+        return MTFEntryConfirmation(
+            expected_pattern=expected_pattern,
+            confirmation_type=confirmation_type,
+            analyzed_candle_count=2,
+            is_confirmed=is_confirmed,
+            touched_level=touched_level,
+            crossed_level=crossed_level,
+            retested_level=retested_level,
+            penetration_percent=penetration_percent,
+            distance_from_level_percent=distance_from_level_percent,
+            close_position_percent=close_position_percent,
+            confirmation_candle_open_time=last_candle.open_time,
+        )
+
+    def _score_continuation_confirmation(
+        self,
+        direction: str,
+        level: float,
+        previous_candle: Candle,
+        last_candle: Candle,
+        is_decisive_long: bool,
+        is_decisive_short: bool,
+    ) -> tuple[str, bool]:
+        """
+        LONG breakout confirms via breakout_close (a decisive close
+        clearing the level by the 0.05% threshold) or retest_hold (a
+        decisive close holding above the level after dipping back
+        into the 0.15% tolerance band). SHORT breakdown mirrors both
+        below the level.
+        """
+
+        tolerance = self.mtf_confirmation_tolerance_percent
+        breakout_threshold = (
+            self.mtf_confirmation_breakout_threshold_percent
+        )
+
+        if direction == "LONG":
+            breakout_close = (
+                previous_candle.close <= level
+                and last_candle.close
+                > self._above_level(level, breakout_threshold)
+                and is_decisive_long
+            )
+
+            if breakout_close:
+                return "breakout_close", True
+
+            retest_hold = (
+                previous_candle.close > level
+                and last_candle.low
+                <= self._above_level(level, tolerance)
+                and last_candle.close > level
+                and is_decisive_long
+            )
+
+            if retest_hold:
+                return "retest_hold_long", True
+
+            return "breakout_close", False
+
+        breakdown_close = (
+            previous_candle.close >= level
+            and last_candle.close
+            < self._below_level(level, breakout_threshold)
+            and is_decisive_short
+        )
+
+        if breakdown_close:
+            return "breakdown_close", True
+
+        retest_hold = (
+            previous_candle.close < level
+            and last_candle.high
+            >= self._below_level(level, tolerance)
+            and last_candle.close < level
+            and is_decisive_short
+        )
+
+        if retest_hold:
+            return "retest_hold_short", True
+
+        return "breakdown_close", False
+
+    def _score_bounce_confirmation(
+        self,
+        direction: str,
+        level: float,
+        last_candle: Candle,
+        is_decisive_long: bool,
+        is_decisive_short: bool,
+    ) -> tuple[str, bool]:
+        """
+        A support/resistance bounce confirms when the confirmation
+        candle's touch stays inside the 0.15% tolerance band, closes
+        back on the setup's side of the level, and closes decisively.
+        """
+
+        tolerance = self.mtf_confirmation_tolerance_percent
+
+        if direction == "LONG":
+            is_confirmed = (
+                self._below_level(level, tolerance)
+                <= last_candle.low
+                <= self._above_level(level, tolerance)
+                and last_candle.close > level
+                and is_decisive_long
+            )
+
+            return "support_rejection", is_confirmed
+
+        is_confirmed = (
+            self._below_level(level, tolerance)
+            <= last_candle.high
+            <= self._above_level(level, tolerance)
+            and last_candle.close < level
+            and is_decisive_short
+        )
+
+        return "resistance_rejection", is_confirmed
+
+    def _score_false_break_reclaim_confirmation(
+        self,
+        direction: str,
+        level: float,
+        last_candle: Candle,
+        is_decisive_long: bool,
+        is_decisive_short: bool,
+    ) -> tuple[str, bool]:
+        """
+        A false breakout/breakdown reclaim confirms when the
+        confirmation candle pierces past the level intraday but
+        closes back on the other side of it, decisively.
+        """
+
+        if direction == "SHORT":
+            is_confirmed = (
+                last_candle.high > level
+                and last_candle.close < level
+                and is_decisive_short
+            )
+
+            return "false_breakout_reclaim", is_confirmed
+
+        is_confirmed = (
+            last_candle.low < level
+            and last_candle.close > level
+            and is_decisive_long
+        )
+
+        return "false_breakdown_reclaim", is_confirmed
+
+    @staticmethod
+    def _mtf_level_interaction_flags(
+        level: float,
+        previous_candle: Candle,
+        last_candle: Candle,
+        direction: str,
+    ) -> tuple[bool, bool, bool]:
+        """
+        General-purpose level-interaction flags for the confirmation
+        candle, read from the side of the level that `direction`
+        cares about (LONG watches the low approaching from above,
+        SHORT watches the high approaching from below):
+        - touched_level: the confirmation candle's relevant side came
+          within the 0.15% tolerance band of the level;
+        - crossed_level: the raw level sits inside the confirmation
+          candle's high-low range (the level was pierced intracandle);
+        - retested_level: the prior candle had already closed beyond
+          the level in `direction`'s favor, and the confirmation
+          candle's relevant side came back within the 0.15% tolerance
+          band - a genuine retest, not just an initial break.
+        """
+
+        tolerance = DailyLevelsStrategy.mtf_confirmation_tolerance_percent
+
+        if direction == "LONG":
+            touched_level = (
+                last_candle.low
+                <= DailyLevelsStrategy._above_level(level, tolerance)
+            )
+            retested_level = (
+                previous_candle.close > level and touched_level
+            )
+        else:
+            touched_level = (
+                last_candle.high
+                >= DailyLevelsStrategy._below_level(level, tolerance)
+            )
+            retested_level = (
+                previous_candle.close < level and touched_level
+            )
+
+        crossed_level = last_candle.low <= level <= last_candle.high
+
+        return touched_level, crossed_level, retested_level
 
     @staticmethod
     def _above_level(

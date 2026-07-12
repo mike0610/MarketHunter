@@ -84,6 +84,27 @@ class LevelApproachContext:
     is_large_bar_approach: bool
 
 
+@dataclass(frozen=True)
+class FalseBreakContext:
+    """
+    Confirmed false breakout v2 - result of scoring how decisively a
+    false breakout/false breakdown candle rejected the level: how far
+    it pierced past the level (penetration), how far the close
+    reclaimed back inside the level (reclaim), and where the close
+    sits within the candle's own high-low range (close_position).
+
+    Not every legacy false break is equally good: a confirmed one
+    needs a real penetration, a real reclaim, and a decisive close in
+    the direction of the rejection. A false break that fails
+    confirmation still fires under the legacy setup_type, unchanged.
+    """
+
+    penetration_percent: float
+    reclaim_percent: float
+    close_position_percent: float
+    is_confirmed: bool
+
+
 class DailyLevelsStrategy(BaseStrategy):
     """
     Daily levels strategy.
@@ -134,6 +155,17 @@ class DailyLevelsStrategy(BaseStrategy):
     breakout_context_compression_bonus = 6.0
     breakout_context_compression_cap = 84.0
     breakout_context_large_bar_penalty = 4.0
+
+    # Confirmed false breakout v2 - a confirmed false break needs a
+    # real penetration past the level, a real reclaim back inside it,
+    # and a decisive close in the rejection direction. A legacy false
+    # break that fails confirmation still fires unchanged (weak).
+    false_break_min_penetration_percent = 0.15
+    false_break_min_reclaim_percent = 0.10
+    false_break_max_close_position_percent = 40.0
+    false_break_min_close_position_percent = 60.0
+    false_break_confirmed_bonus = 6.0
+    false_break_confirmed_cap = 85.0
 
     def __init__(self) -> None:
         pass
@@ -420,6 +452,11 @@ class DailyLevelsStrategy(BaseStrategy):
                 breakout_context_score_adjustment=(
                     breakout_context_score_adjustment
                 ),
+                false_break_context="not_applicable",
+                false_break_penetration_percent=0.0,
+                false_break_reclaim_percent=0.0,
+                false_break_close_position_percent=0.0,
+                false_break_score_adjustment=0.0,
             ),
         )
 
@@ -536,6 +573,11 @@ class DailyLevelsStrategy(BaseStrategy):
                 breakout_context_score_adjustment=(
                     breakout_context_score_adjustment
                 ),
+                false_break_context="not_applicable",
+                false_break_penetration_percent=0.0,
+                false_break_reclaim_percent=0.0,
+                false_break_close_position_percent=0.0,
+                false_break_score_adjustment=0.0,
             ),
         )
 
@@ -553,6 +595,13 @@ class DailyLevelsStrategy(BaseStrategy):
     ) -> DailyLevelSetup | None:
         """
         SHORT: price sweeps resistance but daily candle closes back below it.
+
+        Confirmed false breakout v2: a decisive rejection (real
+        penetration past resistance, real reclaim back below it, and
+        a close in the lower part of the candle) reclassifies this as
+        daily_false_breakout_confirmed with a score bonus and a
+        raised cap. A legacy false breakout that fails confirmation
+        still fires as daily_false_breakout, unchanged.
         """
 
         sweep_distance = self._percent_distance(
@@ -583,24 +632,48 @@ class DailyLevelsStrategy(BaseStrategy):
         if sweep_distance >= 0.5:
             score += 2.0
 
+        setup_type = "daily_false_breakout"
+        score_cap = 79.0
+        false_break_context = "weak"
+        false_break_score_adjustment = 0.0
+
+        reasons = [
+            "Daily candle swept previous resistance and closed back below it.",
+            "False breakout is confirmed by daily close.",
+            "No indicators used.",
+        ]
+
+        false_break = self._score_false_break_confirmation(
+            signal_candle=signal_candle,
+            level_price=resistance,
+            level_side="resistance",
+        )
+
+        if false_break.is_confirmed:
+            setup_type = "daily_false_breakout_confirmed"
+            score_cap = self.false_break_confirmed_cap
+            false_break_context = "confirmed"
+            false_break_score_adjustment = self.false_break_confirmed_bonus
+            score += self.false_break_confirmed_bonus
+
+            reasons.append(
+                "False breakout confirmed by decisive close below resistance",
+            )
+
         score = min(
             score,
-            79.0,
+            score_cap,
         )
 
         return DailyLevelSetup(
             direction="SHORT",
-            setup_type="daily_false_breakout",
+            setup_type=setup_type,
             level_name="daily_resistance",
             level_price=resistance,
             score=score,
-            reasons=[
-                "Daily candle swept previous resistance and closed back below it.",
-                "False breakout is confirmed by daily close.",
-                "No indicators used.",
-            ],
+            reasons=reasons,
             metadata=self._metadata(
-                setup_type="daily_false_breakout",
+                setup_type=setup_type,
                 level_name="daily_resistance",
                 level_price=resistance,
                 support=support,
@@ -615,6 +688,15 @@ class DailyLevelsStrategy(BaseStrategy):
                 support_approach=support_approach,
                 breakout_context="not_applicable",
                 breakout_context_score_adjustment=0.0,
+                false_break_context=false_break_context,
+                false_break_penetration_percent=(
+                    false_break.penetration_percent
+                ),
+                false_break_reclaim_percent=false_break.reclaim_percent,
+                false_break_close_position_percent=(
+                    false_break.close_position_percent
+                ),
+                false_break_score_adjustment=false_break_score_adjustment,
             ),
         )
 
@@ -632,6 +714,14 @@ class DailyLevelsStrategy(BaseStrategy):
     ) -> DailyLevelSetup | None:
         """
         LONG: price sweeps support but daily candle closes back above it.
+
+        Confirmed false breakout v2: mirrors _detect_false_breakout_short.
+        A decisive rejection (real penetration past support, real
+        reclaim back above it, and a close in the upper part of the
+        candle) reclassifies this as daily_false_breakdown_confirmed
+        with a score bonus and a raised cap. A legacy false breakdown
+        that fails confirmation still fires as daily_false_breakdown,
+        unchanged.
         """
 
         sweep_distance = self._percent_distance(
@@ -662,24 +752,48 @@ class DailyLevelsStrategy(BaseStrategy):
         if sweep_distance >= 0.5:
             score += 2.0
 
+        setup_type = "daily_false_breakdown"
+        score_cap = 79.0
+        false_break_context = "weak"
+        false_break_score_adjustment = 0.0
+
+        reasons = [
+            "Daily candle swept previous support and closed back above it.",
+            "False breakdown is confirmed by daily close.",
+            "No indicators used.",
+        ]
+
+        false_break = self._score_false_break_confirmation(
+            signal_candle=signal_candle,
+            level_price=support,
+            level_side="support",
+        )
+
+        if false_break.is_confirmed:
+            setup_type = "daily_false_breakdown_confirmed"
+            score_cap = self.false_break_confirmed_cap
+            false_break_context = "confirmed"
+            false_break_score_adjustment = self.false_break_confirmed_bonus
+            score += self.false_break_confirmed_bonus
+
+            reasons.append(
+                "False breakdown confirmed by decisive close above support",
+            )
+
         score = min(
             score,
-            79.0,
+            score_cap,
         )
 
         return DailyLevelSetup(
             direction="LONG",
-            setup_type="daily_false_breakdown",
+            setup_type=setup_type,
             level_name="daily_support",
             level_price=support,
             score=score,
-            reasons=[
-                "Daily candle swept previous support and closed back above it.",
-                "False breakdown is confirmed by daily close.",
-                "No indicators used.",
-            ],
+            reasons=reasons,
             metadata=self._metadata(
-                setup_type="daily_false_breakdown",
+                setup_type=setup_type,
                 level_name="daily_support",
                 level_price=support,
                 support=support,
@@ -694,6 +808,15 @@ class DailyLevelsStrategy(BaseStrategy):
                 support_approach=support_approach,
                 breakout_context="not_applicable",
                 breakout_context_score_adjustment=0.0,
+                false_break_context=false_break_context,
+                false_break_penetration_percent=(
+                    false_break.penetration_percent
+                ),
+                false_break_reclaim_percent=false_break.reclaim_percent,
+                false_break_close_position_percent=(
+                    false_break.close_position_percent
+                ),
+                false_break_score_adjustment=false_break_score_adjustment,
             ),
         )
 
@@ -714,6 +837,11 @@ class DailyLevelsStrategy(BaseStrategy):
         support_approach: LevelApproachContext,
         breakout_context: str,
         breakout_context_score_adjustment: float,
+        false_break_context: str,
+        false_break_penetration_percent: float,
+        false_break_reclaim_percent: float,
+        false_break_close_position_percent: float,
+        false_break_score_adjustment: float,
     ) -> dict:
         """
         Build metadata for scan journal and research trade storage.
@@ -774,6 +902,21 @@ class DailyLevelsStrategy(BaseStrategy):
                 breakout_context_score_adjustment
             ),
             "breakout_context_version": "v1",
+            "false_break_context": false_break_context,
+            "false_break_penetration_percent": round(
+                false_break_penetration_percent,
+                4,
+            ),
+            "false_break_reclaim_percent": round(
+                false_break_reclaim_percent,
+                4,
+            ),
+            "false_break_close_position_percent": round(
+                false_break_close_position_percent,
+                4,
+            ),
+            "false_break_score_adjustment": false_break_score_adjustment,
+            "false_break_context_version": "v2",
         }
 
     def _score_level_quality(
@@ -1264,6 +1407,102 @@ class DailyLevelsStrategy(BaseStrategy):
             ordered[midpoint - 1]
             + ordered[midpoint]
         ) / 2
+
+    def _score_false_break_confirmation(
+        self,
+        signal_candle: Candle,
+        level_price: float,
+        level_side: str,
+    ) -> FalseBreakContext:
+        """
+        Confirmed false breakout v2.
+
+        Score how decisively signal_candle rejected level_price:
+        - penetration_percent: how far the candle pierced past the
+          level (high past resistance, or low past support);
+        - reclaim_percent: how far the close pulled back inside the
+          level;
+        - close_position_percent: where the close sits within the
+          candle's own high-low range, (close - low) / (high - low)
+          * 100 - low for a resistance rejection (close near the
+          candle low), high for a support rejection (close near the
+          candle high);
+        - is_confirmed: True only when penetration, reclaim, close
+          position, and close direction all agree the rejection was
+          decisive, not just a bare legacy-threshold clear.
+
+        A zero-range candle (high <= low) returns is_confirmed=False
+        without raising.
+        """
+
+        if signal_candle.high <= signal_candle.low:
+            return FalseBreakContext(
+                penetration_percent=0.0,
+                reclaim_percent=0.0,
+                close_position_percent=0.0,
+                is_confirmed=False,
+            )
+
+        close_position_percent = (
+            (signal_candle.close - signal_candle.low)
+            / (signal_candle.high - signal_candle.low)
+            * 100
+        )
+
+        is_resistance = level_side == "resistance"
+
+        if is_resistance:
+            penetration_percent = (
+                (signal_candle.high - level_price)
+                / level_price
+                * 100
+            )
+
+            reclaim_percent = (
+                (level_price - signal_candle.close)
+                / level_price
+                * 100
+            )
+
+            is_confirmed = (
+                penetration_percent
+                >= self.false_break_min_penetration_percent
+                and reclaim_percent
+                >= self.false_break_min_reclaim_percent
+                and close_position_percent
+                <= self.false_break_max_close_position_percent
+                and signal_candle.close < signal_candle.open
+            )
+
+        else:
+            penetration_percent = (
+                (level_price - signal_candle.low)
+                / level_price
+                * 100
+            )
+
+            reclaim_percent = (
+                (signal_candle.close - level_price)
+                / level_price
+                * 100
+            )
+
+            is_confirmed = (
+                penetration_percent
+                >= self.false_break_min_penetration_percent
+                and reclaim_percent
+                >= self.false_break_min_reclaim_percent
+                and close_position_percent
+                >= self.false_break_min_close_position_percent
+                and signal_candle.close > signal_candle.open
+            )
+
+        return FalseBreakContext(
+            penetration_percent=penetration_percent,
+            reclaim_percent=reclaim_percent,
+            close_position_percent=close_position_percent,
+            is_confirmed=is_confirmed,
+        )
 
     @staticmethod
     def _above_level(

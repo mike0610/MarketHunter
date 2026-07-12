@@ -167,6 +167,25 @@ class DailyLevelsStrategy(BaseStrategy):
     false_break_confirmed_bonus = 6.0
     false_break_confirmed_cap = 85.0
 
+    # Daily Level Bounce v1 - support/resistance rejection setups.
+    # Checked after all four existing detectors in the or-chain, so
+    # their priority and behavior stay untouched. A bounce only
+    # fires when the touch stays inside the same 0.15% buffer used
+    # by the breakout/sweep detectors (a deeper penetration is left
+    # to the false-break detectors above this one) and the level
+    # held with no compression on approach - compression instead
+    # favors a breakout, not a bounce.
+    bounce_base_score = 70.0
+    bounce_large_bar_bonus = 4.0
+    bounce_rejection_bonus = 3.0
+    bounce_rejection_min_percent = 0.5
+    bounce_extreme_close_bonus = 3.0
+    bounce_extreme_close_long_percent = 75.0
+    bounce_extreme_close_short_percent = 25.0
+    bounce_min_close_position_long_percent = 60.0
+    bounce_max_close_position_short_percent = 40.0
+    bounce_score_cap = 80.0
+
     def __init__(self) -> None:
         pass
 
@@ -276,6 +295,28 @@ class DailyLevelsStrategy(BaseStrategy):
                 support_approach=support_approach,
             )
             or self._detect_breakdown_short(
+                signal_candle=signal_candle,
+                previous_candle=previous_candle,
+                resistance=resistance,
+                support=support,
+                level_range_percent=level_range_percent,
+                resistance_quality=resistance_quality,
+                support_quality=support_quality,
+                resistance_approach=resistance_approach,
+                support_approach=support_approach,
+            )
+            or self._detect_support_bounce_long(
+                signal_candle=signal_candle,
+                previous_candle=previous_candle,
+                resistance=resistance,
+                support=support,
+                level_range_percent=level_range_percent,
+                resistance_quality=resistance_quality,
+                support_quality=support_quality,
+                resistance_approach=resistance_approach,
+                support_approach=support_approach,
+            )
+            or self._detect_resistance_bounce_short(
                 signal_candle=signal_candle,
                 previous_candle=previous_candle,
                 resistance=resistance,
@@ -457,6 +498,10 @@ class DailyLevelsStrategy(BaseStrategy):
                 false_break_reclaim_percent=0.0,
                 false_break_close_position_percent=0.0,
                 false_break_score_adjustment=0.0,
+                bounce_context="not_applicable",
+                bounce_rejection_percent=0.0,
+                bounce_close_position_percent=0.0,
+                bounce_score_adjustment=0.0,
             ),
         )
 
@@ -578,6 +623,10 @@ class DailyLevelsStrategy(BaseStrategy):
                 false_break_reclaim_percent=0.0,
                 false_break_close_position_percent=0.0,
                 false_break_score_adjustment=0.0,
+                bounce_context="not_applicable",
+                bounce_rejection_percent=0.0,
+                bounce_close_position_percent=0.0,
+                bounce_score_adjustment=0.0,
             ),
         )
 
@@ -697,6 +746,10 @@ class DailyLevelsStrategy(BaseStrategy):
                     false_break.close_position_percent
                 ),
                 false_break_score_adjustment=false_break_score_adjustment,
+                bounce_context="not_applicable",
+                bounce_rejection_percent=0.0,
+                bounce_close_position_percent=0.0,
+                bounce_score_adjustment=0.0,
             ),
         )
 
@@ -817,6 +870,295 @@ class DailyLevelsStrategy(BaseStrategy):
                     false_break.close_position_percent
                 ),
                 false_break_score_adjustment=false_break_score_adjustment,
+                bounce_context="not_applicable",
+                bounce_rejection_percent=0.0,
+                bounce_close_position_percent=0.0,
+                bounce_score_adjustment=0.0,
+            ),
+        )
+
+    def _detect_support_bounce_long(
+        self,
+        signal_candle: Candle,
+        previous_candle: Candle,
+        resistance: float,
+        support: float,
+        level_range_percent: float,
+        resistance_quality: LevelQuality,
+        support_quality: LevelQuality,
+        resistance_approach: LevelApproachContext,
+        support_approach: LevelApproachContext,
+    ) -> DailyLevelSetup | None:
+        """
+        LONG: daily candle rejects support from above and closes back
+        into the range with a decisive bullish close.
+
+        Daily Level Bounce v1: checked after all four existing
+        detectors, so their priority is untouched. Only a touch that
+        stays inside the same 0.15% buffer used by the breakout/sweep
+        detectors qualifies here - a deeper penetration is left to
+        the false-break detectors above this one in the priority
+        chain. A bounce never fires while support_approach reports
+        compression, since compression toward the level favors a
+        breakout instead.
+        """
+
+        if previous_candle.close <= self._above_level(
+            support,
+            self.breakout_buffer_percent,
+        ):
+            return None
+
+        if signal_candle.low > self._above_level(
+            support,
+            self.breakout_buffer_percent,
+        ):
+            return None
+
+        if signal_candle.low < self._below_level(
+            support,
+            self.breakout_buffer_percent,
+        ):
+            return None
+
+        if signal_candle.close <= support:
+            return None
+
+        if not signal_candle.bullish:
+            return None
+
+        if signal_candle.high <= signal_candle.low:
+            return None
+
+        close_position_percent = (
+            (signal_candle.close - signal_candle.low)
+            / (signal_candle.high - signal_candle.low)
+            * 100
+        )
+
+        if (
+            close_position_percent
+            < self.bounce_min_close_position_long_percent
+        ):
+            return None
+
+        if support_approach.is_compression:
+            return None
+
+        rejection_percent = (
+            (signal_candle.close - signal_candle.low)
+            / support
+            * 100
+        )
+
+        score = self.bounce_base_score
+        bounce_context = "neutral"
+        bounce_score_adjustment = 0.0
+
+        reasons = [
+            "Daily support bounce confirmed by bullish rejection close",
+        ]
+
+        if support_approach.is_large_bar_approach:
+            bounce_context = "large_bar"
+            bounce_score_adjustment += self.bounce_large_bar_bonus
+            score += self.bounce_large_bar_bonus
+
+            reasons.append(
+                "Large-bar approach supports rejection from level",
+            )
+
+        if rejection_percent >= self.bounce_rejection_min_percent:
+            bounce_score_adjustment += self.bounce_rejection_bonus
+            score += self.bounce_rejection_bonus
+
+        if (
+            close_position_percent
+            >= self.bounce_extreme_close_long_percent
+        ):
+            bounce_score_adjustment += self.bounce_extreme_close_bonus
+            score += self.bounce_extreme_close_bonus
+
+        score = min(
+            score,
+            self.bounce_score_cap,
+        )
+
+        return DailyLevelSetup(
+            direction="LONG",
+            setup_type="daily_support_bounce",
+            level_name="daily_support",
+            level_price=support,
+            score=score,
+            reasons=reasons,
+            metadata=self._metadata(
+                setup_type="daily_support_bounce",
+                level_name="daily_support",
+                level_price=support,
+                support=support,
+                resistance=resistance,
+                signal_candle=signal_candle,
+                previous_candle=previous_candle,
+                level_range_percent=level_range_percent,
+                trigger_distance_percent=rejection_percent,
+                resistance_quality=resistance_quality,
+                support_quality=support_quality,
+                resistance_approach=resistance_approach,
+                support_approach=support_approach,
+                breakout_context="not_applicable",
+                breakout_context_score_adjustment=0.0,
+                false_break_context="not_applicable",
+                false_break_penetration_percent=0.0,
+                false_break_reclaim_percent=0.0,
+                false_break_close_position_percent=0.0,
+                false_break_score_adjustment=0.0,
+                bounce_context=bounce_context,
+                bounce_rejection_percent=rejection_percent,
+                bounce_close_position_percent=close_position_percent,
+                bounce_score_adjustment=bounce_score_adjustment,
+            ),
+        )
+
+    def _detect_resistance_bounce_short(
+        self,
+        signal_candle: Candle,
+        previous_candle: Candle,
+        resistance: float,
+        support: float,
+        level_range_percent: float,
+        resistance_quality: LevelQuality,
+        support_quality: LevelQuality,
+        resistance_approach: LevelApproachContext,
+        support_approach: LevelApproachContext,
+    ) -> DailyLevelSetup | None:
+        """
+        SHORT: daily candle rejects resistance from below and closes
+        back into the range with a decisive bearish close.
+
+        Daily Level Bounce v1: mirrors _detect_support_bounce_long via
+        resistance_approach. Checked after all four existing
+        detectors, so their priority is untouched. Only a touch that
+        stays inside the same 0.15% buffer used by the breakout/sweep
+        detectors qualifies here - a deeper penetration is left to
+        the false-break detectors above this one in the priority
+        chain. A bounce never fires while resistance_approach reports
+        compression, since compression toward the level favors a
+        breakout instead.
+        """
+
+        if previous_candle.close >= self._below_level(
+            resistance,
+            self.breakout_buffer_percent,
+        ):
+            return None
+
+        if signal_candle.high < self._below_level(
+            resistance,
+            self.breakout_buffer_percent,
+        ):
+            return None
+
+        if signal_candle.high > self._above_level(
+            resistance,
+            self.breakout_buffer_percent,
+        ):
+            return None
+
+        if signal_candle.close >= resistance:
+            return None
+
+        if not signal_candle.bearish:
+            return None
+
+        if signal_candle.high <= signal_candle.low:
+            return None
+
+        close_position_percent = (
+            (signal_candle.close - signal_candle.low)
+            / (signal_candle.high - signal_candle.low)
+            * 100
+        )
+
+        if (
+            close_position_percent
+            > self.bounce_max_close_position_short_percent
+        ):
+            return None
+
+        if resistance_approach.is_compression:
+            return None
+
+        rejection_percent = (
+            (signal_candle.high - signal_candle.close)
+            / resistance
+            * 100
+        )
+
+        score = self.bounce_base_score
+        bounce_context = "neutral"
+        bounce_score_adjustment = 0.0
+
+        reasons = [
+            "Daily resistance bounce confirmed by bearish rejection close",
+        ]
+
+        if resistance_approach.is_large_bar_approach:
+            bounce_context = "large_bar"
+            bounce_score_adjustment += self.bounce_large_bar_bonus
+            score += self.bounce_large_bar_bonus
+
+            reasons.append(
+                "Large-bar approach supports rejection from level",
+            )
+
+        if rejection_percent >= self.bounce_rejection_min_percent:
+            bounce_score_adjustment += self.bounce_rejection_bonus
+            score += self.bounce_rejection_bonus
+
+        if (
+            close_position_percent
+            <= self.bounce_extreme_close_short_percent
+        ):
+            bounce_score_adjustment += self.bounce_extreme_close_bonus
+            score += self.bounce_extreme_close_bonus
+
+        score = min(
+            score,
+            self.bounce_score_cap,
+        )
+
+        return DailyLevelSetup(
+            direction="SHORT",
+            setup_type="daily_resistance_bounce",
+            level_name="daily_resistance",
+            level_price=resistance,
+            score=score,
+            reasons=reasons,
+            metadata=self._metadata(
+                setup_type="daily_resistance_bounce",
+                level_name="daily_resistance",
+                level_price=resistance,
+                support=support,
+                resistance=resistance,
+                signal_candle=signal_candle,
+                previous_candle=previous_candle,
+                level_range_percent=level_range_percent,
+                trigger_distance_percent=rejection_percent,
+                resistance_quality=resistance_quality,
+                support_quality=support_quality,
+                resistance_approach=resistance_approach,
+                support_approach=support_approach,
+                breakout_context="not_applicable",
+                breakout_context_score_adjustment=0.0,
+                false_break_context="not_applicable",
+                false_break_penetration_percent=0.0,
+                false_break_reclaim_percent=0.0,
+                false_break_close_position_percent=0.0,
+                false_break_score_adjustment=0.0,
+                bounce_context=bounce_context,
+                bounce_rejection_percent=rejection_percent,
+                bounce_close_position_percent=close_position_percent,
+                bounce_score_adjustment=bounce_score_adjustment,
             ),
         )
 
@@ -842,6 +1184,10 @@ class DailyLevelsStrategy(BaseStrategy):
         false_break_reclaim_percent: float,
         false_break_close_position_percent: float,
         false_break_score_adjustment: float,
+        bounce_context: str,
+        bounce_rejection_percent: float,
+        bounce_close_position_percent: float,
+        bounce_score_adjustment: float,
     ) -> dict:
         """
         Build metadata for scan journal and research trade storage.
@@ -917,6 +1263,17 @@ class DailyLevelsStrategy(BaseStrategy):
             ),
             "false_break_score_adjustment": false_break_score_adjustment,
             "false_break_context_version": "v2",
+            "bounce_context": bounce_context,
+            "bounce_rejection_percent": round(
+                bounce_rejection_percent,
+                4,
+            ),
+            "bounce_close_position_percent": round(
+                bounce_close_position_percent,
+                4,
+            ),
+            "bounce_score_adjustment": bounce_score_adjustment,
+            "bounce_context_version": "v1",
         }
 
     def _score_level_quality(

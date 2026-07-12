@@ -205,6 +205,12 @@ class ResearchManager:
         signal.metadata["research_group"] = research_group
         signal.metadata["experiment_tag"] = experiment_tag
 
+        mtf_context = {
+            key: value
+            for key, value in signal.metadata.items()
+            if key.startswith("mtf_")
+        }
+
         trade = ResearchTrade(
             id=str(
                 uuid4(),
@@ -230,6 +236,7 @@ class ResearchManager:
             reasons=list(
                 signal.reasons,
             ),
+            mtf_context=dict(mtf_context),
             research_group=research_group,
             experiment_tag=experiment_tag,
         )

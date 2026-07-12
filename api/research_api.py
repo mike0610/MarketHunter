@@ -68,6 +68,102 @@ router = APIRouter(
 )
 
 
+class ResearchTradeMTFResponse(BaseModel):
+    """
+    Multi-timeframe (1D level -> 1h entry) confirmation context for
+    one research trade, mapped from ResearchTrade.mtf_context (the
+    mtf_*-prefixed subset of the originating signal's metadata).
+    """
+
+    context_version: str | None = None
+    primary_timeframe: str | None = None
+    entry_timeframe: str | None = None
+
+    expected_pattern: str | None = None
+    confirmation_type: str | None = None
+    confirmed: bool = False
+    applied: bool = False
+
+    base_score: int | None = None
+    score_delta: int = 0
+    final_score: int | None = None
+
+    raw_candle_count: int | None = None
+    aligned_candle_count: int | None = None
+    discarded_candle_count: int | None = None
+    analyzed_candle_count: int | None = None
+
+    confirmation_candle_open_time: str | None = None
+    daily_signal_close_time: str | None = None
+
+    @classmethod
+    def from_mtf_context(
+        cls,
+        mtf_context: dict,
+    ) -> "ResearchTradeMTFResponse":
+        """
+        Map mtf_*-prefixed signal metadata keys onto typed fields.
+        """
+
+        return cls(
+            context_version=mtf_context.get(
+                "mtf_context_version",
+            ),
+            primary_timeframe=mtf_context.get(
+                "mtf_primary_timeframe",
+            ),
+            entry_timeframe=mtf_context.get(
+                "mtf_entry_timeframe",
+            ),
+            expected_pattern=mtf_context.get(
+                "mtf_entry_expected_pattern",
+            ),
+            confirmation_type=mtf_context.get(
+                "mtf_entry_confirmation_type",
+            ),
+            confirmed=bool(
+                mtf_context.get(
+                    "mtf_entry_confirmation_is_confirmed",
+                    False,
+                )
+            ),
+            applied=bool(
+                mtf_context.get(
+                    "mtf_entry_confirmation_applied",
+                    False,
+                )
+            ),
+            base_score=mtf_context.get(
+                "mtf_entry_confirmation_base_score",
+            ),
+            score_delta=mtf_context.get(
+                "mtf_entry_confirmation_score_delta",
+                0,
+            ),
+            final_score=mtf_context.get(
+                "mtf_entry_confirmation_final_score",
+            ),
+            raw_candle_count=mtf_context.get(
+                "mtf_entry_raw_candle_count",
+            ),
+            aligned_candle_count=mtf_context.get(
+                "mtf_entry_aligned_candle_count",
+            ),
+            discarded_candle_count=mtf_context.get(
+                "mtf_entry_discarded_candle_count",
+            ),
+            analyzed_candle_count=mtf_context.get(
+                "mtf_entry_confirmation_analyzed_candles",
+            ),
+            confirmation_candle_open_time=mtf_context.get(
+                "mtf_entry_confirmation_candle_open_time",
+            ),
+            daily_signal_close_time=mtf_context.get(
+                "mtf_daily_signal_close_time",
+            ),
+        )
+
+
 class ResearchTradeResponse(BaseModel):
     """
     Serializable virtual trade representation for Dashboard.
@@ -91,6 +187,8 @@ class ResearchTradeResponse(BaseModel):
     notional: float
 
     reasons: list[str]
+
+    mtf: ResearchTradeMTFResponse | None
 
     research_group: str
     experiment_tag: str | None
@@ -145,6 +243,13 @@ class ResearchTradeResponse(BaseModel):
             score=trade.score,
             notional=trade.notional,
             reasons=list(trade.reasons),
+            mtf=(
+                ResearchTradeMTFResponse.from_mtf_context(
+                    trade.mtf_context,
+                )
+                if trade.mtf_context
+                else None
+            ),
             research_group=trade.research_group,
             experiment_tag=trade.experiment_tag,
             is_experimental=trade.is_experimental,

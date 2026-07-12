@@ -115,6 +115,7 @@ class ResearchRepository:
                     score REAL NOT NULL,
                     notional REAL NOT NULL DEFAULT 100.0,
                     reasons TEXT NOT NULL,
+                    mtf_context TEXT NOT NULL DEFAULT '{}',
                     research_group TEXT NOT NULL DEFAULT 'core',
                     experiment_tag TEXT,
                     status TEXT NOT NULL,
@@ -167,6 +168,9 @@ class ResearchRepository:
             ),
             "notional": (
                 "notional REAL NOT NULL DEFAULT 100.0"
+            ),
+            "mtf_context": (
+                "mtf_context TEXT NOT NULL DEFAULT '{}'"
             ),
             "profit_amount": (
                 "profit_amount REAL NOT NULL DEFAULT 0.0"
@@ -365,6 +369,10 @@ class ResearchRepository:
                 trade.reasons,
                 ensure_ascii=False,
             ),
+            "mtf_context": json.dumps(
+                trade.mtf_context,
+                ensure_ascii=False,
+            ),
             "research_group": trade.research_group,
             "experiment_tag": trade.experiment_tag,
             "status": trade.status.value,
@@ -420,6 +428,7 @@ class ResearchRepository:
                     score,
                     notional,
                     reasons,
+                    mtf_context,
                     research_group,
                     experiment_tag,
                     status,
@@ -455,6 +464,7 @@ class ResearchRepository:
                     :score,
                     :notional,
                     :reasons,
+                    :mtf_context,
                     :research_group,
                     :experiment_tag,
                     :status,
@@ -489,6 +499,7 @@ class ResearchRepository:
                     score = excluded.score,
                     notional = excluded.notional,
                     reasons = excluded.reasons,
+                    mtf_context = excluded.mtf_context,
                     research_group = excluded.research_group,
                     experiment_tag = excluded.experiment_tag,
                     status = excluded.status,
@@ -2276,6 +2287,12 @@ class ResearchRepository:
             score=row["score"],
             notional=row["notional"],
             reasons=json.loads(row["reasons"]),
+            mtf_context=(
+                json.loads(row["mtf_context"])
+                if "mtf_context" in row.keys()
+                and row["mtf_context"]
+                else {}
+            ),
             research_group=row["research_group"],
             experiment_tag=row["experiment_tag"],
             status=TradeStatus(row["status"]),

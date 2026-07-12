@@ -111,6 +111,16 @@ class ResearchTrade:
     notional: float = 100.0
     reasons: list[str] = field(default_factory=list)
 
+    # Multi-timeframe confirmation context copied from
+    # signal.metadata at trade-creation time (only mtf_*-prefixed
+    # keys - see ResearchManager.create_from_signal()). This is a
+    # dedicated field, not a catch-all `metadata` dump, so
+    # ResearchTrade does not become a dumping ground for arbitrary
+    # pipeline data (risk_geometry, target_*, reaction_*,
+    # probability, etc). Empty dict for trades created before MTF
+    # context existed or for signals with no mtf_* metadata.
+    mtf_context: dict = field(default_factory=dict)
+
     research_group: str = CORE_RESEARCH_GROUP
     experiment_tag: str | None = None
 

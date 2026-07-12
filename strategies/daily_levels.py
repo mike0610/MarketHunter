@@ -456,6 +456,13 @@ class DailyLevelsStrategy(BaseStrategy):
         arrived alongside the primary 1D snapshot, so the data
         pipeline can be exercised end-to-end before any
         entry-timeframe trading logic is built on top of it.
+
+        Timestamp alignment v1: entry_candles is filtered down to
+        only the candles that opened strictly after the daily signal
+        candle's own close_time (snapshot.candles[-2].close_time)
+        before anything else - including confirmation scoring - ever
+        sees it. Pre-close 1h candles can never confirm a daily
+        setup that hadn't closed yet.
         """
 
         signal = await self.analyze(snapshot)
@@ -463,18 +470,44 @@ class DailyLevelsStrategy(BaseStrategy):
         if signal is None:
             return None
 
-        entry_candle_count = len(entry_candles)
+        daily_close_time = snapshot.candles[-2].close_time
+
+        raw_entry_candle_count = len(entry_candles)
+
+        aligned_entry_candles = self._entry_candles_after_daily_close(
+            entry_candles,
+            daily_close_time,
+        )
+
+        aligned_entry_candle_count = len(aligned_entry_candles)
 
         signal.metadata["mtf_context_version"] = "v1"
         signal.metadata["mtf_primary_timeframe"] = "1d"
         signal.metadata["mtf_entry_timeframe"] = self.entry_timeframe
-        signal.metadata["mtf_entry_candle_count"] = entry_candle_count
+        signal.metadata["mtf_entry_candle_count"] = (
+            aligned_entry_candle_count
+        )
         signal.metadata["mtf_entry_data_available"] = (
-            entry_candle_count > 0
+            aligned_entry_candle_count > 0
+        )
+
+        signal.metadata["mtf_entry_alignment_version"] = "v1"
+        signal.metadata["mtf_entry_alignment_applied"] = True
+        signal.metadata["mtf_daily_signal_close_time"] = (
+            daily_close_time.isoformat()
+        )
+        signal.metadata["mtf_entry_raw_candle_count"] = (
+            raw_entry_candle_count
+        )
+        signal.metadata["mtf_entry_aligned_candle_count"] = (
+            aligned_entry_candle_count
+        )
+        signal.metadata["mtf_entry_discarded_candle_count"] = (
+            raw_entry_candle_count - aligned_entry_candle_count
         )
 
         confirmation = self._score_mtf_entry_confirmation(
-            signal, entry_candles,
+            signal, aligned_entry_candles,
         )
 
         signal.metadata["mtf_entry_expected_pattern"] = (
@@ -508,7 +541,9 @@ class DailyLevelsStrategy(BaseStrategy):
             "mtf_entry_confirmation_close_position_percent"
         ] = confirmation.close_position_percent
         signal.metadata["mtf_entry_confirmation_candle_open_time"] = (
-            confirmation.confirmation_candle_open_time
+            confirmation.confirmation_candle_open_time.isoformat()
+            if confirmation.confirmation_candle_open_time is not None
+            else None
         )
         signal.metadata["mtf_entry_confirmation_version"] = "v1"
 
@@ -1999,6 +2034,29 @@ class DailyLevelsStrategy(BaseStrategy):
             close_position_percent=close_position_percent,
             is_confirmed=is_confirmed,
         )
+
+    @staticmethod
+    def _entry_candles_after_daily_close(
+        entry_candles: list[Candle],
+        daily_close_time: datetime,
+    ) -> list[Candle]:
+        """
+        Timestamp alignment v1 - keep only entry-timeframe candles
+        that opened strictly after the daily signal candle's own
+        close_time, so an entry candle that opened before the daily
+        candle even closed can never confirm that daily setup.
+
+        No sorting, no timezone normalization, no try/except: this
+        trusts entry_candles to already be Candle instances with
+        timezone-aware open_time (see models/candle.py), the same as
+        every other candle comparison in this file.
+        """
+
+        return [
+            candle
+            for candle in entry_candles
+            if candle.open_time > daily_close_time
+        ]
 
     def _score_mtf_entry_confirmation(
         self,

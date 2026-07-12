@@ -5,6 +5,15 @@ Tests for MTF data contract v1: DailyLevelsStrategy.analyze_with_entry_candles()
 observationally attaches entry-timeframe (1h) candle metadata to
 whatever analyze() would have produced, without changing the
 underlying signal.
+
+Note (Timestamp alignment v1): analyze_with_entry_candles() now
+discards any entry candle whose open_time is not strictly after the
+daily signal candle's close_time (day_index=61 here, closing at the
+end of that day) before counting/scoring anything. Every entry_candles
+fixture below therefore uses day_index >= 62 so the candle counts
+asserted here reflect candles that actually survive alignment - see
+tests/daily_levels/test_mtf_timestamp_alignment.py for alignment
+behavior itself (pre-close discarding, boundary edge cases, etc).
 """
 
 from __future__ import annotations
@@ -61,7 +70,7 @@ class DailyLevelsMtfContractTests(unittest.IsolatedAsyncioTestCase):
 
         entry_candles = [
             make_candle(100.0, 100.5, 99.5, 100.2, day_index=i)
-            for i in range(24)
+            for i in range(62, 86)
         ]
 
         mtf_signal = await self.strategy.analyze_with_entry_candles(
@@ -96,7 +105,7 @@ class DailyLevelsMtfContractTests(unittest.IsolatedAsyncioTestCase):
 
         entry_candles = [
             make_candle(100.0, 100.5, 99.5, 100.2, day_index=i)
-            for i in range(37)
+            for i in range(62, 99)
         ]
 
         signal = await self.strategy.analyze_with_entry_candles(

@@ -435,7 +435,7 @@ class DailyLevelsMtfConfirmationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             signal.metadata["mtf_entry_confirmation_candle_open_time"],
-            confirmation_candle.open_time,
+            confirmation_candle.open_time.isoformat(),
         )
 
     async def test_confirmation_does_not_change_direction_score_or_reasons(

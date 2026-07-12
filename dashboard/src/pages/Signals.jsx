@@ -10,7 +10,6 @@ import {
     Chip,
     CircularProgress,
     FormControl,
-    InputLabel,
     MenuItem,
     Select,
     Typography,
@@ -1110,7 +1109,7 @@ export default function Signals() {
                         gap: 2,
                     }}
                 >
-                    {groupedSignals.map((group, index) => (
+                    {groupedSignals.map((group) => (
                         <SignalGroup
                             key={group.key}
                             group={group}

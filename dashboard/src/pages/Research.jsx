@@ -254,21 +254,6 @@ function numericPrice(value) {
         : null;
 }
 
-
-function isNearPrice(left, right) {
-    if (left === null || right === null) {
-        return false;
-    }
-
-    const tolerance = Math.max(
-        Math.abs(right) * 0.00001,
-        0.00000001,
-    );
-
-    return Math.abs(left - right) <= tolerance;
-}
-
-
 function activeStopManagementState(trade) {
     const direction = normalizeDirection(trade?.direction);
     const entry = numericPrice(trade?.entry_price);
@@ -651,21 +636,6 @@ function countTradesByExperimentTag(trades, experimentTag) {
             trade.experiment_tag,
         ) === experimentTag,
     ).length;
-}
-
-
-function normalizeNumberKey(value) {
-    if (value === null || value === undefined || value === "") {
-        return "none";
-    }
-
-    const numeric = Number(value);
-
-    if (!Number.isFinite(numeric)) {
-        return String(value);
-    }
-
-    return numeric.toFixed(8);
 }
 
 function MetricCard({
@@ -1093,21 +1063,6 @@ function TradeCard({
         </Paper>
     );
 }
-
-
-function countTradesByResearchGroup(trades, group) {
-    return trades.filter(
-        (trade) => tradeResearchGroup(trade) === group,
-    ).length;
-}
-
-
-function countTradesByMarket(trades, market) {
-    return trades.filter(
-        (trade) => String(trade.market || "").toLowerCase() === market,
-    ).length;
-}
-
 
 function TradeSection({
     title,

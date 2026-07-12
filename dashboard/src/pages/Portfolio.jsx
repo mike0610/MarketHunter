@@ -289,9 +289,16 @@ export default function Portfolio() {
     const [activeTrades, setActiveTrades] = useState([]);
     const [waitingTrades, setWaitingTrades] = useState([]);
 
+    // Promise.allSettled (not Promise.all) is deliberate: the two open
+    // statuses are independent requests, and one endpoint failing must
+    // not discard data the other endpoint already fetched successfully.
+    // Every branch below explicitly clears the FAILED side's own state
+    // rather than leaving a previous successful fetch on screen - a
+    // stale table after a request failure would silently misrepresent
+    // what is actually open right now.
     const loadData = useCallback(
         async () => {
-            const [activeResult, waitingResult] = await Promise.all([
+            const [activeResult, waitingResult] = await Promise.allSettled([
                 getResearchTrades({
                     status: "active",
                     limit: 200,
@@ -302,15 +309,60 @@ export default function Portfolio() {
                 }),
             ]);
 
+            const activeFailed = activeResult.status === "rejected";
+            const waitingFailed = waitingResult.status === "rejected";
+
+            if (activeFailed && waitingFailed) {
+                setActiveTrades([]);
+                setWaitingTrades([]);
+                setError(extractApiError(activeResult.reason));
+
+                return;
+            }
+
+            if (activeFailed) {
+                setActiveTrades([]);
+
+                setWaitingTrades(
+                    Array.isArray(waitingResult.value?.trades)
+                        ? waitingResult.value.trades
+                        : [],
+                );
+
+                setError(
+                    `Active trades: ${extractApiError(activeResult.reason)}`,
+                );
+
+                return;
+            }
+
+            if (waitingFailed) {
+                setWaitingTrades([]);
+
+                setActiveTrades(
+                    Array.isArray(activeResult.value?.trades)
+                        ? activeResult.value.trades
+                        : [],
+                );
+
+                setError(
+                    `Waiting entry trades: ${extractApiError(waitingResult.reason)}`,
+                );
+
+                return;
+            }
+
+            setError("");
+
             setActiveTrades(
-                Array.isArray(activeResult?.trades)
-                    ? activeResult.trades
+                Array.isArray(activeResult.value?.trades)
+                    ? activeResult.value.trades
                     : [],
             );
 
             setWaitingTrades(
-                Array.isArray(waitingResult?.trades)
-                    ? waitingResult.trades
+                Array.isArray(waitingResult.value?.trades)
+                    ? waitingResult.value.trades
                     : [],
             );
         },

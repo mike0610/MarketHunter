@@ -130,6 +130,11 @@ class ResearchManager:
                 f"Unsupported signal direction: {direction}."
             )
 
+        if market == "spot" and direction == "SHORT":
+            return ResearchTradeCreationResult(
+                reason="spot_short_not_supported",
+            )
+
         if self.repository.has_open_direction_trade(
             symbol=symbol,
             market=market,

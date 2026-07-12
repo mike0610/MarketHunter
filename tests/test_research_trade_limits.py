@@ -42,6 +42,7 @@ class ResearchTradeLimitTests(unittest.TestCase):
         symbol: str,
         strategy: str,
         direction: str = "LONG",
+        market: str = "futures",
     ) -> Signal:
         """
         Create a deterministic virtual signal.
@@ -49,7 +50,7 @@ class ResearchTradeLimitTests(unittest.TestCase):
 
         return Signal(
             symbol=symbol,
-            market="futures",
+            market=market,
             timeframe="1h",
             strategy=strategy,
             direction=direction,
@@ -214,6 +215,116 @@ class ResearchTradeLimitTests(unittest.TestCase):
         self.assertEqual(
             self.repository.count_open_trades(),
             2,
+        )
+
+    def test_spot_long_is_accepted(
+        self,
+    ) -> None:
+        """
+        SPOT market allows a LONG virtual trade.
+        """
+
+        manager = ResearchManager(
+            repository=self.repository,
+            max_open_trades=10,
+            max_open_trades_per_symbol=1,
+        )
+
+        result = manager.create_from_signal(
+            signal=self.signal(
+                symbol="BTCUSDT",
+                strategy="PremiumDiscount",
+                direction="LONG",
+                market="spot",
+            ),
+            entry_price=100.0,
+            stop_loss=95.0,
+            take_profit=110.0,
+            probability=50,
+        )
+
+        self.assertTrue(
+            result.created,
+        )
+
+        self.assertEqual(
+            self.repository.count_open_trades(),
+            1,
+        )
+
+    def test_spot_short_is_rejected(
+        self,
+    ) -> None:
+        """
+        SPOT market does not support SHORT virtual trades.
+        """
+
+        manager = ResearchManager(
+            repository=self.repository,
+            max_open_trades=10,
+            max_open_trades_per_symbol=1,
+        )
+
+        result = manager.create_from_signal(
+            signal=self.signal(
+                symbol="BTCUSDT",
+                strategy="PremiumDiscount",
+                direction="SHORT",
+                market="spot",
+            ),
+            entry_price=100.0,
+            stop_loss=105.0,
+            take_profit=90.0,
+            probability=50,
+        )
+
+        self.assertFalse(
+            result.created,
+        )
+
+        self.assertEqual(
+            result.reason,
+            "spot_short_not_supported",
+        )
+
+        self.assertEqual(
+            self.repository.count_open_trades(),
+            0,
+        )
+
+    def test_futures_short_is_accepted(
+        self,
+    ) -> None:
+        """
+        FUTURES market continues to allow SHORT virtual trades.
+        """
+
+        manager = ResearchManager(
+            repository=self.repository,
+            max_open_trades=10,
+            max_open_trades_per_symbol=1,
+        )
+
+        result = manager.create_from_signal(
+            signal=self.signal(
+                symbol="BTCUSDT",
+                strategy="PremiumDiscount",
+                direction="SHORT",
+                market="futures",
+            ),
+            entry_price=100.0,
+            stop_loss=105.0,
+            take_profit=90.0,
+            probability=50,
+        )
+
+        self.assertTrue(
+            result.created,
+        )
+
+        self.assertEqual(
+            self.repository.count_open_trades(),
+            1,
         )
 
 

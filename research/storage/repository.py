@@ -2248,6 +2248,9 @@ class ResearchRepository:
         if "cycle limit" in normalized:
             return "Cycle limit"
 
+        if "spot_short_not_supported" in normalized:
+            return "Spot short blocked"
+
         return "Other rejected"
 
     def _row_to_trade(

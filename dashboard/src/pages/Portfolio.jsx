@@ -122,6 +122,68 @@ function sumNotional(trades) {
 }
 
 
+function normalizeMarket(value) {
+    return String(value || "").trim().toLowerCase();
+}
+
+
+function emptySegment() {
+    return {
+        count: 0,
+        notional: 0,
+    };
+}
+
+
+function addToSegment(segment, notional) {
+    segment.count += 1;
+    segment.notional += notional;
+}
+
+
+/**
+ * Break open positions down by market (spot/futures) and direction
+ * (long/short). null/NaN notional is ignored in the sums (contributes
+ * 0) but the trade is still counted - matches the same convention as
+ * sumNotional() above. A trade with an unrecognized market or
+ * direction simply does not add to that particular segment; it still
+ * appears in the main positions table untouched.
+ */
+function computeExposureBreakdown(trades) {
+    const breakdown = {
+        spot: emptySegment(),
+        futures: emptySegment(),
+        long: emptySegment(),
+        short: emptySegment(),
+    };
+
+    for (const trade of trades) {
+        const numeric = Number(trade?.notional);
+        const validNotional = Number.isFinite(numeric)
+            ? numeric
+            : 0;
+
+        const market = normalizeMarket(trade?.market);
+
+        if (market === "spot") {
+            addToSegment(breakdown.spot, validNotional);
+        } else if (market === "futures") {
+            addToSegment(breakdown.futures, validNotional);
+        }
+
+        const direction = normalizeDirection(trade?.direction);
+
+        if (direction === "LONG") {
+            addToSegment(breakdown.long, validNotional);
+        } else if (direction === "SHORT") {
+            addToSegment(breakdown.short, validNotional);
+        }
+    }
+
+    return breakdown;
+}
+
+
 /**
  * Portfolio v1: frontend-only view over currently open Research trades
  * (active + waiting_entry). There is no separate positions table and no
@@ -234,6 +296,16 @@ export default function Portfolio() {
         [positions],
     );
 
+    const exposureBreakdown = useMemo(
+        () => computeExposureBreakdown(positions),
+        [positions],
+    );
+
+    const netBias = (
+        exposureBreakdown.long.notional
+        - exposureBreakdown.short.notional
+    );
+
     if (loading) {
         return (
             <Box
@@ -293,6 +365,87 @@ export default function Portfolio() {
                     label="Notional exposure"
                     value={formatNumber(totalNotional, 2)}
                 />
+            </Box>
+
+            <Box sx={{ mb: 3, minWidth: 0 }}>
+                <Typography
+                    variant="subtitle1"
+                    fontWeight={600}
+                    sx={{ mb: 1.5 }}
+                >
+                    Розподіл відкритої експозиції
+                </Typography>
+
+                <Box
+                    sx={{
+                        display: "grid",
+                        gap: 2,
+                        gridTemplateColumns: {
+                            xs: "1fr",
+                            sm: "repeat(2, minmax(0, 1fr))",
+                            md: "repeat(4, minmax(0, 1fr))",
+                        },
+                        mb: 2,
+                    }}
+                >
+                    <MetricCard
+                        label="SPOT"
+                        value={exposureBreakdown.spot.count}
+                        caption={`Notional: ${formatNumber(exposureBreakdown.spot.notional, 2)}`}
+                    />
+
+                    <MetricCard
+                        label="FUTURES"
+                        value={exposureBreakdown.futures.count}
+                        caption={`Notional: ${formatNumber(exposureBreakdown.futures.notional, 2)}`}
+                    />
+
+                    <MetricCard
+                        label="LONG"
+                        value={exposureBreakdown.long.count}
+                        caption={`Notional: ${formatNumber(exposureBreakdown.long.notional, 2)}`}
+                        valueColor="success.main"
+                    />
+
+                    <MetricCard
+                        label="SHORT"
+                        value={exposureBreakdown.short.count}
+                        caption={`Notional: ${formatNumber(exposureBreakdown.short.notional, 2)}`}
+                        valueColor="error.main"
+                    />
+                </Box>
+
+                <Paper
+                    variant="outlined"
+                    sx={{
+                        p: 2,
+                        borderRadius: 3,
+                        bgcolor: "rgba(255,255,255,0.02)",
+                        minWidth: 0,
+                    }}
+                >
+                    <Typography
+                        variant="body2"
+                        color="text.secondary"
+                    >
+                        Net bias (LONG − SHORT notional)
+                    </Typography>
+
+                    <Typography
+                        variant="h6"
+                        fontWeight={700}
+                        color={
+                            netBias > 0
+                                ? "success.main"
+                                : netBias < 0
+                                    ? "error.main"
+                                    : "text.primary"
+                        }
+                        sx={{ mt: 0.5, wordBreak: "break-word" }}
+                    >
+                        {formatNumber(netBias, 2)}
+                    </Typography>
+                </Paper>
             </Box>
 
             {positions.length === 0 ? (

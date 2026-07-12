@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 from models.signal import Signal
 from pipeline.handlers import ResearchTradeHandler
@@ -441,6 +442,304 @@ class ResearchTradeCycleLimitTests(
             self.repository.count_open_trades(),
             2,
         )
+
+
+class ResearchTradeRiskGeometryGuardTests(unittest.TestCase):
+    """
+    Test the write-boundary risk-geometry guard in
+    ResearchManager.create_from_signal().
+
+    This guard is a last line of defense: even if a signal somehow
+    bypasses the RiskGeometryDetector check in pipeline/handlers.py,
+    ResearchManager itself must refuse to persist a trade with zero
+    or wrong-side risk geometry.
+    """
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+
+        database_path = Path(
+            self.temp_dir.name
+        ) / "research.db"
+
+        self.repository = ResearchRepository(
+            path=str(database_path),
+        )
+
+    def tearDown(self) -> None:
+        self.repository.close()
+        self.temp_dir.cleanup()
+
+    @staticmethod
+    def signal(
+        symbol: str,
+        strategy: str,
+        direction: str = "LONG",
+        market: str = "futures",
+    ) -> Signal:
+        """
+        Create a deterministic virtual signal.
+        """
+
+        return Signal(
+            symbol=symbol,
+            market=market,
+            timeframe="1h",
+            strategy=strategy,
+            direction=direction,
+            score=75.0,
+        )
+
+    def test_valid_long_is_created(
+        self,
+    ) -> None:
+        """
+        A LONG trade with stop_loss below entry_price is created.
+        """
+
+        manager = ResearchManager(
+            repository=self.repository,
+        )
+
+        result = manager.create_from_signal(
+            signal=self.signal(
+                symbol="BTCUSDT",
+                strategy="FVG",
+                direction="LONG",
+            ),
+            entry_price=100.0,
+            stop_loss=95.0,
+            take_profit=110.0,
+            probability=50,
+        )
+
+        self.assertTrue(
+            result.created,
+        )
+
+        self.assertEqual(
+            self.repository.count_open_trades(),
+            1,
+        )
+
+    def test_valid_short_is_created(
+        self,
+    ) -> None:
+        """
+        A SHORT trade with stop_loss above entry_price is created.
+        """
+
+        manager = ResearchManager(
+            repository=self.repository,
+        )
+
+        result = manager.create_from_signal(
+            signal=self.signal(
+                symbol="BTCUSDT",
+                strategy="FVG",
+                direction="SHORT",
+            ),
+            entry_price=100.0,
+            stop_loss=105.0,
+            take_profit=90.0,
+            probability=50,
+        )
+
+        self.assertTrue(
+            result.created,
+        )
+
+        self.assertEqual(
+            self.repository.count_open_trades(),
+            1,
+        )
+
+    def test_long_entry_equals_stop_is_rejected(
+        self,
+    ) -> None:
+        """
+        A LONG trade with entry_price == stop_loss is rejected.
+
+        Reproduces the real ARBUSDT case (entry=0.08696,
+        stop_loss=0.08696) found during the baseline clean
+        statistics review.
+        """
+
+        manager = ResearchManager(
+            repository=self.repository,
+        )
+
+        result = manager.create_from_signal(
+            signal=self.signal(
+                symbol="ARBUSDT",
+                strategy="FVG",
+                direction="LONG",
+            ),
+            entry_price=0.08696,
+            stop_loss=0.08696,
+            take_profit=0.10414,
+            probability=50,
+        )
+
+        self.assertFalse(
+            result.created,
+        )
+
+        self.assertIn(
+            "risk geometry",
+            (result.reason or "").lower(),
+        )
+
+        self.assertEqual(
+            self.repository.count_open_trades(),
+            0,
+        )
+
+    def test_short_entry_equals_stop_is_rejected(
+        self,
+    ) -> None:
+        """
+        A SHORT trade with entry_price == stop_loss is rejected.
+        """
+
+        manager = ResearchManager(
+            repository=self.repository,
+        )
+
+        result = manager.create_from_signal(
+            signal=self.signal(
+                symbol="ETHUSDT",
+                strategy="FVG",
+                direction="SHORT",
+            ),
+            entry_price=100.0,
+            stop_loss=100.0,
+            take_profit=90.0,
+            probability=50,
+        )
+
+        self.assertFalse(
+            result.created,
+        )
+
+        self.assertIn(
+            "risk geometry",
+            (result.reason or "").lower(),
+        )
+
+        self.assertEqual(
+            self.repository.count_open_trades(),
+            0,
+        )
+
+    def test_long_stop_above_entry_is_rejected(
+        self,
+    ) -> None:
+        """
+        A LONG trade with stop_loss above entry_price (wrong side)
+        is rejected.
+        """
+
+        manager = ResearchManager(
+            repository=self.repository,
+        )
+
+        result = manager.create_from_signal(
+            signal=self.signal(
+                symbol="SOLUSDT",
+                strategy="FVG",
+                direction="LONG",
+            ),
+            entry_price=100.0,
+            stop_loss=105.0,
+            take_profit=110.0,
+            probability=50,
+        )
+
+        self.assertFalse(
+            result.created,
+        )
+
+        self.assertIn(
+            "risk geometry",
+            (result.reason or "").lower(),
+        )
+
+        self.assertEqual(
+            self.repository.count_open_trades(),
+            0,
+        )
+
+    def test_short_stop_below_entry_is_rejected(
+        self,
+    ) -> None:
+        """
+        A SHORT trade with stop_loss below entry_price (wrong side)
+        is rejected.
+        """
+
+        manager = ResearchManager(
+            repository=self.repository,
+        )
+
+        result = manager.create_from_signal(
+            signal=self.signal(
+                symbol="XRPUSDT",
+                strategy="FVG",
+                direction="SHORT",
+            ),
+            entry_price=100.0,
+            stop_loss=95.0,
+            take_profit=90.0,
+            probability=50,
+        )
+
+        self.assertFalse(
+            result.created,
+        )
+
+        self.assertIn(
+            "risk geometry",
+            (result.reason or "").lower(),
+        )
+
+        self.assertEqual(
+            self.repository.count_open_trades(),
+            0,
+        )
+
+    def test_rejected_trade_does_not_call_repository_save(
+        self,
+    ) -> None:
+        """
+        The guard rejects before repository.save() is ever invoked.
+        """
+
+        manager = ResearchManager(
+            repository=self.repository,
+        )
+
+        with mock.patch.object(
+            self.repository,
+            "save",
+        ) as mock_save:
+            result = manager.create_from_signal(
+                signal=self.signal(
+                    symbol="ARBUSDT",
+                    strategy="FVG",
+                    direction="LONG",
+                ),
+                entry_price=0.08696,
+                stop_loss=0.08696,
+                take_profit=0.10414,
+                probability=50,
+            )
+
+        self.assertFalse(
+            result.created,
+        )
+
+        mock_save.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -135,6 +135,20 @@ class ResearchManager:
                 reason="spot_short_not_supported",
             )
 
+        if direction == "SHORT":
+            risk_geometry_valid = stop_loss > entry_price
+        else:
+            risk_geometry_valid = stop_loss < entry_price
+
+        if not risk_geometry_valid:
+            return ResearchTradeCreationResult(
+                reason=(
+                    "Research trade blocked by risk geometry: "
+                    f"{direction} stop_loss ({stop_loss}) is not on the "
+                    f"correct side of entry_price ({entry_price})."
+                ),
+            )
+
         if self.repository.has_open_direction_trade(
             symbol=symbol,
             market=market,

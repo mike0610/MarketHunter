@@ -186,6 +186,14 @@ class DailyLevelsStrategy(BaseStrategy):
     bounce_max_close_position_short_percent = 40.0
     bounce_score_cap = 80.0
 
+    # MTF data contract v1 - observational delivery of entry-timeframe
+    # candles alongside the primary 1D snapshot. Declaring these two
+    # attributes plus analyze_with_entry_candles() is how Scanner
+    # detects this strategy wants supplemental entry-timeframe data.
+    # No trading logic reads entry_candles yet.
+    entry_timeframe = "1h"
+    entry_candle_limit = 200
+
     def __init__(self) -> None:
         pass
 
@@ -377,6 +385,41 @@ class DailyLevelsStrategy(BaseStrategy):
         signal.metadata.update(
             setup.metadata,
         )
+
+        return signal
+
+    async def analyze_with_entry_candles(
+        self,
+        snapshot: MarketSnapshot,
+        entry_candles: list[Candle],
+    ) -> Signal | None:
+        """
+        MTF data contract v1 - observation-only entry-timeframe hook.
+
+        Defers entirely to analyze(): direction, score, setup_type,
+        and reasons are always identical to a plain analyze() call on
+        the same snapshot. The only difference is that a firing
+        signal also records how many entry-timeframe (1h) candles
+        arrived alongside the primary 1D snapshot, so the data
+        pipeline can be exercised end-to-end before any
+        entry-timeframe trading logic is built on top of it.
+        """
+
+        signal = await self.analyze(snapshot)
+
+        if signal is None:
+            return None
+
+        entry_candle_count = len(entry_candles)
+
+        signal.metadata["mtf_context_version"] = "v1"
+        signal.metadata["mtf_primary_timeframe"] = "1d"
+        signal.metadata["mtf_entry_timeframe"] = self.entry_timeframe
+        signal.metadata["mtf_entry_candle_count"] = entry_candle_count
+        signal.metadata["mtf_entry_data_available"] = (
+            entry_candle_count > 0
+        )
+        signal.metadata["mtf_entry_confirmation_applied"] = False
 
         return signal
 

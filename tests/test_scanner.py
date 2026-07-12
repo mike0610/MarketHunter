@@ -1,19 +1,27 @@
 """
 MarketHunter
 
-Tests for Scanner.scan_symbol() - a read-only regression baseline.
+Tests for Scanner.scan_symbol(), including the MTF data contract v1:
+supplemental entry-timeframe candle delivery for strategies that
+declare entry_timeframe/analyze_with_entry_candles().
 
-This is a characterization suite: it locks in the CURRENT behavior of
-Scanner.scan_symbol() using local fake/stub collaborators (no Binance,
-DB, API, or network involved), before any multi-timeframe (1D level ->
-1h entry) work touches the scanner. services/scanner.py is not
-modified by this file.
+The original characterization suite locked in Scanner.scan_symbol()
+behavior using local fake/stub collaborators (no Binance, DB, API, or
+network involved) before any multi-timeframe work touched the
+scanner. MTF data contract v1 has since landed in services/scanner.py
+(supplemental fetch, cached per entry_timeframe per scan_symbol()
+call, with fallback to plain analyze() on fetch failure) - the tests
+below cover that behavior directly.
 
-Two tests are explicitly marked as MTF boundary markers - they pin
-down exactly what is expected to intentionally change or expand once
-multi-timeframe work begins:
-- test_1d_scanner_does_not_load_1h_candles
-- test_strategy_analyze_called_with_exactly_one_argument
+test_1d_scanner_does_not_load_1h_candles, the old MTF boundary
+marker documenting the pre-MTF absence of any 1h fetch, has been
+superseded by test_1d_scanner_loads_1h_once_for_mtf_strategy and the
+other MTF-specific tests below.
+
+test_strategy_analyze_called_with_exactly_one_argument remains a
+boundary marker for a *regular* (non-MTF) strategy: Scanner still
+calls strategy.analyze(snapshot) with exactly one positional argument
+for any strategy that does not declare entry_timeframe.
 """
 
 from __future__ import annotations
@@ -105,12 +113,27 @@ def make_snapshot(
 
 class FakeMarketData:
     """
-    Records every load_candles() call and always returns the same
-    canned candle list, regardless of the requested interval.
+    Records every load_candles() call and returns candles based on
+    the requested interval: `candles` for any interval not present in
+    `per_interval_candles`, or `per_interval_candles[interval]`
+    otherwise. An interval listed in `raise_for_intervals` raises
+    instead of returning, to exercise Scanner's supplemental-fetch
+    failure fallback path.
+
+    Existing callers that only pass `candles` (no per-interval
+    overrides, nothing to raise for) keep the original behavior of
+    always returning the same canned list regardless of interval.
     """
 
-    def __init__(self, candles: list[Candle]) -> None:
+    def __init__(
+        self,
+        candles: list[Candle],
+        per_interval_candles: dict[str, list[Candle]] | None = None,
+        raise_for_intervals: set[str] | None = None,
+    ) -> None:
         self.candles = candles
+        self.per_interval_candles = per_interval_candles or {}
+        self.raise_for_intervals = raise_for_intervals or set()
         self.calls: list[dict] = []
 
     async def load_candles(
@@ -127,7 +150,12 @@ class FakeMarketData:
             }
         )
 
-        return self.candles
+        if interval in self.raise_for_intervals:
+            raise RuntimeError(
+                f"simulated fetch failure for interval {interval}",
+            )
+
+        return self.per_interval_candles.get(interval, self.candles)
 
 
 class FakeSnapshotBuilder:
@@ -191,6 +219,57 @@ class FakeStrategy(BaseStrategy):
         return self._signal_or_none
 
 
+class FakeMTFStrategy(BaseStrategy):
+    """
+    A strategy declaring the MTF data contract v1 hook
+    (entry_timeframe + analyze_with_entry_candles). Records every
+    analyze_with_entry_candles() call (snapshot and entry_candles
+    received) separately from plain analyze() calls, so tests can
+    assert exactly which path Scanner took - the MTF path, or the
+    plain-analyze() fallback used when the supplemental fetch fails.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        signal_or_none: Signal | None,
+        entry_timeframe: str = "1h",
+        entry_candle_limit: int = 200,
+    ) -> None:
+        self.name = name
+        self._signal_or_none = signal_or_none
+        self.entry_timeframe = entry_timeframe
+        self.entry_candle_limit = entry_candle_limit
+        self.analyze_calls: list[dict] = []
+        self.entry_calls: list[dict] = []
+
+    async def analyze(
+        self,
+        snapshot,
+    ) -> Signal | None:
+        self.analyze_calls.append(
+            {
+                "snapshot": snapshot,
+            }
+        )
+
+        return self._signal_or_none
+
+    async def analyze_with_entry_candles(
+        self,
+        snapshot,
+        entry_candles,
+    ) -> Signal | None:
+        self.entry_calls.append(
+            {
+                "snapshot": snapshot,
+                "entry_candles": entry_candles,
+            }
+        )
+
+        return self._signal_or_none
+
+
 class FakePipeline:
     """
     Records every process() call and returns the context unchanged
@@ -243,11 +322,14 @@ def build_scanner(
 
 class ScannerScanSymbolBaselineTests(unittest.IsolatedAsyncioTestCase):
     """
-    Lock in the current, pre-MTF behavior of Scanner.scan_symbol().
+    Lock in the behavior of Scanner.scan_symbol(), including MTF data
+    contract v1 (supplemental entry-timeframe candle delivery for
+    strategies declaring entry_timeframe/analyze_with_entry_candles).
 
-    This is a regression baseline: any future multi-timeframe work
-    must not silently change any of these outcomes unless that change
-    is explicitly intended.
+    This is a regression baseline: any future MTF-related work (e.g.
+    1D level -> 1h confirmation trading logic) must not silently
+    change any of these outcomes unless that change is explicitly
+    intended.
     """
 
     async def test_scan_symbol_loads_candles_once_for_configured_timeframe(
@@ -573,16 +655,14 @@ class ScannerScanSymbolBaselineTests(unittest.IsolatedAsyncioTestCase):
             pipeline.calls[0].signal.direction, "LONG",
         )
 
-    async def test_1d_scanner_does_not_load_1h_candles(
+    async def test_regular_strategy_does_not_trigger_entry_timeframe_fetch(
         self,
     ) -> None:
         """
-        MTF boundary marker: today, a Scanner configured for "1d"
-        never issues a "1h" load_candles() call - there is no
-        secondary-timeframe fetch anywhere in scan_symbol(). This test
-        is EXPECTED to intentionally change or expand once
-        multi-timeframe (1D level -> 1h entry) work begins; until
-        then it documents the exact boundary being refactored.
+        A strategy without entry_timeframe/analyze_with_entry_candles
+        never triggers a supplemental fetch - Scanner still issues
+        exactly one load_candles() call, for its own configured
+        timeframe only.
         """
 
         candles = make_candles()
@@ -605,8 +685,255 @@ class ScannerScanSymbolBaselineTests(unittest.IsolatedAsyncioTestCase):
             call["interval"] for call in market_data.calls
         }
 
+        self.assertEqual(len(market_data.calls), 1)
         self.assertEqual(intervals_requested, {"1d"})
         self.assertNotIn("1h", intervals_requested)
+
+    async def test_1d_scanner_loads_1h_once_for_mtf_strategy(
+        self,
+    ) -> None:
+        """
+        MTF data contract v1: a Scanner configured for "1d" issues
+        exactly one additional "1h" load_candles() call when a
+        configured strategy declares entry_timeframe="1h" and
+        analyze_with_entry_candles(). This supersedes the old
+        test_1d_scanner_does_not_load_1h_candles boundary marker, now
+        that multi-timeframe data delivery has begun.
+        """
+
+        primary_candles = make_candles()
+        entry_candles = make_candles(count=50)
+
+        market_data = FakeMarketData(
+            candles=primary_candles,
+            per_interval_candles={"1h": entry_candles},
+        )
+
+        scanner = build_scanner(
+            market_data=market_data,
+            strategies=[
+                FakeMTFStrategy("MTF", None),
+            ],
+            snapshot_builder=FakeSnapshotBuilder(
+                make_snapshot(candles=primary_candles),
+            ),
+            timeframe="1d",
+        )
+
+        await scanner.scan_symbol(make_symbol())
+
+        interval_calls = [
+            call["interval"] for call in market_data.calls
+        ]
+
+        self.assertEqual(interval_calls.count("1d"), 1)
+        self.assertEqual(interval_calls.count("1h"), 1)
+
+    async def test_mtf_strategy_receives_primary_snapshot_and_entry_candles(
+        self,
+    ) -> None:
+        """
+        An MTF strategy's analyze_with_entry_candles() receives the
+        same primary MarketSnapshot object every other strategy gets,
+        plus exactly the entry-timeframe candles load_candles("1h")
+        returned - not the primary 1d candles. Its plain analyze() is
+        never called.
+        """
+
+        primary_candles = make_candles()
+        entry_candles = make_candles(count=42)
+
+        market_data = FakeMarketData(
+            candles=primary_candles,
+            per_interval_candles={"1h": entry_candles},
+        )
+
+        snapshot = make_snapshot(candles=primary_candles)
+        strategy = FakeMTFStrategy("MTF", None)
+
+        scanner = build_scanner(
+            market_data=market_data,
+            strategies=[strategy],
+            snapshot_builder=FakeSnapshotBuilder(snapshot),
+            timeframe="1d",
+        )
+
+        await scanner.scan_symbol(make_symbol())
+
+        self.assertEqual(len(strategy.entry_calls), 1)
+        self.assertEqual(len(strategy.analyze_calls), 0)
+        self.assertIs(strategy.entry_calls[0]["snapshot"], snapshot)
+        self.assertIs(
+            strategy.entry_calls[0]["entry_candles"], entry_candles,
+        )
+
+    async def test_two_mtf_strategies_share_one_entry_candle_fetch(
+        self,
+    ) -> None:
+        """
+        Two configured strategies both declaring entry_timeframe="1h"
+        share a single "1h" load_candles() call within one
+        scan_symbol() - the second strategy does not trigger a
+        redundant fetch, and both receive the exact same
+        entry_candles list object.
+        """
+
+        primary_candles = make_candles()
+        entry_candles = make_candles(count=30)
+
+        market_data = FakeMarketData(
+            candles=primary_candles,
+            per_interval_candles={"1h": entry_candles},
+        )
+
+        strategy_a = FakeMTFStrategy("A", None)
+        strategy_b = FakeMTFStrategy("B", None)
+
+        scanner = build_scanner(
+            market_data=market_data,
+            strategies=[strategy_a, strategy_b],
+            snapshot_builder=FakeSnapshotBuilder(
+                make_snapshot(candles=primary_candles),
+            ),
+            timeframe="1d",
+        )
+
+        await scanner.scan_symbol(make_symbol())
+
+        interval_calls = [
+            call["interval"] for call in market_data.calls
+        ]
+
+        self.assertEqual(interval_calls.count("1h"), 1)
+        self.assertEqual(len(strategy_a.entry_calls), 1)
+        self.assertEqual(len(strategy_b.entry_calls), 1)
+        self.assertIs(
+            strategy_a.entry_calls[0]["entry_candles"],
+            strategy_b.entry_calls[0]["entry_candles"],
+        )
+
+    async def test_entry_fetch_uses_strategy_entry_candle_limit(
+        self,
+    ) -> None:
+        """
+        The supplemental "1h" fetch uses the strategy's own
+        entry_candle_limit (200), not Scanner.candle_limit.
+        """
+
+        primary_candles = make_candles()
+        entry_candles = make_candles(count=10)
+
+        market_data = FakeMarketData(
+            candles=primary_candles,
+            per_interval_candles={"1h": entry_candles},
+        )
+
+        strategy = FakeMTFStrategy(
+            "MTF", None, entry_candle_limit=200,
+        )
+
+        scanner = build_scanner(
+            market_data=market_data,
+            strategies=[strategy],
+            snapshot_builder=FakeSnapshotBuilder(
+                make_snapshot(candles=primary_candles),
+            ),
+            timeframe="1d",
+        )
+
+        await scanner.scan_symbol(make_symbol())
+
+        entry_fetch_calls = [
+            call
+            for call in market_data.calls
+            if call["interval"] == "1h"
+        ]
+
+        self.assertEqual(len(entry_fetch_calls), 1)
+        self.assertEqual(entry_fetch_calls[0]["limit"], 200)
+
+    async def test_entry_fetch_failure_falls_back_to_plain_analyze(
+        self,
+    ) -> None:
+        """
+        When the supplemental "1h" fetch fails, the primary scan does
+        not fail: the strategy's plain analyze(snapshot) runs instead
+        of analyze_with_entry_candles(), and no MTF metadata is
+        fabricated.
+        """
+
+        primary_candles = make_candles()
+
+        market_data = FakeMarketData(
+            candles=primary_candles,
+            raise_for_intervals={"1h"},
+        )
+
+        strategy = FakeMTFStrategy("MTF", None)
+
+        scanner = build_scanner(
+            market_data=market_data,
+            strategies=[strategy],
+            snapshot_builder=FakeSnapshotBuilder(
+                make_snapshot(candles=primary_candles),
+            ),
+            timeframe="1d",
+        )
+
+        signals = await scanner.scan_symbol(make_symbol())
+
+        self.assertEqual(signals, [])
+        self.assertEqual(len(strategy.analyze_calls), 1)
+        self.assertEqual(len(strategy.entry_calls), 0)
+
+    async def test_scanner_fills_transport_fields_for_mtf_signal(
+        self,
+    ) -> None:
+        """
+        A signal produced via analyze_with_entry_candles() still gets
+        its market/timeframe transport fields filled by Scanner
+        exactly like a plain analyze() signal.
+        """
+
+        primary_candles = make_candles()
+        entry_candles = make_candles(count=20)
+
+        market_data = FakeMarketData(
+            candles=primary_candles,
+            per_interval_candles={"1h": entry_candles},
+        )
+
+        symbol = make_symbol(
+            symbol="ETHUSDT",
+            market="futures",
+        )
+
+        raw_signal = Signal(
+            symbol="ETHUSDT",
+            market="",
+            timeframe="",
+            strategy="MTF",
+            direction="LONG",
+            score=80.0,
+        )
+
+        scanner = build_scanner(
+            market_data=market_data,
+            strategies=[
+                FakeMTFStrategy("MTF", raw_signal),
+            ],
+            snapshot_builder=FakeSnapshotBuilder(
+                make_snapshot(candles=primary_candles),
+            ),
+            pipeline=FakePipeline(),
+            timeframe="1d",
+        )
+
+        signals = await scanner.scan_symbol(symbol)
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].market, "futures")
+        self.assertEqual(signals[0].timeframe, "1d")
 
     async def test_strategy_analyze_called_with_exactly_one_argument(
         self,

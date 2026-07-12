@@ -8,6 +8,9 @@ Responsibilities:
 - Load candles for one configured timeframe.
 - Build a market snapshot.
 - Run all strategies for a symbol.
+- MTF data contract v1: load supplemental entry-timeframe candles
+  (at most once per timeframe per scan_symbol() call) for strategies
+  that declare entry_timeframe/analyze_with_entry_candles().
 - Resolve LONG/SHORT direction conflicts per symbol.
 - Send candidate signals through SignalPipeline.
 - Persist every candidate signal into scan journal when enabled.
@@ -22,6 +25,7 @@ from dataclasses import field
 
 from loguru import logger
 
+from models.candle import Candle
 from models.market_symbol import MarketSymbol
 from models.signal import Signal
 from pipeline.context import SignalContext
@@ -241,13 +245,30 @@ class Scanner:
     ) -> list[Signal]:
         """
         Run all strategies for one symbol before pipeline processing.
+
+        Strategies exposing entry_timeframe and
+        analyze_with_entry_candles() additionally receive
+        entry-timeframe candles (MTF data contract v1). Every
+        distinct entry_timeframe is fetched at most once per call via
+        supplemental_candles_by_timeframe, scoped to this one
+        scan_symbol() invocation.
         """
 
         raw_signals: list[Signal] = []
+        supplemental_candles_by_timeframe: dict[
+            str, list[Candle] | None
+        ] = {}
 
         for strategy in self.strategies:
             try:
-                signal = await strategy.analyze(snapshot)
+                signal = await self._run_strategy(
+                    strategy=strategy,
+                    symbol=symbol,
+                    snapshot=snapshot,
+                    supplemental_candles_by_timeframe=(
+                        supplemental_candles_by_timeframe
+                    ),
+                )
 
                 if signal is None:
                     continue
@@ -268,6 +289,110 @@ class Scanner:
                 )
 
         return raw_signals
+
+    async def _run_strategy(
+        self,
+        strategy: BaseStrategy,
+        symbol: MarketSymbol,
+        snapshot: object,
+        supplemental_candles_by_timeframe: dict[
+            str, list[Candle] | None
+        ],
+    ) -> Signal | None:
+        """
+        Run one strategy, routing through the MTF data contract v1
+        hook when the strategy declares entry_timeframe and
+        analyze_with_entry_candles(). Any other strategy is called
+        exactly as before: strategy.analyze(snapshot).
+
+        A failed supplemental fetch falls back to strategy.analyze(
+        snapshot) rather than raising - the primary 1d scan must never
+        fail because a secondary-timeframe fetch failed, and no
+        MTF metadata is fabricated for a signal produced this way.
+        """
+
+        entry_timeframe = getattr(strategy, "entry_timeframe", None)
+        analyze_with_entry_candles = getattr(
+            strategy,
+            "analyze_with_entry_candles",
+            None,
+        )
+
+        if not entry_timeframe or not callable(
+            analyze_with_entry_candles,
+        ):
+            return await strategy.analyze(snapshot)
+
+        entry_candles = await self._load_supplemental_candles(
+            symbol=symbol,
+            snapshot=snapshot,
+            timeframe=entry_timeframe,
+            limit=getattr(
+                strategy,
+                "entry_candle_limit",
+                self.candle_limit,
+            ),
+            cache=supplemental_candles_by_timeframe,
+        )
+
+        if entry_candles is None:
+            return await strategy.analyze(snapshot)
+
+        return await analyze_with_entry_candles(
+            snapshot,
+            entry_candles,
+        )
+
+    async def _load_supplemental_candles(
+        self,
+        symbol: MarketSymbol,
+        snapshot: object,
+        timeframe: str,
+        limit: int,
+        cache: dict[str, list[Candle] | None],
+    ) -> list[Candle] | None:
+        """
+        Load and cache one entry-timeframe candle list per
+        scan_symbol() call.
+
+        Reuses the primary snapshot's own candles (no extra fetch)
+        when the requested timeframe matches Scanner.timeframe.
+        Returns the same cached list for every strategy requesting
+        the same timeframe within one call, so a shared
+        entry_timeframe is fetched at most once. Returns None (never
+        raises) when the additional fetch fails, so callers fall back
+        to strategy.analyze(snapshot) without any fabricated MTF
+        metadata.
+        """
+
+        if timeframe == self.timeframe:
+            return getattr(snapshot, "candles", None)
+
+        if timeframe in cache:
+            return cache[timeframe]
+
+        try:
+            entry_candles = await self.market_data.load_candles(
+                symbol=symbol,
+                interval=timeframe,
+                limit=limit,
+            )
+
+        except Exception as exc:
+            logger.warning(
+                "{} -> failed to load supplemental {} candles: {}",
+                symbol.symbol,
+                timeframe,
+                exc,
+            )
+
+            cache[timeframe] = None
+
+            return None
+
+        cache[timeframe] = entry_candles
+
+        return entry_candles
 
     def _resolve_direction_conflicts(
         self,

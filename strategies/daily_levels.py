@@ -39,6 +39,24 @@ class DailyLevelSetup:
     metadata: dict
 
 
+@dataclass(slots=True)
+class LevelQuality:
+    """
+    Level Quality Foundation v1 - result of scoring how strong one
+    daily level (support or resistance) looks, based only on past
+    reactions and false breaks inside the reference window.
+
+    This score is observation-only in v1: it never blocks a signal,
+    never changes signal.score, never changes setup priority, and
+    never changes the existing 0.15% / 3% / 8% thresholds.
+    """
+
+    score: float
+    reaction_count: int
+    false_break_count: int
+    max_reaction_percent: float
+
+
 class DailyLevelsStrategy(BaseStrategy):
     """
     Daily levels strategy.
@@ -56,6 +74,20 @@ class DailyLevelsStrategy(BaseStrategy):
     sweep_buffer_percent = 0.15
     min_level_range_percent = 3.0
     max_estimated_stop_distance_percent = 8.0
+
+    # Level Quality Foundation v1 - observation-only level scoring.
+    level_tolerance_percent = 0.15
+    reaction_gap_candles = 2
+    reaction_validation_candles = 3
+    reaction_validation_min_percent = 0.5
+    level_score_reaction_points = 20.0
+    level_score_max_reactions = 3
+    level_score_false_break_points = 10.0
+    level_score_max_false_breaks = 2
+    level_score_deviation_bonus_percent_1 = 1.0
+    level_score_deviation_bonus_percent_2 = 2.0
+    level_score_deviation_bonus_points = 10.0
+    level_score_cap = 100.0
 
     def __init__(self) -> None:
         pass
@@ -107,6 +139,18 @@ class DailyLevelsStrategy(BaseStrategy):
         if level_range_percent < self.min_level_range_percent:
             return None
 
+        resistance_quality = self._score_level_quality(
+            reference_candles=reference_candles,
+            level_price=resistance,
+            level_side="resistance",
+        )
+
+        support_quality = self._score_level_quality(
+            reference_candles=reference_candles,
+            level_price=support,
+            level_side="support",
+        )
+
         setup = (
             self._detect_false_breakout_short(
                 signal_candle=signal_candle,
@@ -114,6 +158,8 @@ class DailyLevelsStrategy(BaseStrategy):
                 resistance=resistance,
                 support=support,
                 level_range_percent=level_range_percent,
+                resistance_quality=resistance_quality,
+                support_quality=support_quality,
             )
             or self._detect_false_breakdown_long(
                 signal_candle=signal_candle,
@@ -121,6 +167,8 @@ class DailyLevelsStrategy(BaseStrategy):
                 resistance=resistance,
                 support=support,
                 level_range_percent=level_range_percent,
+                resistance_quality=resistance_quality,
+                support_quality=support_quality,
             )
             or self._detect_breakout_long(
                 signal_candle=signal_candle,
@@ -128,6 +176,8 @@ class DailyLevelsStrategy(BaseStrategy):
                 resistance=resistance,
                 support=support,
                 level_range_percent=level_range_percent,
+                resistance_quality=resistance_quality,
+                support_quality=support_quality,
             )
             or self._detect_breakdown_short(
                 signal_candle=signal_candle,
@@ -135,6 +185,8 @@ class DailyLevelsStrategy(BaseStrategy):
                 resistance=resistance,
                 support=support,
                 level_range_percent=level_range_percent,
+                resistance_quality=resistance_quality,
+                support_quality=support_quality,
             )
         )
 
@@ -196,6 +248,8 @@ class DailyLevelsStrategy(BaseStrategy):
         resistance: float,
         support: float,
         level_range_percent: float,
+        resistance_quality: LevelQuality,
+        support_quality: LevelQuality,
     ) -> DailyLevelSetup | None:
         """
         LONG: daily candle closes above previous resistance.
@@ -252,6 +306,8 @@ class DailyLevelsStrategy(BaseStrategy):
                 previous_candle=previous_candle,
                 level_range_percent=level_range_percent,
                 trigger_distance_percent=close_distance,
+                resistance_quality=resistance_quality,
+                support_quality=support_quality,
             ),
         )
 
@@ -262,6 +318,8 @@ class DailyLevelsStrategy(BaseStrategy):
         resistance: float,
         support: float,
         level_range_percent: float,
+        resistance_quality: LevelQuality,
+        support_quality: LevelQuality,
     ) -> DailyLevelSetup | None:
         """
         SHORT: daily candle closes below previous support.
@@ -318,6 +376,8 @@ class DailyLevelsStrategy(BaseStrategy):
                 previous_candle=previous_candle,
                 level_range_percent=level_range_percent,
                 trigger_distance_percent=close_distance,
+                resistance_quality=resistance_quality,
+                support_quality=support_quality,
             ),
         )
 
@@ -328,6 +388,8 @@ class DailyLevelsStrategy(BaseStrategy):
         resistance: float,
         support: float,
         level_range_percent: float,
+        resistance_quality: LevelQuality,
+        support_quality: LevelQuality,
     ) -> DailyLevelSetup | None:
         """
         SHORT: price sweeps resistance but daily candle closes back below it.
@@ -387,6 +449,8 @@ class DailyLevelsStrategy(BaseStrategy):
                 previous_candle=previous_candle,
                 level_range_percent=level_range_percent,
                 trigger_distance_percent=sweep_distance,
+                resistance_quality=resistance_quality,
+                support_quality=support_quality,
             ),
         )
 
@@ -397,6 +461,8 @@ class DailyLevelsStrategy(BaseStrategy):
         resistance: float,
         support: float,
         level_range_percent: float,
+        resistance_quality: LevelQuality,
+        support_quality: LevelQuality,
     ) -> DailyLevelSetup | None:
         """
         LONG: price sweeps support but daily candle closes back above it.
@@ -456,6 +522,8 @@ class DailyLevelsStrategy(BaseStrategy):
                 previous_candle=previous_candle,
                 level_range_percent=level_range_percent,
                 trigger_distance_percent=sweep_distance,
+                resistance_quality=resistance_quality,
+                support_quality=support_quality,
             ),
         )
 
@@ -470,10 +538,18 @@ class DailyLevelsStrategy(BaseStrategy):
         previous_candle: Candle,
         level_range_percent: float,
         trigger_distance_percent: float,
+        resistance_quality: LevelQuality,
+        support_quality: LevelQuality,
     ) -> dict:
         """
         Build metadata for scan journal and research trade storage.
         """
+
+        level_quality = (
+            resistance_quality
+            if level_name == "daily_resistance"
+            else support_quality
+        )
 
         return {
             "strategy_family": "daily_levels",
@@ -496,7 +572,267 @@ class DailyLevelsStrategy(BaseStrategy):
             "previous_candle_open_time": previous_candle.open_time.isoformat(),
             "confirmation": "daily_close",
             "uses_indicators": False,
+            "level_score": level_quality.score,
+            "level_reaction_count": level_quality.reaction_count,
+            "level_false_break_count": level_quality.false_break_count,
+            "level_max_reaction_percent": level_quality.max_reaction_percent,
+            "daily_support_score": support_quality.score,
+            "daily_resistance_score": resistance_quality.score,
+            "level_quality_version": "v1",
         }
+
+    def _score_level_quality(
+        self,
+        reference_candles: list[Candle],
+        level_price: float,
+        level_side: str,
+    ) -> LevelQuality:
+        """
+        Level Quality Foundation v1.
+
+        Score how strong one daily level looks, using only past
+        reactions and false breaks inside reference_candles:
+        - a candle is "near" the level if its touch price (high for
+          resistance, low for support) sits within
+          level_tolerance_percent of level_price;
+        - consecutive near candles count as ONE reaction;
+        - a new reaction only starts after at least
+          reaction_gap_candles candles outside tolerance since the
+          previous reaction ended;
+        - a reaction is valid if, within the next
+          reaction_validation_candles candles, price moved away from
+          the level by at least reaction_validation_min_percent;
+        - a false break is a candle whose touch price clears
+          tolerance on the wrong side but whose close ends back on
+          the level's side.
+
+        This score is observation-only: it is attached to signal
+        metadata but does not affect which setup fires, signal.score,
+        setup priority, or any existing threshold.
+        """
+
+        is_resistance = level_side == "resistance"
+
+        tolerance = level_price * (
+            self.level_tolerance_percent / 100
+        )
+
+        reaction_ends = self._group_reaction_ends(
+            reference_candles=reference_candles,
+            level_price=level_price,
+            tolerance=tolerance,
+            is_resistance=is_resistance,
+        )
+
+        reaction_count = 0
+        max_reaction_percent = 0.0
+
+        for end_index in reaction_ends:
+            deviation_percent = self._reaction_deviation_percent(
+                reference_candles=reference_candles,
+                end_index=end_index,
+                level_price=level_price,
+                is_resistance=is_resistance,
+            )
+
+            if deviation_percent >= self.reaction_validation_min_percent:
+                reaction_count += 1
+
+                max_reaction_percent = max(
+                    max_reaction_percent,
+                    deviation_percent,
+                )
+
+        false_break_count = sum(
+            1
+            for candle in reference_candles
+            if self._is_false_break(
+                candle=candle,
+                level_price=level_price,
+                tolerance=tolerance,
+                is_resistance=is_resistance,
+            )
+        )
+
+        score = 0.0
+
+        score += min(
+            reaction_count,
+            self.level_score_max_reactions,
+        ) * self.level_score_reaction_points
+
+        score += min(
+            false_break_count,
+            self.level_score_max_false_breaks,
+        ) * self.level_score_false_break_points
+
+        if max_reaction_percent >= self.level_score_deviation_bonus_percent_1:
+            score += self.level_score_deviation_bonus_points
+
+        if max_reaction_percent >= self.level_score_deviation_bonus_percent_2:
+            score += self.level_score_deviation_bonus_points
+
+        score = min(
+            score,
+            self.level_score_cap,
+        )
+
+        return LevelQuality(
+            score=score,
+            reaction_count=reaction_count,
+            false_break_count=false_break_count,
+            max_reaction_percent=round(
+                max_reaction_percent,
+                4,
+            ),
+        )
+
+    def _group_reaction_ends(
+        self,
+        reference_candles: list[Candle],
+        level_price: float,
+        tolerance: float,
+        is_resistance: bool,
+    ) -> list[int]:
+        """
+        Return the end index (inside reference_candles) of each
+        merged reaction.
+
+        Consecutive near candles extend the current reaction. A near
+        candle that follows fewer than reaction_gap_candles non-near
+        candles since the previous reaction also merges into it,
+        rather than starting a new reaction.
+        """
+
+        reaction_ends: list[int] = []
+
+        in_reaction = False
+        gap_since_last_reaction = self.reaction_gap_candles
+
+        for index, candle in enumerate(reference_candles):
+            near = self._is_near_level(
+                candle=candle,
+                level_price=level_price,
+                tolerance=tolerance,
+                is_resistance=is_resistance,
+            )
+
+            if not near:
+                in_reaction = False
+                gap_since_last_reaction += 1
+                continue
+
+            starts_new_reaction = (
+                not reaction_ends
+                or (
+                    not in_reaction
+                    and gap_since_last_reaction
+                    >= self.reaction_gap_candles
+                )
+            )
+
+            if starts_new_reaction:
+                reaction_ends.append(index)
+            else:
+                reaction_ends[-1] = index
+
+            in_reaction = True
+            gap_since_last_reaction = 0
+
+        return reaction_ends
+
+    def _reaction_deviation_percent(
+        self,
+        reference_candles: list[Candle],
+        end_index: int,
+        level_price: float,
+        is_resistance: bool,
+    ) -> float:
+        """
+        Return how far (in percent) price moved away from the level
+        within reaction_validation_candles candles following
+        end_index. Movement back toward or through the level
+        contributes zero, never a negative deviation.
+        """
+
+        max_deviation = 0.0
+
+        follow_up_candles = reference_candles[
+            end_index + 1:
+            end_index + 1 + self.reaction_validation_candles
+        ]
+
+        for candle in follow_up_candles:
+            away_price = (
+                candle.low
+                if is_resistance
+                else candle.high
+            )
+
+            if is_resistance:
+                deviation = (
+                    level_price
+                    - away_price
+                ) / level_price * 100
+
+            else:
+                deviation = (
+                    away_price
+                    - level_price
+                ) / level_price * 100
+
+            max_deviation = max(
+                max_deviation,
+                deviation,
+            )
+
+        return max_deviation
+
+    @staticmethod
+    def _is_near_level(
+        candle: Candle,
+        level_price: float,
+        tolerance: float,
+        is_resistance: bool,
+    ) -> bool:
+        """
+        Return True when the candle's touch price sits within
+        tolerance of the level.
+        """
+
+        touch_price = (
+            candle.high
+            if is_resistance
+            else candle.low
+        )
+
+        return abs(
+            touch_price - level_price
+        ) <= tolerance
+
+    @staticmethod
+    def _is_false_break(
+        candle: Candle,
+        level_price: float,
+        tolerance: float,
+        is_resistance: bool,
+    ) -> bool:
+        """
+        Return True when the candle clears the level by more than
+        tolerance on the wrong side, but closes back on the level's
+        side.
+        """
+
+        if is_resistance:
+            return (
+                candle.high > level_price + tolerance
+                and candle.close < level_price
+            )
+
+        return (
+            candle.low < level_price - tolerance
+            and candle.close > level_price
+        )
 
     @staticmethod
     def _above_level(

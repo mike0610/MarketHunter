@@ -57,6 +57,33 @@ class LevelQuality:
     max_reaction_percent: float
 
 
+@dataclass(slots=True)
+class LevelApproachContext:
+    """
+    Approach Context v1 - result of scoring how price approached one
+    daily level (support or resistance) over the last few reference
+    candles, i.e. only candles known before the trigger candle.
+
+    Consecutive closes drifting closer to the level while candle
+    ranges shrink ("pidzhattia"/compression) tend to precede a real
+    breakout. A single large-range candle already sitting near the
+    level tends to signal exhaustion instead.
+
+    This context is observation-only in v1: it never blocks a
+    signal, never changes signal.score, never changes setup
+    priority, and never changes the existing 0.15% / 3% / 8%
+    thresholds.
+    """
+
+    bar_count: int
+    closer_close_count: int
+    smaller_range_count: int
+    distance_reduction_percent: float
+    range_reduction_percent: float
+    is_compression: bool
+    is_large_bar_approach: bool
+
+
 class DailyLevelsStrategy(BaseStrategy):
     """
     Daily levels strategy.
@@ -88,6 +115,15 @@ class DailyLevelsStrategy(BaseStrategy):
     level_score_deviation_bonus_percent_2 = 2.0
     level_score_deviation_bonus_points = 10.0
     level_score_cap = 100.0
+
+    # Approach Context v1 - observation-only compression/large-bar
+    # approach detection.
+    level_approach_window = 4
+    level_approach_max_distance_percent = 1.0
+    level_approach_min_distance_reduction_percent = 50.0
+    level_approach_min_range_reduction_percent = 20.0
+    level_approach_min_smaller_range_count = 2
+    level_approach_large_bar_multiplier = 1.5
 
     def __init__(self) -> None:
         pass
@@ -151,6 +187,18 @@ class DailyLevelsStrategy(BaseStrategy):
             level_side="support",
         )
 
+        resistance_approach = self._score_level_approach(
+            reference_candles=reference_candles,
+            level_price=resistance,
+            level_side="resistance",
+        )
+
+        support_approach = self._score_level_approach(
+            reference_candles=reference_candles,
+            level_price=support,
+            level_side="support",
+        )
+
         setup = (
             self._detect_false_breakout_short(
                 signal_candle=signal_candle,
@@ -160,6 +208,8 @@ class DailyLevelsStrategy(BaseStrategy):
                 level_range_percent=level_range_percent,
                 resistance_quality=resistance_quality,
                 support_quality=support_quality,
+                resistance_approach=resistance_approach,
+                support_approach=support_approach,
             )
             or self._detect_false_breakdown_long(
                 signal_candle=signal_candle,
@@ -169,6 +219,8 @@ class DailyLevelsStrategy(BaseStrategy):
                 level_range_percent=level_range_percent,
                 resistance_quality=resistance_quality,
                 support_quality=support_quality,
+                resistance_approach=resistance_approach,
+                support_approach=support_approach,
             )
             or self._detect_breakout_long(
                 signal_candle=signal_candle,
@@ -178,6 +230,8 @@ class DailyLevelsStrategy(BaseStrategy):
                 level_range_percent=level_range_percent,
                 resistance_quality=resistance_quality,
                 support_quality=support_quality,
+                resistance_approach=resistance_approach,
+                support_approach=support_approach,
             )
             or self._detect_breakdown_short(
                 signal_candle=signal_candle,
@@ -187,6 +241,8 @@ class DailyLevelsStrategy(BaseStrategy):
                 level_range_percent=level_range_percent,
                 resistance_quality=resistance_quality,
                 support_quality=support_quality,
+                resistance_approach=resistance_approach,
+                support_approach=support_approach,
             )
         )
 
@@ -250,6 +306,8 @@ class DailyLevelsStrategy(BaseStrategy):
         level_range_percent: float,
         resistance_quality: LevelQuality,
         support_quality: LevelQuality,
+        resistance_approach: LevelApproachContext,
+        support_approach: LevelApproachContext,
     ) -> DailyLevelSetup | None:
         """
         LONG: daily candle closes above previous resistance.
@@ -308,6 +366,8 @@ class DailyLevelsStrategy(BaseStrategy):
                 trigger_distance_percent=close_distance,
                 resistance_quality=resistance_quality,
                 support_quality=support_quality,
+                resistance_approach=resistance_approach,
+                support_approach=support_approach,
             ),
         )
 
@@ -320,6 +380,8 @@ class DailyLevelsStrategy(BaseStrategy):
         level_range_percent: float,
         resistance_quality: LevelQuality,
         support_quality: LevelQuality,
+        resistance_approach: LevelApproachContext,
+        support_approach: LevelApproachContext,
     ) -> DailyLevelSetup | None:
         """
         SHORT: daily candle closes below previous support.
@@ -378,6 +440,8 @@ class DailyLevelsStrategy(BaseStrategy):
                 trigger_distance_percent=close_distance,
                 resistance_quality=resistance_quality,
                 support_quality=support_quality,
+                resistance_approach=resistance_approach,
+                support_approach=support_approach,
             ),
         )
 
@@ -390,6 +454,8 @@ class DailyLevelsStrategy(BaseStrategy):
         level_range_percent: float,
         resistance_quality: LevelQuality,
         support_quality: LevelQuality,
+        resistance_approach: LevelApproachContext,
+        support_approach: LevelApproachContext,
     ) -> DailyLevelSetup | None:
         """
         SHORT: price sweeps resistance but daily candle closes back below it.
@@ -451,6 +517,8 @@ class DailyLevelsStrategy(BaseStrategy):
                 trigger_distance_percent=sweep_distance,
                 resistance_quality=resistance_quality,
                 support_quality=support_quality,
+                resistance_approach=resistance_approach,
+                support_approach=support_approach,
             ),
         )
 
@@ -463,6 +531,8 @@ class DailyLevelsStrategy(BaseStrategy):
         level_range_percent: float,
         resistance_quality: LevelQuality,
         support_quality: LevelQuality,
+        resistance_approach: LevelApproachContext,
+        support_approach: LevelApproachContext,
     ) -> DailyLevelSetup | None:
         """
         LONG: price sweeps support but daily candle closes back above it.
@@ -524,6 +594,8 @@ class DailyLevelsStrategy(BaseStrategy):
                 trigger_distance_percent=sweep_distance,
                 resistance_quality=resistance_quality,
                 support_quality=support_quality,
+                resistance_approach=resistance_approach,
+                support_approach=support_approach,
             ),
         )
 
@@ -540,6 +612,8 @@ class DailyLevelsStrategy(BaseStrategy):
         trigger_distance_percent: float,
         resistance_quality: LevelQuality,
         support_quality: LevelQuality,
+        resistance_approach: LevelApproachContext,
+        support_approach: LevelApproachContext,
     ) -> dict:
         """
         Build metadata for scan journal and research trade storage.
@@ -549,6 +623,12 @@ class DailyLevelsStrategy(BaseStrategy):
             resistance_quality
             if level_name == "daily_resistance"
             else support_quality
+        )
+
+        level_approach = (
+            resistance_approach
+            if level_name == "daily_resistance"
+            else support_approach
         )
 
         return {
@@ -579,6 +659,16 @@ class DailyLevelsStrategy(BaseStrategy):
             "daily_support_score": support_quality.score,
             "daily_resistance_score": resistance_quality.score,
             "level_quality_version": "v1",
+            "approach_bar_count": level_approach.bar_count,
+            "approach_closer_close_count": level_approach.closer_close_count,
+            "approach_smaller_range_count": level_approach.smaller_range_count,
+            "approach_distance_reduction_percent": level_approach.distance_reduction_percent,
+            "approach_range_reduction_percent": level_approach.range_reduction_percent,
+            "approach_is_compression": level_approach.is_compression,
+            "approach_is_large_bar": level_approach.is_large_bar_approach,
+            "approach_context_version": "v1",
+            "daily_support_is_compression": support_approach.is_compression,
+            "daily_resistance_is_compression": resistance_approach.is_compression,
         }
 
     def _score_level_quality(
@@ -833,6 +923,242 @@ class DailyLevelsStrategy(BaseStrategy):
             candle.low < level_price - tolerance
             and candle.close > level_price
         )
+
+    def _score_level_approach(
+        self,
+        reference_candles: list[Candle],
+        level_price: float,
+        level_side: str,
+        window: int | None = None,
+    ) -> LevelApproachContext:
+        """
+        Approach Context v1.
+
+        Score how price approached one daily level over the last
+        `window` reference candles (default level_approach_window),
+        i.e. only candles known before the trigger candle:
+        - distance to the level is measured from each candle's
+          close, on the approach side only (below resistance, above
+          support);
+        - candle size is measured as (high - low) / close;
+        - is_compression is True when all window closes stay on the
+          approach side, the last close is within
+          level_approach_max_distance_percent of the level, every
+          consecutive close is strictly closer to the level than the
+          previous one, at least level_approach_min_smaller_range_count
+          consecutive candle ranges shrink, distance to the level
+          dropped by at least level_approach_min_distance_reduction_percent,
+          and candle range dropped by at least
+          level_approach_min_range_reduction_percent;
+        - is_large_bar_approach is True when the last candle sits
+          within level_approach_max_distance_percent of the level and
+          its range is at least level_approach_large_bar_multiplier
+          times the median range of the preceding candles in the
+          window.
+
+        This context is observation-only: it is attached to signal
+        metadata but does not affect which setup fires, signal.score,
+        setup priority, or any existing threshold.
+        """
+
+        window = window or self.level_approach_window
+
+        is_resistance = level_side == "resistance"
+
+        analyzed_candles = reference_candles[-window:]
+
+        if len(analyzed_candles) < window:
+            return LevelApproachContext(
+                bar_count=len(analyzed_candles),
+                closer_close_count=0,
+                smaller_range_count=0,
+                distance_reduction_percent=0.0,
+                range_reduction_percent=0.0,
+                is_compression=False,
+                is_large_bar_approach=False,
+            )
+
+        distances = [
+            self._approach_distance_percent(
+                candle=candle,
+                level_price=level_price,
+                is_resistance=is_resistance,
+            )
+            for candle in analyzed_candles
+        ]
+
+        ranges = [
+            self._approach_range_percent(
+                candle=candle,
+            )
+            for candle in analyzed_candles
+        ]
+
+        closer_close_count = sum(
+            1
+            for index in range(1, len(distances))
+            if distances[index] < distances[index - 1]
+        )
+
+        smaller_range_count = sum(
+            1
+            for index in range(1, len(ranges))
+            if ranges[index] < ranges[index - 1]
+        )
+
+        distance_reduction_percent = self._reduction_percent(
+            start_value=distances[0],
+            end_value=distances[-1],
+        )
+
+        range_reduction_percent = self._reduction_percent(
+            start_value=ranges[0],
+            end_value=ranges[-1],
+        )
+
+        all_on_approach_side = all(
+            self._is_on_approach_side(
+                candle=candle,
+                level_price=level_price,
+                is_resistance=is_resistance,
+            )
+            for candle in analyzed_candles
+        )
+
+        last_distance_within_reach = (
+            distances[-1] <= self.level_approach_max_distance_percent
+        )
+
+        is_compression = (
+            all_on_approach_side
+            and last_distance_within_reach
+            and closer_close_count == len(analyzed_candles) - 1
+            and smaller_range_count
+            >= self.level_approach_min_smaller_range_count
+            and distance_reduction_percent
+            >= self.level_approach_min_distance_reduction_percent
+            and range_reduction_percent
+            >= self.level_approach_min_range_reduction_percent
+        )
+
+        preceding_ranges = ranges[:-1]
+
+        is_large_bar_approach = (
+            last_distance_within_reach
+            and ranges[-1]
+            >= self.level_approach_large_bar_multiplier
+            * self._median(preceding_ranges)
+        )
+
+        return LevelApproachContext(
+            bar_count=len(analyzed_candles),
+            closer_close_count=closer_close_count,
+            smaller_range_count=smaller_range_count,
+            distance_reduction_percent=round(
+                distance_reduction_percent,
+                4,
+            ),
+            range_reduction_percent=round(
+                range_reduction_percent,
+                4,
+            ),
+            is_compression=is_compression,
+            is_large_bar_approach=is_large_bar_approach,
+        )
+
+    @staticmethod
+    def _approach_distance_percent(
+        candle: Candle,
+        level_price: float,
+        is_resistance: bool,
+    ) -> float:
+        """
+        Return the distance from the candle's close to the level, on
+        the approach side (positive while price has not crossed the
+        level yet).
+        """
+
+        if is_resistance:
+            return (
+                level_price - candle.close
+            ) / level_price * 100
+
+        return (
+            candle.close - level_price
+        ) / level_price * 100
+
+    @staticmethod
+    def _approach_range_percent(
+        candle: Candle,
+    ) -> float:
+        """
+        Return the candle's high-low range as a percent of its close.
+        """
+
+        if candle.close <= 0:
+            return 0.0
+
+        return (
+            candle.high - candle.low
+        ) / candle.close * 100
+
+    @staticmethod
+    def _is_on_approach_side(
+        candle: Candle,
+        level_price: float,
+        is_resistance: bool,
+    ) -> bool:
+        """
+        Return True when the candle's close has not yet crossed the
+        level (below resistance, above support).
+        """
+
+        if is_resistance:
+            return candle.close < level_price
+
+        return candle.close > level_price
+
+    @staticmethod
+    def _reduction_percent(
+        start_value: float,
+        end_value: float,
+    ) -> float:
+        """
+        Return how much end_value shrank from start_value, as a
+        percent of start_value. Never negative: a value that grew
+        (or a non-positive starting value) contributes zero.
+        """
+
+        if start_value <= 0:
+            return 0.0
+
+        return max(
+            0.0,
+            (start_value - end_value) / start_value * 100,
+        )
+
+    @staticmethod
+    def _median(
+        values: list[float],
+    ) -> float:
+        """
+        Return the median of values. Returns 0.0 for an empty list.
+        """
+
+        if not values:
+            return 0.0
+
+        ordered = sorted(values)
+        count = len(ordered)
+        midpoint = count // 2
+
+        if count % 2 == 1:
+            return ordered[midpoint]
+
+        return (
+            ordered[midpoint - 1]
+            + ordered[midpoint]
+        ) / 2
 
     @staticmethod
     def _above_level(

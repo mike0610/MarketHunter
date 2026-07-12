@@ -32,6 +32,10 @@ from research.models.trade import (
     EXPERIMENTAL_RESEARCH_GROUP,
     ResearchTrade,
 )
+from research.models.trade_outcome import (
+    TradeOutcomeGroup,
+    TradeOutcomeType,
+)
 from research.models.trade_status import TradeStatus
 from research.setup.support_resistance import (
     SupportResistanceDetector,
@@ -111,6 +115,12 @@ class ResearchTradeResponse(BaseModel):
     max_active_candles: int
     last_processed_candle_at: datetime | None
 
+    outcome_group: str
+    outcome_type: str
+    outcome_note: str | None
+    outcome_locked: bool
+    is_profitable_expired: bool
+
     @classmethod
     def from_trade(
         cls,
@@ -153,6 +163,13 @@ class ResearchTradeResponse(BaseModel):
             last_processed_candle_at=(
                 trade.last_processed_candle_at
             ),
+            outcome_group=trade.outcome_group,
+            outcome_type=trade.outcome_type,
+            outcome_note=trade.outcome_note,
+            outcome_locked=trade.outcome_locked,
+            is_profitable_expired=(
+                trade.is_profitable_expired
+            ),
         )
 
 
@@ -176,10 +193,15 @@ class ResearchStatisticsResponse(BaseModel):
     waiting_entry: int
     active: int
     completed: int
+    clean_completed: int
+    excluded: int
 
     wins: int
     losses: int
     breakeven: int
+    profitable_expired: int
+    profitable_expired_profit: float
+    expired_at_loss: int
 
     win_rate: float
     total_profit: float
@@ -754,6 +776,13 @@ def list_research_trades(
         default=None,
         description="Optional experiment tag filter, for example spot_research.",
     ),
+    outcome_group: str | None = Query(
+        default=None,
+        description=(
+            "Optional outcome filter: positive, negative, "
+            "neutral or excluded."
+        ),
+    ),
     limit: int = Query(
         default=50,
         ge=1,
@@ -791,6 +820,10 @@ def list_research_trades(
         else None
     )
 
+    normalized_outcome_group = _normalize_outcome_group(
+        outcome_group,
+    )
+
     trades = repository.list_all()
 
     if normalized_status is not None:
@@ -819,6 +852,13 @@ def list_research_trades(
             trade
             for trade in trades
             if trade.experiment_tag == normalized_experiment_tag
+        ]
+
+    if normalized_outcome_group is not None:
+        trades = [
+            trade
+            for trade in trades
+            if trade.outcome_group == normalized_outcome_group
         ]
 
     total = len(trades)
@@ -864,10 +904,27 @@ def get_research_statistics(
         completed=int(
             statistics.get("completed", 0)
         ),
+        clean_completed=int(
+            statistics.get("clean_completed", 0)
+        ),
+        excluded=int(
+            statistics.get("excluded", 0)
+        ),
         wins=int(statistics.get("wins", 0)),
         losses=int(statistics.get("losses", 0)),
         breakeven=int(
             statistics.get("breakeven", 0)
+        ),
+        profitable_expired=int(
+            statistics.get("profitable_expired", 0)
+        ),
+        profitable_expired_profit=float(
+            statistics.get(
+                "profitable_expired_profit", 0.0
+            )
+        ),
+        expired_at_loss=int(
+            statistics.get("expired_at_loss", 0)
         ),
         win_rate=float(
             statistics.get("win_rate", 0.0)
@@ -1229,6 +1286,153 @@ def get_research_trade(
     )
 
 
+# v1 deliberately only allows PATCH .../outcome to exclude a trade,
+# not to relabel it as any arbitrary outcome_type (e.g. hand-setting a
+# closed trade to open_active, or an active trade to take_profit,
+# which would desync outcome_type from lifecycle status). Broader
+# manual relabelling can be added later behind proper status/outcome
+# compatibility validation, once there is a UI driving this.
+_MANUAL_OUTCOME_TYPES = (
+    TradeOutcomeType.UNIVERSE_CLEANUP,
+    TradeOutcomeType.INVALID_LEGACY,
+)
+
+
+class SetTradeOutcomeRequest(BaseModel):
+    """
+    Manual outcome classification request body.
+
+    outcome_type is currently limited to the exclusion types -
+    "universe_cleanup" or "invalid_legacy" - to exclude a trade from
+    clean statistics (win_rate, total_profit, profit_factor).
+    """
+
+    outcome_type: str
+    note: str | None = None
+
+
+@router.patch(
+    "/trades/{trade_id}/outcome",
+    response_model=ResearchTradeResponse,
+)
+def set_research_trade_outcome(
+    trade_id: str,
+    payload: SetTradeOutcomeRequest,
+    repository: ResearchRepository = Depends(
+        get_repository,
+    ),
+) -> ResearchTradeResponse:
+    """
+    Manually exclude one trade from clean statistics.
+
+    Survives future save() calls from the monitor/scanner until
+    POST /trades/{trade_id}/outcome/restore is called.
+    """
+
+    outcome_type = _normalize_outcome_type(
+        payload.outcome_type,
+    )
+
+    if outcome_type not in _MANUAL_OUTCOME_TYPES:
+        allowed = ", ".join(
+            sorted(
+                item.value
+                for item in _MANUAL_OUTCOME_TYPES
+            )
+        )
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Manual outcome classification is limited to "
+                f"exclusion types for now: {allowed}. Got: "
+                f"{outcome_type.value}."
+            ),
+        )
+
+    trade = repository.set_trade_outcome(
+        trade_id,
+        outcome_type=outcome_type,
+        note=payload.note,
+    )
+
+    if trade is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Research trade was not found: "
+                f"{trade_id}"
+            ),
+        )
+
+    return ResearchTradeResponse.from_trade(
+        trade,
+    )
+
+
+@router.post(
+    "/trades/{trade_id}/outcome/restore",
+    response_model=ResearchTradeResponse,
+)
+def restore_research_trade_outcome(
+    trade_id: str,
+    repository: ResearchRepository = Depends(
+        get_repository,
+    ),
+) -> ResearchTradeResponse:
+    """
+    Undo a manual outcome classification.
+
+    Re-runs automatic classification (research/outcomes.py) for this
+    trade's current status.
+    """
+
+    trade = repository.restore_trade_outcome(
+        trade_id,
+    )
+
+    if trade is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Research trade was not found: "
+                f"{trade_id}"
+            ),
+        )
+
+    return ResearchTradeResponse.from_trade(
+        trade,
+    )
+
+
+def _normalize_outcome_type(
+    outcome_type: str,
+) -> TradeOutcomeType:
+    """
+    Validate outcome_type from a request body.
+    """
+
+    normalized = outcome_type.strip().lower()
+
+    try:
+        return TradeOutcomeType(normalized)
+    except ValueError:
+        allowed = ", ".join(
+            sorted(
+                item.value
+                for item in TradeOutcomeType
+            )
+        )
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported outcome type: {outcome_type}. "
+                f"Allowed values: {allowed}."
+            ),
+        )
+
+
 def _build_market_symbol(
     *,
     symbol: str,
@@ -1344,6 +1548,39 @@ def _normalize_research_group(
             status_code=400,
             detail=(
                 f"Unsupported research group: {research_group}. "
+                f"Allowed values: {allowed}."
+            ),
+        )
+
+    return normalized
+
+
+def _normalize_outcome_group(
+    outcome_group: str | None,
+) -> str | None:
+    """
+    Validate and normalize optional outcome_group query parameter.
+    """
+
+    if outcome_group is None:
+        return None
+
+    normalized = outcome_group.strip().lower()
+
+    allowed_groups = {
+        item.value
+        for item in TradeOutcomeGroup
+    }
+
+    if normalized not in allowed_groups:
+        allowed = ", ".join(
+            sorted(allowed_groups)
+        )
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported outcome group: {outcome_group}. "
                 f"Allowed values: {allowed}."
             ),
         )

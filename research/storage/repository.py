@@ -22,7 +22,13 @@ from pathlib import Path
 from threading import RLock
 
 from research.models.trade import ResearchTrade
+from research.models.trade_outcome import (
+    TradeOutcomeGroup,
+    TradeOutcomeType,
+    outcome_group_for,
+)
 from research.models.trade_status import TradeStatus
+from research.outcomes import classify_research_trade
 
 
 @dataclass(slots=True)
@@ -123,7 +129,11 @@ class ResearchRepository:
                     max_drawdown_percent REAL NOT NULL DEFAULT 0.0,
                     active_candles INTEGER NOT NULL DEFAULT 0,
                     max_active_candles INTEGER NOT NULL DEFAULT 30,
-                    last_processed_candle_at TEXT
+                    last_processed_candle_at TEXT,
+                    outcome_group TEXT NOT NULL DEFAULT 'neutral',
+                    outcome_type TEXT NOT NULL DEFAULT 'open_active',
+                    outcome_note TEXT,
+                    outcome_locked INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
@@ -182,6 +192,18 @@ class ResearchRepository:
             "last_processed_candle_at": (
                 "last_processed_candle_at TEXT"
             ),
+            "outcome_group": (
+                "outcome_group TEXT NOT NULL DEFAULT 'neutral'"
+            ),
+            "outcome_type": (
+                "outcome_type TEXT NOT NULL DEFAULT 'open_active'"
+            ),
+            "outcome_note": (
+                "outcome_note TEXT"
+            ),
+            "outcome_locked": (
+                "outcome_locked INTEGER NOT NULL DEFAULT 0"
+            ),
         }
 
         with self._lock, self.connection:
@@ -232,13 +254,98 @@ class ResearchRepository:
                 """
             )
 
+        self._backfill_outcome_classification()
+
+    def _backfill_outcome_classification(self) -> None:
+        """
+        Classify CLOSED/EXPIRED trades still sitting at the
+        unclassified default (neutral/open_active, never locked).
+
+        Runs on every startup, not just the first time the
+        outcome_group/outcome_type columns are added. The WHERE
+        clause scopes this to a handful of rows in the common case
+        (nothing to do once every trade has been classified), so this
+        stays cheap. Self-healing: if a previous run was interrupted
+        between ALTER TABLE and backfill (process killed, disk full),
+        the next startup finishes the job instead of leaving those
+        trades stuck at the placeholder forever. Never touches a
+        manually locked trade (outcome_locked = 1) or lifecycle
+        `status`.
+        """
+
+        with self._lock:
+            rows = self.connection.execute(
+                """
+                SELECT *
+                FROM research_trades
+                WHERE status IN (?, ?)
+                  AND outcome_locked = 0
+                  AND outcome_group = ?
+                  AND outcome_type = ?
+                """,
+                (
+                    TradeStatus.CLOSED.value,
+                    TradeStatus.EXPIRED.value,
+                    TradeOutcomeGroup.NEUTRAL.value,
+                    TradeOutcomeType.OPEN_ACTIVE.value,
+                ),
+            ).fetchall()
+
+        for row in rows:
+            trade = self._row_to_trade(row)
+
+            if trade.outcome_locked:
+                continue
+
+            outcome_group, outcome_type = (
+                classify_research_trade(trade)
+            )
+
+            trade.set_outcome(
+                outcome_group=outcome_group,
+                outcome_type=outcome_type,
+            )
+
+            with self._lock, self.connection:
+                self.connection.execute(
+                    """
+                    UPDATE research_trades
+                    SET
+                        outcome_group = ?,
+                        outcome_type = ?,
+                        outcome_note = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        trade.outcome_group,
+                        trade.outcome_type,
+                        trade.outcome_note,
+                        trade.id,
+                    ),
+                )
+
     def save(
         self,
         trade: ResearchTrade,
     ) -> None:
         """
         Insert or update one virtual trade.
+
+        Re-classifies trade.outcome_group / outcome_type on every save
+        (research/outcomes.py), unless the trade carries a manual lock
+        (trade.outcome_locked) - any manual classification, not just
+        excluded, is preserved until include() is called.
         """
+
+        if not trade.outcome_locked:
+            outcome_group, outcome_type = (
+                classify_research_trade(trade)
+            )
+
+            trade.set_outcome(
+                outcome_group=outcome_group,
+                outcome_type=outcome_type,
+            )
 
         payload = {
             "id": trade.id,
@@ -289,6 +396,10 @@ class ResearchRepository:
                 if trade.last_processed_candle_at
                 else None
             ),
+            "outcome_group": trade.outcome_group,
+            "outcome_type": trade.outcome_type,
+            "outcome_note": trade.outcome_note,
+            "outcome_locked": int(trade.outcome_locked),
         }
 
         with self._lock, self.connection:
@@ -323,7 +434,11 @@ class ResearchRepository:
                     max_drawdown_percent,
                     active_candles,
                     max_active_candles,
-                    last_processed_candle_at
+                    last_processed_candle_at,
+                    outcome_group,
+                    outcome_type,
+                    outcome_note,
+                    outcome_locked
                 )
                 VALUES (
                     :id,
@@ -354,7 +469,11 @@ class ResearchRepository:
                     :max_drawdown_percent,
                     :active_candles,
                     :max_active_candles,
-                    :last_processed_candle_at
+                    :last_processed_candle_at,
+                    :outcome_group,
+                    :outcome_type,
+                    :outcome_note,
+                    :outcome_locked
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     signal_id = excluded.signal_id,
@@ -389,7 +508,11 @@ class ResearchRepository:
                     ),
                     last_processed_candle_at = (
                         excluded.last_processed_candle_at
-                    )
+                    ),
+                    outcome_group = excluded.outcome_group,
+                    outcome_type = excluded.outcome_type,
+                    outcome_note = excluded.outcome_note,
+                    outcome_locked = excluded.outcome_locked
                 """,
                 payload,
             )
@@ -527,6 +650,104 @@ class ResearchRepository:
             return None
 
         return self._row_to_trade(row)
+
+    def list_by_outcome(
+        self,
+        outcome_group: TradeOutcomeGroup,
+    ) -> list[ResearchTrade]:
+        """
+        Return trades matching one outcome_group, newest first.
+        """
+
+        with self._lock:
+            rows = self.connection.execute(
+                """
+                SELECT *
+                FROM research_trades
+                WHERE outcome_group = ?
+                ORDER BY created_at DESC
+                """,
+                (outcome_group.value,),
+            ).fetchall()
+
+        return [
+            self._row_to_trade(row)
+            for row in rows
+        ]
+
+    def set_trade_outcome(
+        self,
+        trade_id: str,
+        outcome_type: TradeOutcomeType,
+        note: str | None = None,
+    ) -> ResearchTrade | None:
+        """
+        Manually classify one trade, most commonly to exclude it
+        (universe cleanup, invalid legacy data) from clean statistics.
+
+        Returns the updated trade, or None if trade_id was not found.
+        This is a manual override: it survives future save() calls
+        from the monitor/scanner until restore_trade_outcome() is
+        called.
+        """
+
+        trade = self.get_by_id(trade_id)
+
+        if trade is None:
+            return None
+
+        outcome_group = outcome_group_for(outcome_type)
+
+        trade.set_manual_outcome(
+            outcome_group=outcome_group,
+            outcome_type=outcome_type,
+            note=note,
+        )
+
+        with self._lock, self.connection:
+            self.connection.execute(
+                """
+                UPDATE research_trades
+                SET
+                    outcome_group = ?,
+                    outcome_type = ?,
+                    outcome_note = ?,
+                    outcome_locked = ?
+                WHERE id = ?
+                """,
+                (
+                    trade.outcome_group,
+                    trade.outcome_type,
+                    trade.outcome_note,
+                    int(trade.outcome_locked),
+                    trade.id,
+                ),
+            )
+
+        return trade
+
+    def restore_trade_outcome(
+        self,
+        trade_id: str,
+    ) -> ResearchTrade | None:
+        """
+        Undo a manual set_trade_outcome() / exclude().
+
+        Re-runs automatic classification for this trade's current
+        status and persists the result. Returns the updated trade,
+        or None if trade_id was not found.
+        """
+
+        trade = self.get_by_id(trade_id)
+
+        if trade is None:
+            return None
+
+        trade.include()
+
+        self.save(trade)
+
+        return trade
 
     def list_all(
         self,
@@ -2086,6 +2307,29 @@ class ResearchRepository:
                 )
                 if row["last_processed_candle_at"]
                 else None
+            ),
+            outcome_group=(
+                row["outcome_group"]
+                if "outcome_group" in row.keys()
+                and row["outcome_group"]
+                else TradeOutcomeGroup.NEUTRAL.value
+            ),
+            outcome_type=(
+                row["outcome_type"]
+                if "outcome_type" in row.keys()
+                and row["outcome_type"]
+                else TradeOutcomeType.OPEN_ACTIVE.value
+            ),
+            outcome_note=(
+                row["outcome_note"]
+                if "outcome_note" in row.keys()
+                else None
+            ),
+            outcome_locked=(
+                bool(row["outcome_locked"])
+                if "outcome_locked" in row.keys()
+                and row["outcome_locked"] is not None
+                else False
             ),
         )
 

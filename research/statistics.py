@@ -15,6 +15,13 @@ from research.models.trade_status import TradeStatus
 class ResearchStatistics:
     """
     Calculates transparent performance metrics from virtual trades.
+
+    "Clean" statistics (win_rate, total_profit, average_profit,
+    average_rr, profit_factor, wins/losses/breakeven) ignore trades
+    manually classified as outcome_group = excluded (universe cleanup,
+    invalid legacy data). `completed` stays a raw CLOSED+EXPIRED count
+    for transparency; `excluded` reports how many of those were
+    removed from the clean numbers.
     """
 
     def calculate(
@@ -34,22 +41,43 @@ class ResearchStatistics:
             }
         ]
 
-        wins = [
+        clean = [
             trade
             for trade in completed
+            if not trade.is_excluded
+        ]
+
+        excluded_count = len(completed) - len(clean)
+
+        wins = [
+            trade
+            for trade in clean
             if trade.profit_percent > 0
         ]
 
         losses = [
             trade
-            for trade in completed
+            for trade in clean
             if trade.profit_percent < 0
         ]
 
         breakeven = [
             trade
-            for trade in completed
+            for trade in clean
             if trade.profit_percent == 0
+        ]
+
+        profitable_expired = [
+            trade
+            for trade in clean
+            if trade.is_profitable_expired
+        ]
+
+        expired_at_loss = [
+            trade
+            for trade in clean
+            if trade.status == TradeStatus.EXPIRED
+            and trade.profit_percent < 0
         ]
 
         gross_profit = sum(
@@ -79,9 +107,17 @@ class ResearchStatistics:
                 if trade.status == TradeStatus.ACTIVE
             ),
             "completed": len(completed),
+            "clean_completed": len(clean),
+            "excluded": excluded_count,
             "wins": len(wins),
             "losses": len(losses),
             "breakeven": len(breakeven),
+            "profitable_expired": len(profitable_expired),
+            "profitable_expired_profit": sum(
+                trade.profit_amount
+                for trade in profitable_expired
+            ),
+            "expired_at_loss": len(expired_at_loss),
             "win_rate": (
                 len(wins)
                 / decisive_trades
@@ -91,24 +127,24 @@ class ResearchStatistics:
             ),
             "total_profit": sum(
                 trade.profit_amount
-                for trade in completed
+                for trade in clean
             ),
             "average_profit": (
                 sum(
                     trade.profit_percent
-                    for trade in completed
+                    for trade in clean
                 )
-                / len(completed)
-                if completed
+                / len(clean)
+                if clean
                 else 0.0
             ),
             "average_rr": (
                 sum(
                     trade.rr
-                    for trade in completed
+                    for trade in clean
                 )
-                / len(completed)
-                if completed
+                / len(clean)
+                if clean
                 else 0.0
             ),
             "profit_factor": (
@@ -149,6 +185,14 @@ class ResearchStatistics:
             "by_status": self._group_trades(
                 trades=trades,
                 key_func=lambda trade: trade.status.value,
+            ),
+            "by_outcome": self._group_trades(
+                trades=trades,
+                key_func=lambda trade: trade.outcome_type,
+            ),
+            "by_outcome_group": self._group_trades(
+                trades=trades,
+                key_func=lambda trade: trade.outcome_group,
             ),
         }
 
@@ -204,22 +248,34 @@ class ResearchStatistics:
             }
         ]
 
-        wins = [
+        clean = [
             trade
             for trade in completed
+            if not trade.is_excluded
+        ]
+
+        wins = [
+            trade
+            for trade in clean
             if trade.profit_percent > 0
         ]
 
         losses = [
             trade
-            for trade in completed
+            for trade in clean
             if trade.profit_percent < 0
         ]
 
         breakeven = [
             trade
-            for trade in completed
+            for trade in clean
             if trade.profit_percent == 0
+        ]
+
+        profitable_expired = [
+            trade
+            for trade in clean
+            if trade.is_profitable_expired
         ]
 
         decisive = len(wins) + len(losses)
@@ -228,9 +284,12 @@ class ResearchStatistics:
             "label": label,
             "total": len(trades),
             "completed": len(completed),
+            "clean_completed": len(clean),
+            "excluded": len(completed) - len(clean),
             "wins": len(wins),
             "losses": len(losses),
             "breakeven": len(breakeven),
+            "profitable_expired": len(profitable_expired),
             "waiting_entry": sum(
                 1
                 for trade in trades
@@ -260,15 +319,15 @@ class ResearchStatistics:
             ),
             "total_profit": sum(
                 trade.profit_amount
-                for trade in completed
+                for trade in clean
             ),
             "average_rr": (
                 sum(
                     trade.rr
-                    for trade in completed
+                    for trade in clean
                 )
-                / len(completed)
-                if completed
+                / len(clean)
+                if clean
                 else 0.0
             ),
             "symbols": sorted(

@@ -16,6 +16,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from research.models.trade_outcome import (
+    TradeOutcomeGroup,
+    TradeOutcomeType,
+)
 from research.models.trade_status import TradeStatus
 
 
@@ -129,6 +133,15 @@ class ResearchTrade:
     max_active_candles: int = 30
     last_processed_candle_at: datetime | None = None
 
+    # Analytical classification, separate from lifecycle `status`.
+    # Auto re-assigned by research/outcomes.py on every save() UNLESS
+    # outcome_locked is True - a manual classification (any group, not
+    # just excluded) is not silently overwritten until include() runs.
+    outcome_group: str = TradeOutcomeGroup.NEUTRAL.value
+    outcome_type: str = TradeOutcomeType.OPEN_ACTIVE.value
+    outcome_note: str | None = None
+    outcome_locked: bool = False
+
     def __post_init__(
         self,
     ) -> None:
@@ -175,6 +188,35 @@ class ResearchTrade:
         return (
             self.research_group
             == CORE_RESEARCH_GROUP
+        )
+
+    @property
+    def is_excluded(self) -> bool:
+        """
+        Return True when this trade is manually excluded from
+        clean statistics.
+        """
+
+        return (
+            self.outcome_group
+            == TradeOutcomeGroup.EXCLUDED.value
+        )
+
+    @property
+    def is_profitable_expired(self) -> bool:
+        """
+        Return True for an EXPIRED trade that closed in profit.
+
+        These trades hit neither TP nor SL, ran out of candle
+        lifetime, but the market had already moved in the
+        predicted direction. Reports should count them separately
+        from a plain "expired" trade.
+        """
+
+        return (
+            self.status == TradeStatus.EXPIRED
+            and self.outcome_type
+            == TradeOutcomeType.EXPIRED_PROFIT.value
         )
 
     def is_long(self) -> bool:
@@ -360,3 +402,88 @@ class ResearchTrade:
 
         if self.status == TradeStatus.CLOSED:
             self.status = TradeStatus.EXPIRED
+
+    def set_outcome(
+        self,
+        outcome_group: TradeOutcomeGroup,
+        outcome_type: TradeOutcomeType,
+        note: str | None = None,
+    ) -> None:
+        """
+        Set outcome classification directly, without touching the
+        manual lock.
+
+        This is the low-level setter used by AUTOMATIC classification
+        (research/outcomes.py, via ResearchRepository.save()). It
+        always overwrites outcome_note too (including clearing a stale
+        note left over from a previous manual classification) so an
+        old manual note never survives silently once the lock is
+        lifted. Does not touch lifecycle `status`.
+
+        For a MANUAL override that must survive future save() calls,
+        use set_manual_outcome() instead.
+        """
+
+        self.outcome_group = outcome_group.value
+        self.outcome_type = outcome_type.value
+        self.outcome_note = note
+
+    def set_manual_outcome(
+        self,
+        outcome_group: TradeOutcomeGroup,
+        outcome_type: TradeOutcomeType,
+        note: str | None = None,
+    ) -> None:
+        """
+        Manually set outcome classification and lock it.
+
+        Any outcome_group/outcome_type is allowed here, not just
+        excluded - for example, manually correcting a mis-tagged trade
+        to positive/take_profit. Locked trades are skipped by automatic
+        classification (research/outcomes.py, via
+        ResearchRepository.save()) until include() is called.
+        """
+
+        self.set_outcome(
+            outcome_group=outcome_group,
+            outcome_type=outcome_type,
+            note=note,
+        )
+
+        self.outcome_locked = True
+
+    def exclude(
+        self,
+        reason: str,
+        outcome_type: TradeOutcomeType = (
+            TradeOutcomeType.INVALID_LEGACY
+        ),
+    ) -> None:
+        """
+        Manually exclude this trade from clean statistics.
+
+        Automatic classification (research/outcomes.py) must never
+        overwrite this until include() is called.
+        """
+
+        self.set_manual_outcome(
+            outcome_group=TradeOutcomeGroup.EXCLUDED,
+            outcome_type=outcome_type,
+            note=reason,
+        )
+
+    def include(
+        self,
+    ) -> None:
+        """
+        Undo a manual exclude() / set_manual_outcome().
+
+        Clears the lock and resets to a neutral placeholder; the next
+        save() re-runs automatic classification (research/outcomes.py)
+        to restore the correct outcome for this trade's current status.
+        """
+
+        self.outcome_group = TradeOutcomeGroup.NEUTRAL.value
+        self.outcome_type = TradeOutcomeType.OPEN_ACTIVE.value
+        self.outcome_note = None
+        self.outcome_locked = False

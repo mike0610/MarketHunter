@@ -248,6 +248,255 @@ function getTargetClearColor(setup) {
 }
 
 
+function humanizeMtfLabel(value) {
+    if (!value) {
+        return "";
+    }
+
+    const spaced = String(value).replace(/_/g, " ");
+
+    return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+
+function getMtfStatusChip(mtf) {
+    const humanizedType = humanizeMtfLabel(mtf?.confirmation_type);
+
+    if (mtf?.confirmation_type === "insufficient_data") {
+        return {
+            color: "default",
+            label: "Insufficient data",
+        };
+    }
+
+    if (mtf?.confirmed) {
+        return {
+            color: "success",
+            label: humanizedType
+                ? `Confirmed · ${humanizedType}`
+                : "Confirmed",
+        };
+    }
+
+    return {
+        color: "warning",
+        label: humanizedType
+            ? `Not confirmed · ${humanizedType}`
+            : "Not confirmed",
+    };
+}
+
+
+function getMtfScoreDisplay(mtf) {
+    const base = toNumber(mtf?.base_score);
+    const delta = toNumber(mtf?.score_delta);
+    const final = toNumber(mtf?.final_score);
+
+    // A bonus is only ever shown when it actually changed the score.
+    // applied=false (e.g. score already capped at 100) means the
+    // bonus must not be described as applied, even if score_delta
+    // itself is a positive number.
+    const showBonus = (
+        mtf?.applied === true
+        && delta !== null
+        && delta > 0
+    );
+
+    const capped = (
+        mtf?.confirmed === true
+        && mtf?.applied === false
+        && delta !== null
+        && delta > 0
+        && base !== null
+        && final !== null
+        && base === final
+    );
+
+    return {
+        base,
+        delta,
+        final,
+        showBonus,
+        capNote: capped ? "Score capped at 100" : null,
+    };
+}
+
+
+function getMtfCandleLine(mtf) {
+    const aligned = toNumber(mtf?.aligned_candle_count);
+
+    if (aligned === null) {
+        return null;
+    }
+
+    const raw = toNumber(mtf?.raw_candle_count);
+    const discarded = toNumber(mtf?.discarded_candle_count);
+
+    let line = raw === null
+        ? `Aligned candles: ${aligned}`
+        : `Aligned candles: ${aligned} of ${raw}`;
+
+    if (discarded !== null && discarded > 0) {
+        line += ` · Discarded: ${discarded}`;
+    }
+
+    return line;
+}
+
+
+function getMtfAnalyzedLine(mtf) {
+    const analyzed = toNumber(mtf?.analyzed_candle_count);
+
+    if (analyzed === null) {
+        return null;
+    }
+
+    return `Analyzed for confirmation: ${analyzed}`;
+}
+
+
+function MTFConfirmationSummary({
+    mtf,
+}) {
+    if (!mtf) {
+        return null;
+    }
+
+    const title = mtf.entry_timeframe
+        ? `${mtf.entry_timeframe} Confirmation`
+        : "Entry Confirmation";
+
+    const statusChip = getMtfStatusChip(mtf);
+    const scoreDisplay = getMtfScoreDisplay(mtf);
+    const candleLine = getMtfCandleLine(mtf);
+    const analyzedLine = getMtfAnalyzedLine(mtf);
+    const patternLabel = humanizeMtfLabel(mtf.expected_pattern);
+
+    const hasScoreInfo = (
+        scoreDisplay.base !== null
+        || scoreDisplay.final !== null
+        || scoreDisplay.showBonus
+    );
+
+    return (
+        <Paper
+            elevation={0}
+            sx={{
+                p: 1.5,
+                border: 1,
+                borderColor: "divider",
+            }}
+        >
+            <Stack spacing={1}>
+                <Stack
+                    direction="row"
+                    spacing={1}
+                    useFlexGap
+                    sx={{
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        flexWrap: "wrap",
+                    }}
+                >
+                    <Typography
+                        variant="subtitle2"
+                        sx={{
+                            fontWeight: "bold",
+                        }}
+                    >
+                        {title}
+                    </Typography>
+
+                    <Chip
+                        size="small"
+                        color={statusChip.color}
+                        label={statusChip.label}
+                    />
+                </Stack>
+
+                {patternLabel && (
+                    <Typography
+                        variant="caption"
+                        color="text.secondary"
+                    >
+                        {patternLabel}
+                    </Typography>
+                )}
+
+                {hasScoreInfo && (
+                    <Stack
+                        direction="row"
+                        spacing={2}
+                        useFlexGap
+                        sx={{
+                            alignItems: "baseline",
+                            flexWrap: "wrap",
+                        }}
+                    >
+                        {scoreDisplay.base !== null && (
+                            <Typography variant="body2">
+                                Base {scoreDisplay.base}
+                            </Typography>
+                        )}
+
+                        {scoreDisplay.showBonus && (
+                            <Typography
+                                variant="body2"
+                                color="success.main"
+                            >
+                                Bonus +{scoreDisplay.delta}
+                            </Typography>
+                        )}
+
+                        {scoreDisplay.final !== null && (
+                            <Typography
+                                variant="body2"
+                                sx={{
+                                    fontWeight: "bold",
+                                }}
+                            >
+                                Final {scoreDisplay.final}
+                            </Typography>
+                        )}
+                    </Stack>
+                )}
+
+                {scoreDisplay.capNote && (
+                    <Typography
+                        variant="caption"
+                        color="text.secondary"
+                    >
+                        {scoreDisplay.capNote}
+                    </Typography>
+                )}
+
+                {(candleLine || analyzedLine) && (
+                    <Stack spacing={0.25}>
+                        {candleLine && (
+                            <Typography
+                                variant="caption"
+                                color="text.secondary"
+                            >
+                                {candleLine}
+                            </Typography>
+                        )}
+
+                        {analyzedLine && (
+                            <Typography
+                                variant="caption"
+                                color="text.secondary"
+                            >
+                                {analyzedLine}
+                            </Typography>
+                        )}
+                    </Stack>
+                )}
+            </Stack>
+        </Paper>
+    );
+}
+
+
 function PriceMarker({
     label,
     price,
@@ -609,6 +858,10 @@ export default function SetupVisualization({
                         />
                     </Stack>
                 </Stack>
+
+                <MTFConfirmationSummary
+                    mtf={trade.mtf}
+                />
 
                 {setupLoading && (
                     <Alert

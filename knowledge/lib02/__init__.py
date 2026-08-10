@@ -1,24 +1,36 @@
 """LIB-02: Pure Domain Foundation package surface."""
 from .domain import (
-    Program,
-    ResearchQuestion,
-    ContinuityCapsule,
-    Source,
-    Version,
     Claim,
+    ContinuityCapsule,
     Coverage,
     CoverageState,
     ExaminationResult,
+    EvidenceRelation,
     MappingState,
+    NonFinding,
+    Program,
+    ReconciliationState,
+    ResearchQuestion,
+    ReopenCondition,
+    Source,
+    Version,
 )
-from .commands import ProgramNext, TrackNext
+from .commands import (
+    ClearProgramNext,
+    ClearTrackNext,
+    ProgramNext,
+    SetProgramNext,
+    SetTrackNext,
+    TrackNext,
+)
 from .failures import (
-    DomainFailure,
-    ReopenConditionError,
     AuthorizationFailure,
+    DomainFailure,
     MappingFailure,
+    ReopenConditionError,
+    ValidationFailure,
 )
-from .authorization import ActorContext, Role, Lab
+from .authorization import ActorContext, Lab, Role
 
 __all__ = [
     "Program",
@@ -30,13 +42,22 @@ __all__ = [
     "Coverage",
     "CoverageState",
     "ExaminationResult",
+    "EvidenceRelation",
+    "NonFinding",
+    "ReconciliationState",
+    "ReopenCondition",
     "MappingState",
     "ProgramNext",
     "TrackNext",
+    "SetProgramNext",
+    "ClearProgramNext",
+    "SetTrackNext",
+    "ClearTrackNext",
     "DomainFailure",
     "ReopenConditionError",
     "AuthorizationFailure",
     "MappingFailure",
+    "ValidationFailure",
     "ActorContext",
     "Role",
     "Lab",

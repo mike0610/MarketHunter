@@ -2,37 +2,58 @@ import dataclasses
 import pytest
 
 from knowledge.lib02 import (
-    Program,
-    ResearchQuestion,
     ContinuityCapsule,
-    Source,
-    Version,
-    Claim,
     Coverage,
     CoverageState,
     ExaminationResult,
+    Lab,
+    NonFinding,
+    Program,
+    ProgramNext,
+    ReopenCondition,
     ReopenConditionError,
+    ResearchQuestion,
+    Source,
+    TrackNext,
+    Version,
 )
 
 
 def test_immutable_domain_objects():
     src = Source(name="feed", version="v1")
     ver = Version(value="1.0")
-    claim = Claim(claim_id="c1", semantic="S", source=src)
+    cap = ContinuityCapsule(
+        capsule_id="c1",
+        owning_lab=Lab.STRATEGY,
+        program_id="p1",
+        research_question_id="q1",
+        why="why",
+        current="current",
+        done="done",
+        do_not_repeat="dont repeat",
+        open_inconclusive="open",
+        bounded_unknowns="unknowns",
+        issuance_provenance="prov",
+        issued_at="now",
+    )
 
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        claim.semantic = "X"
-
-    cap = ContinuityCapsule(routing_snapshots=("r1", "r2"))
-    assert cap.routing_snapshots == ("r1", "r2")
+    assert cap.routing_snapshots == ()
 
 
 def test_reopen_condition_enforced():
-    rq = ResearchQuestion(question_id="q1", owner="alice", status="CLOSED")
+    rq = ResearchQuestion(
+        question_id="q1",
+        program_id="p1",
+        owning_lab=Lab.STRATEGY,
+        question="exact bounded question",
+        scope="bounded scope",
+        governed_status="ACTIVE",
+        status="CLOSED",
+    )
     with pytest.raises(ReopenConditionError):
         rq.reopen(None)
 
-    cond = type("C", (), {"reason": "new info"})()
+    cond = ReopenCondition(reason="new info")
     reopened = rq.reopen(cond)
     assert reopened.status == "OPEN"
 

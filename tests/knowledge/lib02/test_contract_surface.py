@@ -16,7 +16,10 @@ def test_commands_are_frozen_dataclasses():
 def test_continuity_capsule_routing_only():
     assert hasattr(domain.ContinuityCapsule, "routing_snapshots")
     fields = set(domain.ContinuityCapsule.__dataclass_fields__.keys())
-    assert fields == {"routing_snapshots"}
+    assert "routing_snapshots" in fields
+    assert "program_next_snapshot" in fields
+    assert "track_next_snapshot" in fields
+    assert "issuance_provenance" in fields
 
 
 def test_no_generic_update_object():

@@ -55,10 +55,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install backend dependencies
-        run: pip install -r requirements.txt
-
-      - name: Install test runtime (not pinned in requirements.txt)
-        run: pip install fastapi pytest
+        run: pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Run Stage 2C backend regression tests
         run: |

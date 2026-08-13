@@ -1,6 +1,7 @@
 import {
     useCallback,
     useEffect,
+    useRef,
     useState,
 } from "react";
 
@@ -209,8 +210,13 @@ export default function Reports() {
     const [bySetupReason, setBySetupReason] = useState([]);
     const [signalBlockReasons, setSignalBlockReasons] = useState([]);
 
+    const requestIdRef = useRef(0);
+
     const loadData = useCallback(
         async () => {
+            requestIdRef.current += 1;
+            const requestId = requestIdRef.current;
+
             setStatisticsError("");
             setSetupReasonError("");
 
@@ -221,6 +227,10 @@ export default function Reports() {
                 getResearchStatistics(),
                 getResearchSetupReasonStatistics(),
             ]);
+
+            if (requestId !== requestIdRef.current) {
+                return;
+            }
 
             if (statisticsResult.status === "fulfilled") {
                 setStatistics(statisticsResult.value || null);

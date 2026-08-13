@@ -40,3 +40,30 @@ jobs:
       - name: Lint dashboard
         working-directory: dashboard
         run: npm run lint
+
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install test runtime (not pinned in requirements.txt)
+        run: pip install fastapi pytest
+
+      - name: Run Stage 2C backend regression tests
+        run: |
+          python -m pytest \
+            tests/test_setup_reason_statistics.py \
+            tests/test_research_api.py \
+            tests/test_target_block_statistics.py \
+            -v

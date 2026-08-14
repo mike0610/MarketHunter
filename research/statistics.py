@@ -27,7 +27,7 @@ class ResearchStatistics:
     def calculate(
         self,
         trades: list[ResearchTrade],
-    ) -> dict[str, float | int]:
+    ) -> dict[str, float | int | None]:
         """
         Return summary statistics for all available trades.
         """
@@ -151,7 +151,7 @@ class ResearchStatistics:
                 gross_profit
                 / gross_loss
                 if gross_loss > 0
-                else 0.0
+                else None
             ),
         }
 

@@ -259,6 +259,10 @@ class ResearchApiTests(unittest.TestCase):
             1,
         )
 
+        self.assertIsNone(
+            payload["profit_factor"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

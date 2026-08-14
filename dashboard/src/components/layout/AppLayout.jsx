@@ -20,6 +20,7 @@ export default function AppLayout({ children }) {
             <Box
                 sx={{
                     flex: 1,
+                    minWidth: 0,
                     display: "flex",
                     flexDirection: "column",
                 }}
@@ -30,6 +31,7 @@ export default function AppLayout({ children }) {
                 <Box
                     sx={{
                         flex: 1,
+                        minWidth: 0,
                         p: 3,
                         overflow: "auto",
                     }}

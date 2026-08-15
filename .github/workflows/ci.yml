@@ -67,4 +67,5 @@ jobs:
             tests/test_portfolio_v1_assessment.py \
             tests/test_portfolio_v1_query_service.py \
             tests/test_portfolio_v1_exposure_snapshot.py \
+            tests/test_risk_result_repository.py \
             -v

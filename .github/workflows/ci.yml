@@ -72,4 +72,5 @@ jobs:
             tests/test_validation_contracts.py \
             tests/test_portfolio_monetary_admission_readiness.py \
             tests/test_risk_sizing_proposal.py \
+            tests/test_execution_foundation.py \
             -v

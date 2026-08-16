@@ -71,4 +71,5 @@ jobs:
             tests/test_portfolio_capital_snapshot.py \
             tests/test_validation_contracts.py \
             tests/test_portfolio_monetary_admission_readiness.py \
+            tests/test_risk_sizing_proposal.py \
             -v

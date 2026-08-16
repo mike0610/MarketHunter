@@ -77,4 +77,5 @@ jobs:
             tests/test_strategy_registry_foundation.py \
             tests/test_explainability_foundation.py \
             tests/test_time_semantics_foundation.py \
+            tests/test_audit_read_model_foundation.py \
             -v

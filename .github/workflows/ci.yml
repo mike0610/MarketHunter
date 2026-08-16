@@ -75,4 +75,5 @@ jobs:
             tests/test_execution_foundation.py \
             tests/test_risk_sizing_proposal_issuer.py \
             tests/test_strategy_registry_foundation.py \
+            tests/test_explainability_foundation.py \
             -v

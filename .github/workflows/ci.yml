@@ -80,4 +80,5 @@ jobs:
             tests/test_audit_read_model_foundation.py \
             tests/test_manual_review_foundation.py \
             tests/test_simulation_foundation.py \
+            tests/test_simulation_repository.py \
             -v

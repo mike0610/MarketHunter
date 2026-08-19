@@ -19,7 +19,9 @@ Responsibilities:
   semantics of any kind.
 - Define SimulationDisposition and DispositionRecord: exactly four
   pre-entry dispositions with append-only, RECORDED_TIME-stamped
-  provenance.
+  provenance. Define SimulationReasonReference: an exact, versioned,
+  typed reason identity - non-admitted dispositions are keyed by
+  typed reason references, never freeform prose.
 - Define MarketObservationReference and MarketObservationEvidence:
   exact, caller-supplied market-observation identity plus EVENT_TIME/
   OBSERVED_TIME/RECORDED_TIME evidence about the same observation.
@@ -329,18 +331,41 @@ class CandidateSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class SimulationReasonReference:
+    """
+    Exact, versioned, typed reason identity. reason_namespace
+    identifies the semantic owner/domain of the reason - never a
+    prose category. Simulation may use its own namespace only for
+    Simulation-owned failure reasons; upstream rejection/block/
+    no-trade reasons preserve their owning policy/domain reference.
+    """
+
+    reason_namespace: str
+    reason_code: str
+    reason_version: str
+
+    def __post_init__(self) -> None:
+        _require_nonblank(self.reason_namespace, "reason_namespace")
+        _require_nonblank(self.reason_code, "reason_code")
+        _require_nonblank(self.reason_version, "reason_version")
+
+
+@dataclass(frozen=True, slots=True)
 class DispositionRecord:
     """
     Append-only pre-entry disposition. A non-admitted disposition
-    must carry at least one reason - fail-closed rejection is never
-    silent.
+    must carry at least one typed reason reference - fail-closed
+    rejection is never silent, and is never keyed by freeform prose.
+    reason_notes is an optional, non-key, human-readable annotation
+    only - it can never satisfy the non-admitted reason requirement.
     """
 
     campaign: SimulationCampaignReference
     snapshot: CandidateSnapshot
     disposition: SimulationDisposition
-    reasons: tuple[str, ...]
+    reason_references: tuple[SimulationReasonReference, ...]
     recorded_fact: TemporalFact
+    reason_notes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.campaign, SimulationCampaignReference):
@@ -352,22 +377,31 @@ class DispositionRecord:
         if not isinstance(self.disposition, SimulationDisposition):
             raise TypeError("disposition must be a SimulationDisposition")
 
-        if not isinstance(self.reasons, tuple) or not all(
-            isinstance(item, str) for item in self.reasons
+        if not isinstance(self.reason_references, tuple) or not all(
+            isinstance(item, SimulationReasonReference)
+            for item in self.reason_references
         ):
-            raise TypeError("reasons must be a tuple of str")
+            raise TypeError(
+                "reason_references must be a tuple of SimulationReasonReference"
+            )
 
-        for reason in self.reasons:
-            _require_nonblank(reason, "reasons item")
+        if not isinstance(self.reason_notes, tuple) or not all(
+            isinstance(item, str) for item in self.reason_notes
+        ):
+            raise TypeError("reason_notes must be a tuple of str")
+
+        for note in self.reason_notes:
+            _require_nonblank(note, "reason_notes item")
 
         _require_recorded_time_known(self.recorded_fact, "recorded_fact")
 
         if (
             self.disposition is not SimulationDisposition.ADMITTED_FOR_SIMULATION
-            and not self.reasons
+            and not self.reason_references
         ):
             raise ValueError(
-                "a non-admitted disposition requires at least one reason"
+                "a non-admitted disposition requires at least one typed "
+                "reason reference - reason_notes alone is never sufficient"
             )
 
 

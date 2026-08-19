@@ -33,6 +33,7 @@ from simulation.foundation import (
     SimulationEventType,
     SimulationMechanicsPolicyReference,
     SimulationPolicyReference,
+    SimulationReasonReference,
     SimulationReplayAssessment,
     SimulationReplayReason,
     SimulationReplayStatus,
@@ -127,6 +128,16 @@ def make_recorded_fact(**overrides) -> TemporalFact:
     )
     kwargs.update(overrides)
     return TemporalFact(**kwargs)
+
+
+def make_reason_reference(**overrides) -> SimulationReasonReference:
+    kwargs = dict(
+        reason_namespace="simulation.eligibility",
+        reason_code="LIQUIDITY_INSUFFICIENT",
+        reason_version="1",
+    )
+    kwargs.update(overrides)
+    return SimulationReasonReference(**kwargs)
 
 
 def make_snapshot(**overrides) -> CandidateSnapshot:
@@ -377,49 +388,85 @@ class DispositionRecordTests(unittest.TestCase):
             campaign=make_campaign(),
             snapshot=make_snapshot(),
             disposition=SimulationDisposition.ADMITTED_FOR_SIMULATION,
-            reasons=(),
+            reason_references=(),
             recorded_fact=make_recorded_fact(),
         )
         with self.assertRaises(dataclasses.FrozenInstanceError):
-            record.reasons = ("x",)  # type: ignore[misc]
+            record.reason_references = (make_reason_reference(),)  # type: ignore[misc]
 
-    def test_admitted_with_no_reasons_accepted(self) -> None:
+    def test_admitted_with_no_reason_references_accepted(self) -> None:
         record = DispositionRecord(
             campaign=make_campaign(),
             snapshot=make_snapshot(),
             disposition=SimulationDisposition.ADMITTED_FOR_SIMULATION,
-            reasons=(),
+            reason_references=(),
             recorded_fact=make_recorded_fact(),
         )
-        self.assertEqual(record.reasons, ())
+        self.assertEqual(record.reason_references, ())
 
-    def test_rejected_without_reason_rejected(self) -> None:
+    def test_reason_notes_default_empty(self) -> None:
+        record = DispositionRecord(
+            campaign=make_campaign(),
+            snapshot=make_snapshot(),
+            disposition=SimulationDisposition.ADMITTED_FOR_SIMULATION,
+            reason_references=(),
+            recorded_fact=make_recorded_fact(),
+        )
+        self.assertEqual(record.reason_notes, ())
+
+    def test_rejected_without_reason_reference_rejected(self) -> None:
         with self.assertRaises(ValueError):
             DispositionRecord(
                 campaign=make_campaign(),
                 snapshot=make_snapshot(),
                 disposition=SimulationDisposition.REJECTED,
-                reasons=(),
+                reason_references=(),
                 recorded_fact=make_recorded_fact(),
             )
 
-    def test_blocked_with_reason_accepted(self) -> None:
+    def test_rejected_with_only_notes_and_no_reference_rejected(self) -> None:
+        # reason_notes is an annotation only - it can never satisfy the
+        # non-admitted typed-reason requirement on its own.
+        with self.assertRaises(ValueError):
+            DispositionRecord(
+                campaign=make_campaign(),
+                snapshot=make_snapshot(),
+                disposition=SimulationDisposition.REJECTED,
+                reason_references=(),
+                recorded_fact=make_recorded_fact(),
+                reason_notes=("liquidity insufficient",),
+            )
+
+    def test_blocked_with_reason_reference_accepted(self) -> None:
         record = DispositionRecord(
             campaign=make_campaign(),
             snapshot=make_snapshot(),
             disposition=SimulationDisposition.BLOCKED,
-            reasons=("liquidity insufficient",),
+            reason_references=(make_reason_reference(),),
             recorded_fact=make_recorded_fact(),
         )
         self.assertEqual(record.disposition, SimulationDisposition.BLOCKED)
 
-    def test_no_trade_without_reason_rejected(self) -> None:
+    def test_blocked_with_reason_reference_and_notes_accepted(self) -> None:
+        record = DispositionRecord(
+            campaign=make_campaign(),
+            snapshot=make_snapshot(),
+            disposition=SimulationDisposition.BLOCKED,
+            reason_references=(make_reason_reference(),),
+            recorded_fact=make_recorded_fact(),
+            reason_notes=("manual review flagged low liquidity",),
+        )
+        self.assertEqual(
+            record.reason_notes, ("manual review flagged low liquidity",)
+        )
+
+    def test_no_trade_without_reason_reference_rejected(self) -> None:
         with self.assertRaises(ValueError):
             DispositionRecord(
                 campaign=make_campaign(),
                 snapshot=make_snapshot(),
                 disposition=SimulationDisposition.NO_TRADE,
-                reasons=(),
+                reason_references=(),
                 recorded_fact=make_recorded_fact(),
             )
 
@@ -429,19 +476,59 @@ class DispositionRecordTests(unittest.TestCase):
                 campaign=make_campaign(),
                 snapshot=make_snapshot(),
                 disposition=SimulationDisposition.ADMITTED_FOR_SIMULATION,
-                reasons=(),
+                reason_references=(),
                 recorded_fact=make_detection(),
             )
 
-    def test_blank_reason_rejected(self) -> None:
+    def test_wrong_reason_references_element_type_rejected(self) -> None:
+        with self.assertRaises(TypeError):
+            DispositionRecord(
+                campaign=make_campaign(),
+                snapshot=make_snapshot(),
+                disposition=SimulationDisposition.REJECTED,
+                reason_references=("not-a-reason-reference",),  # type: ignore[arg-type]
+                recorded_fact=make_recorded_fact(),
+            )
+
+    def test_blank_reason_note_rejected(self) -> None:
         with self.assertRaises(ValueError):
             DispositionRecord(
                 campaign=make_campaign(),
                 snapshot=make_snapshot(),
                 disposition=SimulationDisposition.REJECTED,
-                reasons=("  ",),
+                reason_references=(make_reason_reference(),),
                 recorded_fact=make_recorded_fact(),
+                reason_notes=("  ",),
             )
+
+
+class SimulationReasonReferenceTests(unittest.TestCase):
+    def test_frozen(self) -> None:
+        reference = make_reason_reference()
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            reference.reason_code = "OTHER"  # type: ignore[misc]
+
+    def test_blank_namespace_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            make_reason_reference(reason_namespace="  ")
+
+    def test_blank_code_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            make_reason_reference(reason_code="")
+
+    def test_blank_version_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            make_reason_reference(reason_version="")
+
+    def test_wrong_type_rejected(self) -> None:
+        with self.assertRaises(TypeError):
+            make_reason_reference(reason_code=123)  # type: ignore[arg-type]
+
+    def test_distinct_codes_are_not_equal(self) -> None:
+        self.assertNotEqual(
+            make_reason_reference(reason_code="A"),
+            make_reason_reference(reason_code="B"),
+        )
 
 
 class MarketObservationReferenceTests(unittest.TestCase):

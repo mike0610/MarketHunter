@@ -82,4 +82,5 @@ jobs:
             tests/test_simulation_foundation.py \
             tests/test_simulation_repository.py \
             tests/test_simulation_runtime.py \
+            tests/test_strategy_runtime_release_manifest.py \
             -v

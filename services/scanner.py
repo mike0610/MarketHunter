@@ -37,6 +37,35 @@ from services.market_data import MarketDataService
 from services.snapshot_builder import SnapshotBuilder
 from services.worker_pool import WorkerPool
 from strategies.base_strategy import BaseStrategy
+from strategies.execution_binding import (
+    StrategyExecutionBinding,
+    StrategyExecutionBindingConflictError,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _ExecutionItem:
+    """
+    One strategy implementation resolved for this scan, paired with
+    its governed StrategyExecutionBinding when bound. binding is
+    None for a legacy bare strategy - explicitly NON-PROVENANCE-
+    ELIGIBLE.
+    """
+
+    implementation: BaseStrategy
+    strategy_execution_binding: StrategyExecutionBinding | None
+
+
+@dataclass(frozen=True, slots=True)
+class _ScannedSignal:
+    """
+    One raw strategy signal paired with the exact governed binding
+    (or None) of the strategy that produced it - carried through
+    direction-conflict resolution so provenance is never lost.
+    """
+
+    signal: Signal
+    strategy_execution_binding: StrategyExecutionBinding | None
 
 
 @dataclass
@@ -50,6 +79,7 @@ class SignalDecision:
     metadata: dict[str, object] = field(
         default_factory=dict,
     )
+    strategy_execution_binding: StrategyExecutionBinding | None = None
 
 
 class Scanner:
@@ -80,9 +110,19 @@ class Scanner:
         candle_limit: int = 500,
         scan_journal: ScanJournalRepository | None = None,
         scan_run_id: str | None = None,
+        strategy_bindings: list[StrategyExecutionBinding] | None = None,
     ) -> None:
         """
         Initialize scanner dependencies.
+
+        strategy_bindings carries governed StrategyExecutionBinding
+        instances, executed alongside (never inferred for) the
+        legacy bare strategies list. Bindings are never constructed
+        here - the caller supplies exact, already-resolved bindings.
+        The same concrete implementation object bound to two
+        different releases is a hard configuration error; the same
+        implementation bound to the identical release twice is
+        deterministically deduplicated to one execution.
         """
 
         normalized_timeframe = timeframe.strip()
@@ -104,6 +144,11 @@ class Scanner:
 
         self.market_data = market_data
         self.strategies = strategies
+        self.strategy_bindings = strategy_bindings or []
+        self._execution_items = self._build_execution_items(
+            strategies=strategies,
+            strategy_bindings=self.strategy_bindings,
+        )
         self.snapshot_builder = SnapshotBuilder()
         self.pool = WorkerPool(workers)
         self.pipeline = pipeline
@@ -111,6 +156,70 @@ class Scanner:
         self.candle_limit = candle_limit
         self.scan_journal = scan_journal
         self.scan_run_id = scan_run_id
+
+    @staticmethod
+    def _build_execution_items(
+        strategies: list[BaseStrategy],
+        strategy_bindings: list[StrategyExecutionBinding],
+    ) -> list[_ExecutionItem]:
+        """
+        Resolve the exact ordered list of strategies this scan will
+        execute: governed bindings first (in the order supplied),
+        then legacy bare strategies (in the order supplied,
+        binding=None, explicitly NON-PROVENANCE-ELIGIBLE).
+
+        The same concrete implementation object (id(implementation))
+        bound to two different releases is a hard
+        StrategyExecutionBindingConflictError. The same implementation
+        object bound to the identical release twice is deterministically
+        deduplicated to exactly one execution item, so it cannot
+        double-run. This dedupe/conflict check applies only within
+        strategy_bindings - an implementation object supplied both in
+        strategy_bindings and bare in strategies is not deduplicated
+        across the two lists, since the legacy list carries no
+        binding to compare against.
+        """
+
+        seen_by_implementation_id: dict[int, StrategyExecutionBinding] = {}
+        items: list[_ExecutionItem] = []
+
+        for binding in strategy_bindings:
+            if not isinstance(binding, StrategyExecutionBinding):
+                raise TypeError(
+                    "strategy_bindings must contain only "
+                    "StrategyExecutionBinding instances"
+                )
+
+            implementation_key = id(binding.implementation)
+            existing = seen_by_implementation_id.get(implementation_key)
+
+            if existing is not None:
+                if existing != binding:
+                    raise StrategyExecutionBindingConflictError(
+                        "the same strategy implementation object is bound "
+                        f"to conflicting releases: {existing.release.release_key!r} "
+                        f"vs {binding.release.release_key!r}"
+                    )
+
+                continue
+
+            seen_by_implementation_id[implementation_key] = binding
+            items.append(
+                _ExecutionItem(
+                    implementation=binding.implementation,
+                    strategy_execution_binding=binding,
+                )
+            )
+
+        for implementation in strategies:
+            items.append(
+                _ExecutionItem(
+                    implementation=implementation,
+                    strategy_execution_binding=None,
+                )
+            )
+
+        return items
 
     async def scan_symbol(
         self,
@@ -166,6 +275,9 @@ class Scanner:
                     snapshot=snapshot,
                     metadata=decision.metadata,
                     rejected_reason=decision.rejected_reason,
+                    strategy_execution_binding=(
+                        decision.strategy_execution_binding
+                    ),
                 )
 
                 self._record_signal_context(
@@ -208,7 +320,7 @@ class Scanner:
             "Scanning {} {} symbols using {} strategies...",
             len(symbols),
             self.timeframe,
-            len(self.strategies),
+            len(self._execution_items),
         )
 
         tasks = [
@@ -242,9 +354,11 @@ class Scanner:
         self,
         symbol: MarketSymbol,
         snapshot: object,
-    ) -> list[Signal]:
+    ) -> list[_ScannedSignal]:
         """
-        Run all strategies for one symbol before pipeline processing.
+        Run all resolved execution items (governed bindings, then
+        legacy bare strategies) for one symbol before pipeline
+        processing.
 
         Strategies exposing entry_timeframe and
         analyze_with_entry_candles() additionally receive
@@ -254,15 +368,15 @@ class Scanner:
         scan_symbol() invocation.
         """
 
-        raw_signals: list[Signal] = []
+        raw_signals: list[_ScannedSignal] = []
         supplemental_candles_by_timeframe: dict[
             str, list[Candle] | None
         ] = {}
 
-        for strategy in self.strategies:
+        for item in self._execution_items:
             try:
                 signal = await self._run_strategy(
-                    strategy=strategy,
+                    strategy=item.implementation,
                     symbol=symbol,
                     snapshot=snapshot,
                     supplemental_candles_by_timeframe=(
@@ -277,14 +391,19 @@ class Scanner:
                 signal.timeframe = self.timeframe
 
                 raw_signals.append(
-                    signal,
+                    _ScannedSignal(
+                        signal=signal,
+                        strategy_execution_binding=(
+                            item.strategy_execution_binding
+                        ),
+                    ),
                 )
 
             except Exception as exc:
                 logger.warning(
                     "{} -> strategy {} failed: {}",
                     symbol.symbol,
-                    strategy.__class__.__name__,
+                    item.implementation.__class__.__name__,
                     exc,
                 )
 
@@ -396,48 +515,49 @@ class Scanner:
 
     def _resolve_direction_conflicts(
         self,
-        signals: list[Signal],
+        scanned_signals: list[_ScannedSignal],
     ) -> list[SignalDecision]:
         """
         Resolve LONG/SHORT conflicts before pipeline processing.
         """
 
-        if not signals:
+        if not scanned_signals:
             return []
 
-        long_signals = [
-            signal
-            for signal in signals
-            if self._signal_direction(signal) == "LONG"
+        long_items = [
+            item
+            for item in scanned_signals
+            if self._signal_direction(item.signal) == "LONG"
         ]
 
-        short_signals = [
-            signal
-            for signal in signals
-            if self._signal_direction(signal) == "SHORT"
+        short_items = [
+            item
+            for item in scanned_signals
+            if self._signal_direction(item.signal) == "SHORT"
         ]
 
-        if not long_signals or not short_signals:
+        if not long_items or not short_items:
             return [
                 SignalDecision(
-                    signal=signal,
+                    signal=item.signal,
+                    strategy_execution_binding=item.strategy_execution_binding,
                 )
-                for signal in signals
+                for item in scanned_signals
             ]
 
         long_score = self._total_score(
-            long_signals,
+            [item.signal for item in long_items],
         )
 
         short_score = self._total_score(
-            short_signals,
+            [item.signal for item in short_items],
         )
 
         score_delta = abs(
             long_score - short_score,
         )
 
-        symbol = signals[0].symbol
+        symbol = scanned_signals[0].signal.symbol
 
         base_metadata = {
             "direction_conflict": True,
@@ -446,13 +566,13 @@ class Scanner:
             "conflict_short_score": short_score,
             "conflict_score_delta": score_delta,
             "conflict_min_score_delta": self.CONFLICT_MIN_SCORE_DELTA,
-            "conflict_long_signal_count": len(long_signals),
-            "conflict_short_signal_count": len(short_signals),
+            "conflict_long_signal_count": len(long_items),
+            "conflict_short_signal_count": len(short_items),
             "conflict_long_strategies": self._strategy_names(
-                long_signals,
+                [item.signal for item in long_items],
             ),
             "conflict_short_strategies": self._strategy_names(
-                short_signals,
+                [item.signal for item in short_items],
             ),
         }
 
@@ -476,7 +596,7 @@ class Scanner:
 
             return [
                 self._build_conflict_decision(
-                    signal=signal,
+                    item=item,
                     rejected_reason=reason,
                     metadata={
                         **base_metadata,
@@ -488,7 +608,7 @@ class Scanner:
                         "Direction conflict: mixed LONG/SHORT setup"
                     ),
                 )
-                for signal in signals
+                for item in scanned_signals
             ]
 
         if long_score > short_score:
@@ -514,15 +634,15 @@ class Scanner:
 
         decisions: list[SignalDecision] = []
 
-        for signal in signals:
+        for item in scanned_signals:
             direction = self._signal_direction(
-                signal,
+                item.signal,
             )
 
             if direction == winner_direction:
                 decisions.append(
                     self._build_conflict_decision(
-                        signal=signal,
+                        item=item,
                         rejected_reason=None,
                         metadata={
                             **base_metadata,
@@ -549,7 +669,7 @@ class Scanner:
 
                 decisions.append(
                     self._build_conflict_decision(
-                        signal=signal,
+                        item=item,
                         rejected_reason=reason,
                         metadata={
                             **base_metadata,
@@ -566,13 +686,14 @@ class Scanner:
 
             decisions.append(
                 SignalDecision(
-                    signal=signal,
+                    signal=item.signal,
                     metadata={
                         **base_metadata,
                         "conflict_resolution": "ignored_unknown_direction",
                         "conflict_winner_direction": winner_direction,
                         "conflict_signal_outcome": "ignored_unknown_direction",
                     },
+                    strategy_execution_binding=item.strategy_execution_binding,
                 )
             )
 
@@ -584,6 +705,7 @@ class Scanner:
         snapshot: object,
         metadata: dict[str, object] | None = None,
         rejected_reason: str | None = None,
+        strategy_execution_binding: StrategyExecutionBinding | None = None,
     ) -> SignalContext:
         """
         Send a candidate signal through the optional pipeline.
@@ -595,6 +717,7 @@ class Scanner:
         context = SignalContext(
             signal=signal,
             snapshot=snapshot,
+            strategy_execution_binding=strategy_execution_binding,
         )
 
         if metadata:
@@ -647,7 +770,7 @@ class Scanner:
 
     def _build_conflict_decision(
         self,
-        signal: Signal,
+        item: _ScannedSignal,
         rejected_reason: str | None,
         metadata: dict[str, object],
         reason_to_add: str,
@@ -657,14 +780,15 @@ class Scanner:
         """
 
         self._add_signal_reason(
-            signal=signal,
+            signal=item.signal,
             reason=reason_to_add,
         )
 
         return SignalDecision(
-            signal=signal,
+            signal=item.signal,
             rejected_reason=rejected_reason,
             metadata=metadata,
+            strategy_execution_binding=item.strategy_execution_binding,
         )
 
     @staticmethod

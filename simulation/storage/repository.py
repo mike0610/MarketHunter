@@ -5,7 +5,7 @@ simulation/storage/repository.py
 
 Module:
 Demo / Paper Trade Simulator v1 - Slice 2 (append-only persistence +
-read-only evidence export)
+read-only evidence export) + Slice 3 atomic event batch addition
 
 Responsibilities:
 - Persist Slice-1 CandidateSnapshot/DispositionRecord/SimulationEvent/
@@ -17,6 +17,11 @@ Responsibilities:
   candidate, REJECTED/BLOCKED/NO_TRADE disposition before shadow
   records. Event append is validated through Slice-1
   replay_simulation_events() before it is persisted.
+- Expose append_events_atomic(): a single-transaction batch append
+  for one campaign/candidate/case/attempt's events, so one observed
+  cycle's whole proposed transition batch either persists completely
+  or not at all. append_event() itself is unchanged and is never
+  called internally by the batch method.
 - Expose a read-only SimulationEvidenceQuery/query_evidence() seam
   that returns immutable evidence bundles with exact provenance -
   never a ranking, PnL, expectancy, significance, or promotion
@@ -322,6 +327,40 @@ class SimulationEvidenceBundle:
             self.shadow_outcome, ShadowOutcome
         ):
             raise TypeError("shadow_outcome must be a ShadowOutcome or None")
+
+
+def _event_row_values(event: SimulationEvent) -> tuple:
+    return (
+        event.campaign.campaign_id,
+        event.campaign.revision,
+        event.candidate.source_domain,
+        event.candidate.source_type,
+        event.candidate.source_id,
+        event.candidate.revision_or_version,
+        _null_safe_key(event.candidate.revision_or_version),
+        event.reference.case_id,
+        event.reference.attempt_id,
+        event.reference.sequence,
+        event.event_type.value,
+        json.dumps(_mechanics_to_dict(event.mechanics))
+        if event.mechanics is not None
+        else None,
+        json.dumps(_observation_evidence_to_dict(event.observation))
+        if event.observation is not None
+        else None,
+        json.dumps(_temporal_fact_to_dict(event.recorded_fact)),
+    )
+
+
+_INSERT_EVENT_SQL = """
+    INSERT INTO simulation_events (
+        campaign_id, campaign_revision, source_domain,
+        source_type, source_id, revision_or_version,
+        revision_or_version_key, case_id, attempt_id,
+        sequence, event_type, mechanics_json,
+        observation_json, recorded_fact_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
 
 
 class SimulationRepository:
@@ -794,41 +833,9 @@ class SimulationRepository:
                 f"{[reason.value for reason in replay.reasons]}"
             )
 
-        row_values = (
-            event.campaign.campaign_id,
-            event.campaign.revision,
-            event.candidate.source_domain,
-            event.candidate.source_type,
-            event.candidate.source_id,
-            event.candidate.revision_or_version,
-            _null_safe_key(event.candidate.revision_or_version),
-            event.reference.case_id,
-            event.reference.attempt_id,
-            event.reference.sequence,
-            event.event_type.value,
-            json.dumps(_mechanics_to_dict(event.mechanics))
-            if event.mechanics is not None
-            else None,
-            json.dumps(_observation_evidence_to_dict(event.observation))
-            if event.observation is not None
-            else None,
-            json.dumps(_temporal_fact_to_dict(event.recorded_fact)),
-        )
-
         try:
             with self._lock, self.connection:
-                self.connection.execute(
-                    """
-                    INSERT INTO simulation_events (
-                        campaign_id, campaign_revision, source_domain,
-                        source_type, source_id, revision_or_version,
-                        revision_or_version_key, case_id, attempt_id,
-                        sequence, event_type, mechanics_json,
-                        observation_json, recorded_fact_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    row_values,
-                )
+                self.connection.execute(_INSERT_EVENT_SQL, _event_row_values(event))
         except sqlite3.IntegrityError:
             raise SimulationConflictError(
                 "event insert conflicted with an existing row"
@@ -837,6 +844,142 @@ class SimulationRepository:
             raise SimulationPersistenceError(str(exc)) from exc
 
         return event
+
+    def append_events_atomic(
+        self, events: tuple[SimulationEvent, ...]
+    ) -> tuple[SimulationEvent, ...]:
+        """
+        Append a batch of one campaign/candidate/case/attempt's
+        events in a single transaction. The requested batch's own
+        sequence numbers must form a contiguous range. Any event
+        that already exists at an identical payload is treated as
+        already-persisted; any event that conflicts with an existing
+        payload hard-fails; the first genuinely new event must
+        continue exactly where the persisted lineage left off. The
+        full prospective lineage (persisted + new) is validated
+        through replay_simulation_events() before any insert, and
+        all new rows are inserted in one transaction - a failure
+        partway through rolls back the whole suffix. append_event()
+        behavior is unchanged and is never called internally here.
+        """
+
+        if not isinstance(events, tuple) or not all(
+            isinstance(item, SimulationEvent) for item in events
+        ):
+            raise TypeError("events must be a tuple of SimulationEvent")
+
+        if not events:
+            raise SimulationLineageError(
+                "append_events_atomic requires a non-empty batch"
+            )
+
+        first = events[0]
+        campaign = first.campaign
+        candidate = first.candidate
+        case_id = first.reference.case_id
+        attempt_id = first.reference.attempt_id
+
+        if any(
+            event.campaign != campaign
+            or event.candidate != candidate
+            or event.reference.case_id != case_id
+            or event.reference.attempt_id != attempt_id
+            for event in events
+        ):
+            raise SimulationLineageError(
+                "append_events_atomic requires one campaign/candidate/"
+                "case/attempt across the whole batch"
+            )
+
+        sequences = [event.reference.sequence for event in events]
+
+        if len(sequences) != len(set(sequences)):
+            raise SimulationLineageError(
+                "requested batch contains duplicate sequence numbers"
+            )
+
+        batch_start = min(sequences)
+
+        if set(sequences) != set(range(batch_start, batch_start + len(sequences))):
+            raise SimulationLineageError(
+                "requested batch sequence numbers are not contiguous"
+            )
+
+        disposition = self.get_disposition(campaign, candidate)
+
+        if (
+            disposition is None
+            or disposition.disposition is not SimulationDisposition.ADMITTED_FOR_SIMULATION
+        ):
+            raise SimulationLineageError(
+                "events require an existing ADMITTED_FOR_SIMULATION disposition"
+            )
+
+        existing_events = self._get_all_events_for_candidate(campaign, candidate)
+
+        if existing_events and (
+            existing_events[0].reference.case_id != case_id
+            or existing_events[0].reference.attempt_id != attempt_id
+        ):
+            raise SimulationLineageError(
+                "only one case/attempt lineage is permitted per candidate in v1"
+            )
+
+        existing_by_sequence = {
+            item.reference.sequence: item for item in existing_events
+        }
+        persisted_count = len(existing_events)
+
+        to_insert: list[SimulationEvent] = []
+
+        for event in events:
+            existing = existing_by_sequence.get(event.reference.sequence)
+
+            if existing is None:
+                to_insert.append(event)
+                continue
+
+            if existing != event:
+                raise SimulationConflictError(
+                    f"event at sequence {event.reference.sequence} conflicts "
+                    "with an existing persisted event"
+                )
+
+        if to_insert:
+            new_start = min(item.reference.sequence for item in to_insert)
+
+            if new_start != persisted_count + 1:
+                raise SimulationLineageError(
+                    "the first new event in the batch must continue exactly "
+                    "where the persisted lineage left off"
+                )
+
+        prospective = existing_events + tuple(to_insert)
+        replay = replay_simulation_events(prospective)
+
+        if replay.status is not SimulationReplayStatus.VALID:
+            raise SimulationLineageError(
+                "the resulting event lineage would be invalid: "
+                f"{[reason.value for reason in replay.reasons]}"
+            )
+
+        if not to_insert:
+            return existing_events
+
+        try:
+            with self._lock, self.connection:
+                for event in to_insert:
+                    self.connection.execute(
+                        _INSERT_EVENT_SQL, _event_row_values(event)
+                    )
+        except sqlite3.IntegrityError:
+            raise SimulationConflictError(
+                "atomic event batch insert conflicted with an existing row"
+            ) from None
+        except sqlite3.Error as exc:
+            raise SimulationPersistenceError(str(exc)) from exc
+
+        return existing_events + tuple(to_insert)
 
     def get_case_events(
         self,

@@ -81,4 +81,5 @@ jobs:
             tests/test_manual_review_foundation.py \
             tests/test_simulation_foundation.py \
             tests/test_simulation_repository.py \
+            tests/test_simulation_runtime.py \
             -v

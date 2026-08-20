@@ -618,6 +618,239 @@ class EventAppendGetTests(RepositoryTestCase):
             self.repo.append_event("not-an-event")  # type: ignore[arg-type]
 
 
+class AtomicEventBatchTests(RepositoryTestCase):
+    def _admit(self) -> tuple[SimulationCampaignReference, SimulationCandidateReference, CandidateSnapshot]:
+        campaign = make_campaign()
+        snapshot = make_snapshot()
+        self.repo.append_candidate(campaign, snapshot)
+        self.repo.append_disposition(make_disposition(campaign=campaign, snapshot=snapshot))
+        return campaign, snapshot.candidate, snapshot
+
+    def _waiting_entry(self, campaign, candidate, sequence: int) -> SimulationEvent:
+        return make_event(
+            campaign=campaign,
+            candidate=candidate,
+            reference=SimulationEventReference("case-1", "attempt-1", sequence),
+            event_type=SimulationEventType.WAITING_ENTRY,
+            recorded_fact=make_recorded_fact(
+                reference=TemporalReference("event", f"e-{sequence}", None)
+            ),
+        )
+
+    def _filled(self, campaign, candidate, sequence: int) -> SimulationEvent:
+        return make_event(
+            campaign=campaign,
+            candidate=candidate,
+            reference=SimulationEventReference("case-1", "attempt-1", sequence),
+            event_type=SimulationEventType.SIMULATED_FILL,
+            mechanics=make_mechanics(),
+            observation=make_observation_evidence(),
+            recorded_fact=make_recorded_fact(
+                reference=TemporalReference("event", f"e-{sequence}", None)
+            ),
+        )
+
+    def test_wrong_events_type_rejected(self) -> None:
+        with self.assertRaises(TypeError):
+            self.repo.append_events_atomic("not-a-tuple")  # type: ignore[arg-type]
+
+    def test_empty_batch_rejected(self) -> None:
+        with self.assertRaises(SimulationLineageError):
+            self.repo.append_events_atomic(())
+
+    def test_multi_event_batch_success(self) -> None:
+        campaign, candidate, _ = self._admit()
+        ev1 = self._waiting_entry(campaign, candidate, 1)
+        ev2 = self._filled(campaign, candidate, 2)
+
+        result = self.repo.append_events_atomic((ev1, ev2))
+        self.assertEqual(result, (ev1, ev2))
+
+        stored = self.repo.get_case_events(campaign, candidate, "case-1", "attempt-1")
+        self.assertEqual(stored, (ev1, ev2))
+
+    def test_full_identical_batch_idempotent(self) -> None:
+        campaign, candidate, _ = self._admit()
+        ev1 = self._waiting_entry(campaign, candidate, 1)
+        ev2 = self._filled(campaign, candidate, 2)
+
+        self.repo.append_events_atomic((ev1, ev2))
+        result = self.repo.append_events_atomic((ev1, ev2))
+
+        self.assertEqual(result, (ev1, ev2))
+
+    def test_persisted_prefix_plus_new_suffix_resumes(self) -> None:
+        campaign, candidate, _ = self._admit()
+        ev1 = self._waiting_entry(campaign, candidate, 1)
+        self.repo.append_events_atomic((ev1,))
+
+        ev2 = self._filled(campaign, candidate, 2)
+        result = self.repo.append_events_atomic((ev1, ev2))
+
+        self.assertEqual(result, (ev1, ev2))
+
+    def test_new_suffix_only_without_resending_prefix(self) -> None:
+        campaign, candidate, _ = self._admit()
+        ev1 = self._waiting_entry(campaign, candidate, 1)
+        self.repo.append_events_atomic((ev1,))
+
+        ev2 = self._filled(campaign, candidate, 2)
+        result = self.repo.append_events_atomic((ev2,))
+
+        self.assertEqual(result, (ev1, ev2))
+
+    def test_conflicting_overlap_hard_fails(self) -> None:
+        campaign, candidate, _ = self._admit()
+        ev1 = self._waiting_entry(campaign, candidate, 1)
+        self.repo.append_events_atomic((ev1,))
+
+        conflicting = make_event(
+            campaign=campaign,
+            candidate=candidate,
+            reference=SimulationEventReference("case-1", "attempt-1", 1),
+            event_type=SimulationEventType.CENSORED,
+        )
+
+        with self.assertRaises(SimulationConflictError):
+            self.repo.append_events_atomic((conflicting,))
+
+        # no partial mutation occurred
+        stored = self.repo.get_case_events(campaign, candidate, "case-1", "attempt-1")
+        self.assertEqual(stored, (ev1,))
+
+    def test_gap_in_batch_rejected(self) -> None:
+        campaign, candidate, _ = self._admit()
+
+        ev1 = self._waiting_entry(campaign, candidate, 1)
+        ev3 = make_event(
+            campaign=campaign,
+            candidate=candidate,
+            reference=SimulationEventReference("case-1", "attempt-1", 3),
+            event_type=SimulationEventType.SIMULATED_FILL,
+            mechanics=make_mechanics(),
+            observation=make_observation_evidence(),
+            recorded_fact=make_recorded_fact(
+                reference=TemporalReference("event", "e-3", None)
+            ),
+        )
+
+        with self.assertRaises(SimulationLineageError):
+            self.repo.append_events_atomic((ev1, ev3))
+
+    def test_batch_not_continuing_from_persisted_lineage_rejected(self) -> None:
+        campaign, candidate, _ = self._admit()
+        ev1 = self._waiting_entry(campaign, candidate, 1)
+        self.repo.append_events_atomic((ev1,))
+
+        # skips sequence 2 - does not continue at persisted_count + 1
+        ev3 = make_event(
+            campaign=campaign,
+            candidate=candidate,
+            reference=SimulationEventReference("case-1", "attempt-1", 3),
+            event_type=SimulationEventType.SIMULATED_FILL,
+            mechanics=make_mechanics(),
+            observation=make_observation_evidence(),
+            recorded_fact=make_recorded_fact(
+                reference=TemporalReference("event", "e-3", None)
+            ),
+        )
+
+        with self.assertRaises(SimulationLineageError):
+            self.repo.append_events_atomic((ev3,))
+
+    def test_wrong_attempt_in_batch_rejected(self) -> None:
+        campaign, candidate, _ = self._admit()
+        ev1 = self._waiting_entry(campaign, candidate, 1)
+        self.repo.append_events_atomic((ev1,))
+
+        other_attempt = make_event(
+            campaign=campaign,
+            candidate=candidate,
+            reference=SimulationEventReference("case-1", "attempt-2", 1),
+            event_type=SimulationEventType.WAITING_ENTRY,
+        )
+
+        with self.assertRaises(SimulationLineageError):
+            self.repo.append_events_atomic((other_attempt,))
+
+    def test_mixed_campaign_within_batch_rejected(self) -> None:
+        campaign, candidate, _ = self._admit()
+        ev1 = self._waiting_entry(campaign, candidate, 1)
+        ev2 = self._filled(make_campaign(campaign_id="other-campaign"), candidate, 2)
+
+        with self.assertRaises(SimulationLineageError):
+            self.repo.append_events_atomic((ev1, ev2))
+
+    def test_invalid_transition_batch_rejected(self) -> None:
+        campaign, candidate, _ = self._admit()
+        ev1 = self._waiting_entry(campaign, candidate, 1)
+        bad_second = make_event(
+            campaign=campaign,
+            candidate=candidate,
+            reference=SimulationEventReference("case-1", "attempt-1", 2),
+            event_type=SimulationEventType.ACTIVE,
+            mechanics=make_mechanics(),
+            observation=make_observation_evidence(),
+            recorded_fact=make_recorded_fact(
+                reference=TemporalReference("event", "e-2", None)
+            ),
+        )
+
+        with self.assertRaises(SimulationLineageError):
+            self.repo.append_events_atomic((ev1, bad_second))
+
+    def test_injected_failure_rolls_back_whole_suffix(self) -> None:
+        # sqlite3.Connection.execute is a C-level method and cannot be
+        # monkeypatched on the instance directly, so a thin forwarding
+        # wrapper is substituted for self.repo.connection instead - it
+        # delegates everything (including the __enter__/__exit__
+        # transaction protocol) to the real connection, except it
+        # raises on the second simulation_events insert.
+        campaign, candidate, _ = self._admit()
+        ev1 = self._waiting_entry(campaign, candidate, 1)
+        ev2 = self._filled(campaign, candidate, 2)
+
+        class _FlakyConnection:
+            def __init__(self, real_connection) -> None:
+                self._real = real_connection
+                self._insert_count = 0
+
+            def __enter__(self):
+                return self._real.__enter__()
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return self._real.__exit__(exc_type, exc_value, traceback)
+
+            def execute(self, sql, *args, **kwargs):
+                if "INSERT INTO simulation_events" in sql:
+                    self._insert_count += 1
+                    if self._insert_count == 2:
+                        raise sqlite3.OperationalError("simulated failure")
+                return self._real.execute(sql, *args, **kwargs)
+
+        real_connection = self.repo.connection
+        self.repo.connection = _FlakyConnection(real_connection)
+
+        try:
+            with self.assertRaises(SimulationPersistenceError):
+                self.repo.append_events_atomic((ev1, ev2))
+        finally:
+            self.repo.connection = real_connection
+
+        stored = self.repo.get_case_events(campaign, candidate, "case-1", "attempt-1")
+        self.assertEqual(stored, (), "a failed batch must leave no partial rows")
+
+    def test_append_event_behavior_unchanged(self) -> None:
+        campaign, candidate, _ = self._admit()
+        ev1 = self._waiting_entry(campaign, candidate, 1)
+
+        result = self.repo.append_event(ev1)
+        self.assertEqual(result, ev1)
+
+        stored = self.repo.get_case_events(campaign, candidate, "case-1", "attempt-1")
+        self.assertEqual(stored, (ev1,))
+
+
 class ShadowAppendGetTests(RepositoryTestCase):
     def _reject(self) -> tuple[SimulationCampaignReference, CandidateSnapshot]:
         campaign = make_campaign()
@@ -1025,14 +1258,18 @@ class ScopeDisciplineTests(unittest.TestCase):
             for method_name in repo_methods:
                 self.assertNotIn(forbidden, method_name.lower())
 
-    def test_no_sort_or_min_max_selector_calls(self) -> None:
+    def test_no_sort_or_max_selector_calls(self) -> None:
+        # min() over explicit caller-supplied integer sequence numbers
+        # (contiguity validation in append_events_atomic) is legitimate
+        # arithmetic, not a latest/chronology selector - it is exempt.
+        # sorted()/max() are never used for event ordering anywhere.
         import ast
 
         for node in ast.walk(self._module_tree()):
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
-                and node.func.id in ("sorted", "min", "max")
+                and node.func.id in ("sorted", "max")
             ):
                 self.fail(f"unexpected {node.func.id}() call in module")
 

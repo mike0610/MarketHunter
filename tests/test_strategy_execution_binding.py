@@ -355,6 +355,46 @@ class ScannerConflictTests(unittest.TestCase):
         implementations = {item.implementation for item in scanner._execution_items}
         self.assertEqual(implementations, {governed, legacy})
 
+    def test_same_implementation_governed_and_legacy_hard_fails(self) -> None:
+        implementation = FakeStrategy("strategy-1", None)
+        binding = StrategyExecutionBinding(
+            implementation=implementation, release=make_declaration()
+        )
+
+        with self.assertRaises(StrategyExecutionBindingConflictError):
+            build_scanner(
+                FakeMarketData(make_candles()),
+                strategies=[implementation],
+                strategy_bindings=[binding],
+            )
+
+        self.assertEqual(implementation.calls, [])
+
+    def test_governed_only_unaffected_by_overlap_guard(self) -> None:
+        implementation = FakeStrategy("strategy-1", None)
+        binding = StrategyExecutionBinding(
+            implementation=implementation, release=make_declaration()
+        )
+
+        scanner = build_scanner(
+            FakeMarketData(make_candles()),
+            strategy_bindings=[binding],
+        )
+
+        self.assertEqual(len(scanner._execution_items), 1)
+        self.assertIs(scanner._execution_items[0].strategy_execution_binding, binding)
+
+    def test_legacy_only_unaffected_by_overlap_guard(self) -> None:
+        implementation = FakeStrategy("strategy-1", None)
+
+        scanner = build_scanner(
+            FakeMarketData(make_candles()),
+            strategies=[implementation],
+        )
+
+        self.assertEqual(len(scanner._execution_items), 1)
+        self.assertIsNone(scanner._execution_items[0].strategy_execution_binding)
+
 
 class ScannerGovernedExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_governed_scanner_invokes_exact_bound_implementation(self) -> None:

@@ -178,6 +178,12 @@ class Scanner:
         strategy_bindings and bare in strategies is not deduplicated
         across the two lists, since the legacy list carries no
         binding to compare against.
+
+        The same concrete implementation object supplied simultaneously
+        through strategy_bindings and legacy strategies is a hard
+        StrategyExecutionBindingConflictError, raised before any
+        execution item is produced - one concrete object must never
+        run twice under mixed governed/unbound semantics.
         """
 
         seen_by_implementation_id: dict[int, StrategyExecutionBinding] = {}
@@ -212,6 +218,20 @@ class Scanner:
             )
 
         for implementation in strategies:
+            implementation_key = id(implementation)
+            governed_binding = seen_by_implementation_id.get(
+                implementation_key
+            )
+
+            if governed_binding is not None:
+                raise StrategyExecutionBindingConflictError(
+                    "the same strategy implementation object is bound "
+                    f"({governed_binding.release.release_key!r}) and also "
+                    "supplied as a legacy unbound strategy - one concrete "
+                    "implementation cannot run under mixed governed/"
+                    "unbound semantics"
+                )
+
             items.append(
                 _ExecutionItem(
                     implementation=implementation,

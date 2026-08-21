@@ -84,4 +84,5 @@ jobs:
             tests/test_simulation_runtime.py \
             tests/test_strategy_runtime_release_manifest.py \
             tests/test_strategy_execution_binding.py \
+            tests/test_data_quality_policy_provenance.py \
             -v

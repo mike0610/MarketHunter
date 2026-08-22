@@ -86,4 +86,5 @@ jobs:
             tests/test_strategy_execution_binding.py \
             tests/test_strategy_promotion_foundation.py \
             tests/test_trend_context_foundation.py \
+            tests/test_entry_trigger_provenance.py \
             -v

@@ -2,6 +2,9 @@
 # Local MarketHunter data
 data/*.db
 
+# Outcome Intelligence run artifacts (not committed product state)
+data/outcome_intelligence/
+
 # Python cache
 __pycache__/
 *.py[cod]

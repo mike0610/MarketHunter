@@ -29,6 +29,9 @@ from tools.outcome_intelligence.analysis import (
 
 
 def make_group_row(**overrides) -> dict:
+    # Defaults: 40 wins + 30 losses = 70 decisive, win_rate = 40/70 =
+    # 57.1..%, clean_completed = 70 (zero breakeven by default - tests
+    # that need breakeven padding override clean_completed directly).
     row = dict(
         label="Breakout",
         total=100,
@@ -57,20 +60,23 @@ def make_setup_reasons(**dimension_overrides) -> dict:
 
 
 def build_cumulative_runs(
-    deltas: list[tuple[int, int]],
+    deltas: list[tuple[int, int, int]],
     label: str = "Breakout",
 ) -> list[tuple[str, dict]]:
     """
     Build PERSISTENCE-window-shaped run history for one `by_strategy`
-    group: `len(deltas) + 1` runs, where `deltas[i]` is the
-    (delta_clean_completed, delta_wins) incremental evidence between
-    run i and run i+1. Cumulative counters grow monotonically, as the
-    real `setup-reasons` endpoint does.
+    group: `len(deltas) + 1` runs, where `deltas[i]` is
+    (delta_wins, delta_losses, delta_breakeven) - the incremental
+    evidence between run i and run i+1. delta_breakeven pads
+    clean_completed beyond decisive (wins + losses) without
+    contributing to win_rate, exactly like real breakeven trades.
+    Cumulative counters grow monotonically, as the real
+    `setup-reasons` endpoint does.
     """
 
-    cumulative_clean_completed = 0
     cumulative_wins = 0
     cumulative_losses = 0
+    cumulative_clean_completed = 0
 
     runs = [
         (
@@ -91,16 +97,14 @@ def build_cumulative_runs(
         )
     ]
 
-    for index, (delta_clean_completed, delta_wins) in enumerate(deltas, start=1):
-        delta_losses = delta_clean_completed - delta_wins
-        cumulative_clean_completed += delta_clean_completed
+    for index, (delta_wins, delta_losses, delta_breakeven) in enumerate(
+        deltas, start=1
+    ):
         cumulative_wins += delta_wins
         cumulative_losses += delta_losses
-        win_rate = (
-            (cumulative_wins / cumulative_clean_completed) * 100.0
-            if cumulative_clean_completed
-            else 0.0
-        )
+        cumulative_clean_completed += delta_wins + delta_losses + delta_breakeven
+        decisive = cumulative_wins + cumulative_losses
+        win_rate = (cumulative_wins / decisive) * 100.0 if decisive else 0.0
 
         runs.append(
             (
@@ -124,13 +128,25 @@ def build_cumulative_runs(
     return runs
 
 
+# Incremental deltas (delta_wins, delta_losses, delta_breakeven) that
+# make every window loser-leaning with zero breakeven padding:
+# 8/(8+12) = 40.0% win rate <= CANDIDATE_LOSER_WIN_RATE_THRESHOLD,
+# decisive = 20 = MIN_SAMPLE_SIZE_FOR_VERDICT.
+LOSER_WINDOW = (8, 12, 0)
+# 11/(11+9) = 55.0% win rate >= CANDIDATE_SURVIVOR_WIN_RATE_THRESHOLD,
+# decisive = 20.
+SURVIVOR_WINDOW = (11, 9, 0)
+# 10/(10+10) = 50.0% win rate -> WATCH, decisive = 20.
+WATCH_WINDOW = (10, 10, 0)
+
+
 class ClassifyGroupTests(unittest.TestCase):
     def test_below_minimum_sample_is_insufficient_regardless_of_win_rate(self) -> None:
         for win_rate in (0.0, 40.0, 55.0, 100.0):
             with self.subTest(win_rate=win_rate):
                 self.assertEqual(
                     classify_group(
-                        clean_completed=MIN_SAMPLE_SIZE_FOR_VERDICT - 1,
+                        decisive_sample_size=MIN_SAMPLE_SIZE_FOR_VERDICT - 1,
                         win_rate=win_rate,
                     ),
                     GroupDisposition.INSUFFICIENT_EVIDENCE,
@@ -139,7 +155,7 @@ class ClassifyGroupTests(unittest.TestCase):
     def test_sufficient_sample_middle_win_rate_is_watch(self) -> None:
         self.assertEqual(
             classify_group(
-                clean_completed=MIN_SAMPLE_SIZE_FOR_VERDICT,
+                decisive_sample_size=MIN_SAMPLE_SIZE_FOR_VERDICT,
                 win_rate=(
                     CANDIDATE_LOSER_WIN_RATE_THRESHOLD
                     + CANDIDATE_SURVIVOR_WIN_RATE_THRESHOLD
@@ -152,7 +168,7 @@ class ClassifyGroupTests(unittest.TestCase):
     def test_sufficient_but_below_stronger_and_loser_win_rate_is_candidate_loser(self) -> None:
         self.assertEqual(
             classify_group(
-                clean_completed=MIN_SAMPLE_SIZE_FOR_VERDICT,
+                decisive_sample_size=MIN_SAMPLE_SIZE_FOR_VERDICT,
                 win_rate=CANDIDATE_LOSER_WIN_RATE_THRESHOLD,
             ),
             GroupDisposition.CANDIDATE_LOSER,
@@ -161,7 +177,7 @@ class ClassifyGroupTests(unittest.TestCase):
     def test_sufficient_but_below_stronger_and_survivor_win_rate_is_candidate_survivor(self) -> None:
         self.assertEqual(
             classify_group(
-                clean_completed=MIN_SAMPLE_SIZE_FOR_VERDICT,
+                decisive_sample_size=MIN_SAMPLE_SIZE_FOR_VERDICT,
                 win_rate=CANDIDATE_SURVIVOR_WIN_RATE_THRESHOLD,
             ),
             GroupDisposition.CANDIDATE_SURVIVOR,
@@ -170,7 +186,7 @@ class ClassifyGroupTests(unittest.TestCase):
     def test_large_sample_loser_win_rate_is_stronger_evidence_loser(self) -> None:
         self.assertEqual(
             classify_group(
-                clean_completed=MIN_SAMPLE_SIZE_FOR_STRONGER_EVIDENCE,
+                decisive_sample_size=MIN_SAMPLE_SIZE_FOR_STRONGER_EVIDENCE,
                 win_rate=CANDIDATE_LOSER_WIN_RATE_THRESHOLD,
             ),
             GroupDisposition.STRONGER_EVIDENCE_LOSER,
@@ -179,7 +195,7 @@ class ClassifyGroupTests(unittest.TestCase):
     def test_large_sample_survivor_win_rate_is_stronger_evidence_survivor(self) -> None:
         self.assertEqual(
             classify_group(
-                clean_completed=MIN_SAMPLE_SIZE_FOR_STRONGER_EVIDENCE,
+                decisive_sample_size=MIN_SAMPLE_SIZE_FOR_STRONGER_EVIDENCE,
                 win_rate=CANDIDATE_SURVIVOR_WIN_RATE_THRESHOLD,
             ),
             GroupDisposition.STRONGER_EVIDENCE_SURVIVOR,
@@ -188,7 +204,7 @@ class ClassifyGroupTests(unittest.TestCase):
     def test_large_sample_middle_win_rate_is_still_watch(self) -> None:
         self.assertEqual(
             classify_group(
-                clean_completed=MIN_SAMPLE_SIZE_FOR_STRONGER_EVIDENCE,
+                decisive_sample_size=MIN_SAMPLE_SIZE_FOR_STRONGER_EVIDENCE,
                 win_rate=(
                     CANDIDATE_LOSER_WIN_RATE_THRESHOLD
                     + CANDIDATE_SURVIVOR_WIN_RATE_THRESHOLD
@@ -223,6 +239,34 @@ class ClassifyGroupTests(unittest.TestCase):
             with self.subTest(disposition=disposition):
                 self.assertFalse(is_loser_leaning(disposition))
                 self.assertFalse(is_survivor_leaning(disposition))
+
+
+class GroupRowDecisiveTests(unittest.TestCase):
+    def test_decisive_excludes_breakeven(self) -> None:
+        # clean_completed=25 padded with 7 breakevens over wins=10/losses=8.
+        prior = make_setup_reasons()
+        latest = make_setup_reasons(
+            by_strategy=[
+                make_group_row(
+                    label="Breakout",
+                    clean_completed=25,
+                    wins=10,
+                    losses=8,
+                    win_rate=(10 / 18) * 100.0,
+                )
+            ]
+        )
+
+        result = daily_analysis(
+            prior_setup_reasons=prior,
+            latest_setup_reasons=latest,
+            prior_run_id="run-1",
+            latest_run_id="run-2",
+        )
+
+        change = result.dimension_reports[0].changes[0]
+        self.assertEqual(change.latest.decisive, 18)
+        self.assertEqual(change.latest.clean_completed, 25)
 
 
 class DailyAnalysisTests(unittest.TestCase):
@@ -345,10 +389,10 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertIsNone(change.prior)
         self.assertEqual(change.delta_clean_completed, change.latest.clean_completed)
 
-    def test_disposition_computed_from_latest_row_only(self) -> None:
+    def test_disposition_computed_from_latest_row_decisive_sample(self) -> None:
         prior = make_setup_reasons(
             by_strategy=[
-                make_group_row(label="Breakout", clean_completed=5, win_rate=10.0)
+                make_group_row(label="Breakout", clean_completed=5, wins=1, losses=4, win_rate=20.0)
             ]
         )
         latest = make_setup_reasons(
@@ -356,6 +400,8 @@ class DailyAnalysisTests(unittest.TestCase):
                 make_group_row(
                     label="Breakout",
                     clean_completed=MIN_SAMPLE_SIZE_FOR_VERDICT,
+                    wins=8,
+                    losses=12,
                     win_rate=CANDIDATE_LOSER_WIN_RATE_THRESHOLD,
                 )
             ]
@@ -377,6 +423,38 @@ class DailyAnalysisTests(unittest.TestCase):
 
         self.assertEqual(change.disposition, GroupDisposition.CANDIDATE_LOSER)
 
+    def test_breakeven_padded_clean_completed_does_not_grant_sufficient_evidence(
+        self,
+    ) -> None:
+        # Regression for the denominator bug: clean_completed=25 (>=
+        # MIN_SAMPLE_SIZE_FOR_VERDICT=20) but decisive=18 (<20) because
+        # 7 of the 25 completed trades were breakeven. Must be
+        # INSUFFICIENT_EVIDENCE, not a verdict derived from
+        # clean_completed.
+        prior = make_setup_reasons()
+        latest = make_setup_reasons(
+            by_strategy=[
+                make_group_row(
+                    label="Breakout",
+                    clean_completed=25,
+                    wins=10,
+                    losses=8,
+                    win_rate=(10 / 18) * 100.0,  # ~55.6% -> survivor-leaning if evaluated
+                )
+            ]
+        )
+
+        result = daily_analysis(
+            prior_setup_reasons=prior,
+            latest_setup_reasons=latest,
+            prior_run_id="run-1",
+            latest_run_id="run-2",
+        )
+
+        change = result.dimension_reports[0].changes[0]
+
+        self.assertEqual(change.disposition, GroupDisposition.INSUFFICIENT_EVIDENCE)
+
     def test_missing_field_fails_closed(self) -> None:
         latest = make_setup_reasons(
             by_strategy=[{"label": "Breakout"}]  # missing required fields
@@ -385,6 +463,27 @@ class DailyAnalysisTests(unittest.TestCase):
         with self.assertRaises(OutcomeIntelligenceDataError):
             daily_analysis(
                 prior_setup_reasons=make_setup_reasons(),
+                latest_setup_reasons=latest,
+                prior_run_id="run-1",
+                latest_run_id="run-2",
+            )
+
+    def test_backward_cumulative_counters_fail_closed(self) -> None:
+        prior = make_setup_reasons(
+            by_strategy=[
+                make_group_row(label="Breakout", clean_completed=60, wins=30, losses=30)
+            ]
+        )
+        latest = make_setup_reasons(
+            by_strategy=[
+                # Went backwards: 60 -> 20 clean_completed.
+                make_group_row(label="Breakout", clean_completed=20, wins=10, losses=10)
+            ]
+        )
+
+        with self.assertRaises(OutcomeIntelligenceDataError):
+            daily_analysis(
+                prior_setup_reasons=prior,
                 latest_setup_reasons=latest,
                 prior_run_id="run-1",
                 latest_run_id="run-2",
@@ -404,15 +503,6 @@ class DailyAnalysisTests(unittest.TestCase):
         for forbidden in ("disable", "enable", "promote", "apply", "execute"):
             for name in result_attrs:
                 self.assertNotIn(forbidden, name.lower())
-
-
-# Incremental deltas that make every window loser-leaning:
-# 8/20 = 40.0% win rate <= CANDIDATE_LOSER_WIN_RATE_THRESHOLD.
-LOSER_WINDOW = (MIN_SAMPLE_SIZE_FOR_VERDICT, 8)
-# 11/20 = 55.0% win rate >= CANDIDATE_SURVIVOR_WIN_RATE_THRESHOLD.
-SURVIVOR_WINDOW = (MIN_SAMPLE_SIZE_FOR_VERDICT, 11)
-# 10/20 = 50.0% win rate -> WATCH (neither loser nor survivor leaning).
-WATCH_WINDOW = (MIN_SAMPLE_SIZE_FOR_VERDICT, 10)
 
 
 class WeeklyAnalysisTests(unittest.TestCase):
@@ -458,7 +548,7 @@ class WeeklyAnalysisTests(unittest.TestCase):
         # captures) must NOT be treated as persistence evidence merely
         # because the cumulative number repeats. Each window has zero
         # incremental evidence.
-        deltas = [(0, 0)] * PERSISTENCE_MIN_CONSECUTIVE_RUNS
+        deltas = [(0, 0, 0)] * PERSISTENCE_MIN_CONSECUTIVE_RUNS
         # Seed a loser-leaning cumulative history once, then stay flat.
         runs = build_cumulative_runs([LOSER_WINDOW] + deltas)
 
@@ -472,6 +562,21 @@ class WeeklyAnalysisTests(unittest.TestCase):
 
         result = weekly_analysis(runs)
 
+        self.assertEqual(result.persistent_losers, ())
+
+    def test_breakeven_padded_window_is_insufficient_evidence(self) -> None:
+        # Regression for the denominator bug at the incremental-window
+        # level: each window adds 25 clean_completed (>=
+        # MIN_SAMPLE_SIZE_FOR_VERDICT=20 by the old, wrong gate) but
+        # only 18 decisive trades (10 wins, 8 losses -> ~55.6% win
+        # rate, survivor-leaning by rate but insufficient by sample).
+        # Must NOT be reported as a persistent survivor.
+        deltas = [(10, 8, 7)] * PERSISTENCE_MIN_CONSECUTIVE_RUNS
+        runs = build_cumulative_runs(deltas)
+
+        result = weekly_analysis(runs)
+
+        self.assertEqual(result.persistent_survivors, ())
         self.assertEqual(result.persistent_losers, ())
 
     def test_group_absent_from_one_run_is_excluded(self) -> None:
@@ -541,7 +646,7 @@ class WeeklyAnalysisTests(unittest.TestCase):
             weekly_analysis(runs)
 
     def test_group_filter_impact_reports_wins_and_losses_removed(self) -> None:
-        # LOSER_WINDOW = (20, 8) -> per window: 8 wins, 12 losses.
+        # LOSER_WINDOW = (8, 12, 0) -> per window: 8 wins, 12 losses.
         deltas = [LOSER_WINDOW] * PERSISTENCE_MIN_CONSECUTIVE_RUNS
         runs = build_cumulative_runs(deltas)
 
@@ -553,7 +658,7 @@ class WeeklyAnalysisTests(unittest.TestCase):
         self.assertEqual(impact.losses_removed, 12 * PERSISTENCE_MIN_CONSECUTIVE_RUNS)
 
     def test_group_filter_impact_false_when_zero_incremental_wins(self) -> None:
-        deltas = [(MIN_SAMPLE_SIZE_FOR_VERDICT, 0)] * PERSISTENCE_MIN_CONSECUTIVE_RUNS
+        deltas = [(0, MIN_SAMPLE_SIZE_FOR_VERDICT, 0)] * PERSISTENCE_MIN_CONSECUTIVE_RUNS
         runs = build_cumulative_runs(deltas)
 
         result = weekly_analysis(runs)
@@ -567,7 +672,7 @@ class WeeklyAnalysisTests(unittest.TestCase):
             MIN_SAMPLE_SIZE_FOR_VERDICT * PERSISTENCE_MIN_CONSECUTIVE_RUNS,
         )
 
-    def test_persistent_group_surfaces_cumulative_average_rr(self) -> None:
+    def test_persistent_group_surfaces_cumulative_average_rr_and_decisive(self) -> None:
         deltas = [LOSER_WINDOW] * PERSISTENCE_MIN_CONSECUTIVE_RUNS
         runs = build_cumulative_runs(deltas)
 
@@ -575,6 +680,10 @@ class WeeklyAnalysisTests(unittest.TestCase):
 
         self.assertAlmostEqual(
             result.persistent_losers[0].latest_cumulative_average_rr, 1.5
+        )
+        self.assertEqual(
+            result.persistent_losers[0].latest_cumulative_decisive,
+            20 * PERSISTENCE_MIN_CONSECUTIVE_RUNS,
         )
 
     def test_weekly_analysis_never_disables_anything(self) -> None:
@@ -611,6 +720,8 @@ class RenderSummaryTests(unittest.TestCase):
                 make_group_row(
                     label="Breakout",
                     clean_completed=MIN_SAMPLE_SIZE_FOR_VERDICT,
+                    wins=8,
+                    losses=12,
                     win_rate=CANDIDATE_LOSER_WIN_RATE_THRESHOLD,
                 )
             ]
@@ -627,6 +738,7 @@ class RenderSummaryTests(unittest.TestCase):
 
         self.assertIn("Breakout", summary)
         self.assertIn("CANDIDATE_LOSER", summary)
+        self.assertIn("decisive=20", summary)
 
     def test_weekly_summary_reports_no_persistence_when_insufficient_runs(self) -> None:
         result = weekly_analysis([("run-0", make_setup_reasons())])
@@ -647,6 +759,7 @@ class RenderSummaryTests(unittest.TestCase):
         self.assertIn("also remove", summary)
         self.assertIn("winning", summary)
         self.assertIn("losing", summary)
+        self.assertIn("decisive=", summary)
 
     def test_daily_summary_states_unsupported_metrics_explicitly(self) -> None:
         result = daily_analysis(
@@ -678,6 +791,8 @@ class RenderSummaryTests(unittest.TestCase):
                 make_group_row(
                     label="Breakout",
                     clean_completed=MIN_SAMPLE_SIZE_FOR_VERDICT,
+                    wins=8,
+                    losses=12,
                     win_rate=CANDIDATE_LOSER_WIN_RATE_THRESHOLD,
                     average_rr=1.5,
                 )

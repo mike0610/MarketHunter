@@ -34,6 +34,15 @@ Responsibilities:
   present at the group level (only in the top-level `/statistics`
   summary) and are never fabricated here - every daily/weekly summary
   says so explicitly rather than silently omitting them.
+- Sample size and win rate are computed on DECISIVE trades
+  (wins + losses) - the same denominator the canonical
+  `research/statistics.py::_trade_group_payload()` uses for its own
+  `win_rate` field (`wins / (wins + losses)`, breakeven excluded).
+  `clean_completed` (completed minus excluded, including breakevens)
+  is reported for context but is NEVER used as the win-rate
+  denominator or the sample-size evidence gate - a group with many
+  breakevens and few decisive trades must not look more evidenced
+  than it is.
 - Render a concise, decision-oriented text summary - not a raw JSON
   dump.
 
@@ -57,14 +66,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-# Minimum clean_completed trades before ANY verdict beyond
+# Minimum DECISIVE trades (wins + losses - breakeven excluded, same
+# denominator as the canonical win_rate) before ANY verdict beyond
 # INSUFFICIENT_EVIDENCE may be issued for one group (or one
 # incremental window). Below this, win-rate swings are dominated by
-# sample noise.
+# sample noise. clean_completed is NEVER used here - a group padded
+# with breakevens must not look more evidenced than its decisive
+# trade count actually supports.
 MIN_SAMPLE_SIZE_FOR_VERDICT = 20
 
-# Minimum clean_completed trades before a verdict may be upgraded to
-# a STRONGER_EVIDENCE_* disposition - a higher-confidence signal than
+# Minimum decisive trades before a verdict may be upgraded to a
+# STRONGER_EVIDENCE_* disposition - a higher-confidence signal than
 # CANDIDATE_LOSER/CANDIDATE_SURVIVOR.
 MIN_SAMPLE_SIZE_FOR_STRONGER_EVIDENCE = 50
 
@@ -138,18 +150,20 @@ def _require_field(payload: dict[str, object], field_name: str) -> object:
 
 
 def classify_group(
-    clean_completed: int,
+    decisive_sample_size: int,
     win_rate: float,
 ) -> GroupDisposition:
     """
     Classify one group's (or one incremental window's) disposition
-    from its exact sample size and win rate only. Sample-size
-    guardrail always takes precedence: below
-    MIN_SAMPLE_SIZE_FOR_VERDICT, the result is INSUFFICIENT_EVIDENCE
-    regardless of win_rate.
+    from its exact decisive-trade sample size (wins + losses -
+    breakeven excluded, matching the canonical win_rate denominator)
+    and win rate only. Sample-size guardrail always takes precedence:
+    below MIN_SAMPLE_SIZE_FOR_VERDICT decisive trades, the result is
+    INSUFFICIENT_EVIDENCE regardless of win_rate. Callers must pass
+    wins + losses here, never clean_completed.
     """
 
-    if clean_completed < MIN_SAMPLE_SIZE_FOR_VERDICT:
+    if decisive_sample_size < MIN_SAMPLE_SIZE_FOR_VERDICT:
         return GroupDisposition.INSUFFICIENT_EVIDENCE
 
     loser_leaning = win_rate <= CANDIDATE_LOSER_WIN_RATE_THRESHOLD
@@ -158,7 +172,7 @@ def classify_group(
     if not loser_leaning and not survivor_leaning:
         return GroupDisposition.WATCH
 
-    stronger = clean_completed >= MIN_SAMPLE_SIZE_FOR_STRONGER_EVIDENCE
+    stronger = decisive_sample_size >= MIN_SAMPLE_SIZE_FOR_STRONGER_EVIDENCE
 
     if loser_leaning:
         return (
@@ -191,6 +205,12 @@ class GroupRow:
     because the endpoint provides it per group; profit_factor and
     expectancy are NOT provided per group (see
     GROUP_LEVEL_UNSUPPORTED_METRICS) and have no field here.
+
+    clean_completed = completed minus excluded (includes breakeven
+    trades) - a reported context metric only. It is NEVER the
+    win-rate denominator or the sample-size evidence gate; `decisive`
+    (wins + losses) is, matching the canonical
+    `research/statistics.py` win_rate formula.
     """
 
     label: str
@@ -201,6 +221,10 @@ class GroupRow:
     win_rate: float
     total_profit: float
     average_rr: float
+
+    @property
+    def decisive(self) -> int:
+        return self.wins + self.losses
 
 
 def _group_row_from_payload(payload: dict[str, object]) -> GroupRow:
@@ -267,6 +291,55 @@ class DailyAnalysisResult:
     dimension_reports: tuple[DailyDimensionReport, ...]
 
 
+def _daily_group_change(
+    label: str,
+    prior_row: GroupRow | None,
+    latest_row: GroupRow,
+) -> GroupChange:
+    if prior_row is None:
+        delta_clean_completed = latest_row.clean_completed
+        delta_wins = latest_row.wins
+        delta_losses = latest_row.losses
+        delta_win_rate = latest_row.win_rate
+        delta_total_profit = latest_row.total_profit
+        delta_average_rr = latest_row.average_rr
+    else:
+        delta_clean_completed = (
+            latest_row.clean_completed - prior_row.clean_completed
+        )
+        delta_wins = latest_row.wins - prior_row.wins
+        delta_losses = latest_row.losses - prior_row.losses
+        delta_win_rate = latest_row.win_rate - prior_row.win_rate
+        delta_total_profit = latest_row.total_profit - prior_row.total_profit
+        delta_average_rr = latest_row.average_rr - prior_row.average_rr
+
+        if delta_clean_completed < 0 or delta_wins < 0 or delta_losses < 0:
+            raise OutcomeIntelligenceDataError(
+                f"non-monotonic cumulative counters for {label!r} between "
+                f"prior run and latest run (delta_clean_completed="
+                f"{delta_clean_completed}, delta_wins={delta_wins}, "
+                f"delta_losses={delta_losses})"
+            )
+
+    disposition = classify_group(
+        decisive_sample_size=latest_row.decisive,
+        win_rate=latest_row.win_rate,
+    )
+
+    return GroupChange(
+        label=label,
+        prior=prior_row,
+        latest=latest_row,
+        delta_clean_completed=delta_clean_completed,
+        delta_wins=delta_wins,
+        delta_losses=delta_losses,
+        delta_win_rate=delta_win_rate,
+        delta_total_profit=delta_total_profit,
+        delta_average_rr=delta_average_rr,
+        disposition=disposition,
+    )
+
+
 def daily_analysis(
     prior_setup_reasons: dict[str, object],
     latest_setup_reasons: dict[str, object],
@@ -276,8 +349,12 @@ def daily_analysis(
     """
     Compare the latest run's group breakdowns against the prior run.
     Every group in the latest run receives a disposition classified
-    from its own exact cumulative sample size and win rate - this
-    never disables or promotes anything, it only reports.
+    from its own exact decisive-trade sample size (wins + losses) and
+    win rate - this never disables or promotes anything, it only
+    reports. Fails closed (OutcomeIntelligenceDataError) if any of a
+    group's cumulative clean_completed/wins/losses went backwards
+    since the prior run, rather than emitting a misleading negative
+    delta.
     """
 
     dimension_reports: list[DailyDimensionReport] = []
@@ -287,58 +364,10 @@ def daily_analysis(
         latest_rows = _dimension_rows(latest_setup_reasons, dimension)
 
         changes = tuple(
-            GroupChange(
+            _daily_group_change(
                 label=label,
-                prior=prior_rows.get(label),
-                latest=latest_row,
-                delta_clean_completed=(
-                    latest_row.clean_completed
-                    - (
-                        prior_rows[label].clean_completed
-                        if label in prior_rows
-                        else 0
-                    )
-                ),
-                delta_wins=(
-                    latest_row.wins
-                    - (prior_rows[label].wins if label in prior_rows else 0)
-                ),
-                delta_losses=(
-                    latest_row.losses
-                    - (
-                        prior_rows[label].losses
-                        if label in prior_rows
-                        else 0
-                    )
-                ),
-                delta_win_rate=(
-                    latest_row.win_rate
-                    - (
-                        prior_rows[label].win_rate
-                        if label in prior_rows
-                        else 0.0
-                    )
-                ),
-                delta_total_profit=(
-                    latest_row.total_profit
-                    - (
-                        prior_rows[label].total_profit
-                        if label in prior_rows
-                        else 0.0
-                    )
-                ),
-                delta_average_rr=(
-                    latest_row.average_rr
-                    - (
-                        prior_rows[label].average_rr
-                        if label in prior_rows
-                        else 0.0
-                    )
-                ),
-                disposition=classify_group(
-                    clean_completed=latest_row.clean_completed,
-                    win_rate=latest_row.win_rate,
-                ),
+                prior_row=prior_rows.get(label),
+                latest_row=latest_row,
             )
             for label, latest_row in latest_rows.items()
         )
@@ -365,6 +394,10 @@ class IncrementalWindow:
     the actual new clean_completed/wins/losses recorded strictly
     between prior_run_id and latest_run_id - not a re-read of the
     same cumulative total.
+
+    decisive_sample_size (delta_wins + delta_losses) is the win-rate
+    denominator and the sample-size evidence gate - delta_clean_completed
+    is reported for context only and is NEVER used as either.
     """
 
     prior_run_id: str
@@ -372,6 +405,7 @@ class IncrementalWindow:
     delta_clean_completed: int
     delta_wins: int
     delta_losses: int
+    decisive_sample_size: int
     incremental_win_rate: float | None
     disposition: GroupDisposition
 
@@ -394,14 +428,16 @@ def _incremental_window(
             f"delta_wins={delta_wins}, delta_losses={delta_losses})"
         )
 
+    decisive_sample_size = delta_wins + delta_losses
+
     incremental_win_rate = (
-        (delta_wins / delta_clean_completed) * 100.0
-        if delta_clean_completed > 0
+        (delta_wins / decisive_sample_size) * 100.0
+        if decisive_sample_size > 0
         else None
     )
 
     disposition = classify_group(
-        clean_completed=delta_clean_completed,
+        decisive_sample_size=decisive_sample_size,
         win_rate=incremental_win_rate if incremental_win_rate is not None else 0.0,
     )
 
@@ -411,6 +447,7 @@ def _incremental_window(
         delta_clean_completed=delta_clean_completed,
         delta_wins=delta_wins,
         delta_losses=delta_losses,
+        decisive_sample_size=decisive_sample_size,
         incremental_win_rate=incremental_win_rate,
         disposition=disposition,
     )
@@ -441,6 +478,7 @@ class PersistentGroup:
     window_run_ids: tuple[str, ...]
     latest_cumulative_win_rate: float
     latest_cumulative_clean_completed: int
+    latest_cumulative_decisive: int
     latest_cumulative_average_rr: float
     filter_impact: GroupFilterImpact
 
@@ -545,6 +583,7 @@ def weekly_analysis(
                         latest_cumulative_clean_completed=(
                             latest_row.clean_completed
                         ),
+                        latest_cumulative_decisive=latest_row.decisive,
                         latest_cumulative_average_rr=latest_row.average_rr,
                         filter_impact=filter_impact,
                     )
@@ -561,6 +600,7 @@ def weekly_analysis(
                         latest_cumulative_clean_completed=(
                             latest_row.clean_completed
                         ),
+                        latest_cumulative_decisive=latest_row.decisive,
                         latest_cumulative_average_rr=latest_row.average_rr,
                         filter_impact=filter_impact,
                     )
@@ -619,6 +659,7 @@ def render_daily_summary(result: DailyAnalysisResult) -> str:
             lines.append(
                 f"  - {change.label}: {change.disposition.value} "
                 f"(win_rate={change.latest.win_rate:.1f}%, "
+                f"decisive={change.latest.decisive}, "
                 f"average_rr={change.latest.average_rr:.2f}, "
                 f"clean_completed={change.latest.clean_completed}, "
                 f"delta_clean_completed={change.delta_clean_completed:+d}, "
@@ -680,7 +721,8 @@ def render_weekly_summary(result: WeeklyAnalysisResult) -> str:
                 f"for {group.consecutive_windows} consecutive incremental "
                 f"windows (runs {', '.join(group.window_run_ids)}; "
                 f"cumulative-to-date win_rate="
-                f"{group.latest_cumulative_win_rate:.1f}%, average_rr="
+                f"{group.latest_cumulative_win_rate:.1f}% (decisive="
+                f"{group.latest_cumulative_decisive}), average_rr="
                 f"{group.latest_cumulative_average_rr:.2f} over "
                 f"{group.latest_cumulative_clean_completed} trades)."
                 f"{warning}"
@@ -695,7 +737,8 @@ def render_weekly_summary(result: WeeklyAnalysisResult) -> str:
                 f"for {group.consecutive_windows} consecutive incremental "
                 f"windows (runs {', '.join(group.window_run_ids)}; "
                 f"cumulative-to-date win_rate="
-                f"{group.latest_cumulative_win_rate:.1f}%, average_rr="
+                f"{group.latest_cumulative_win_rate:.1f}% (decisive="
+                f"{group.latest_cumulative_decisive}), average_rr="
                 f"{group.latest_cumulative_average_rr:.2f} over "
                 f"{group.latest_cumulative_clean_completed} trades)."
             )

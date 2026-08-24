@@ -19,6 +19,8 @@ from tools.outcome_intelligence.analysis import (
     PERSISTENCE_MIN_CONSECUTIVE_RUNS,
     classify_group,
     daily_analysis,
+    is_loser_leaning,
+    is_survivor_leaning,
     render_daily_summary,
     render_weekly_summary,
     weekly_analysis,
@@ -50,6 +52,74 @@ def make_setup_reasons(**dimension_overrides) -> dict:
     }
     payload.update(dimension_overrides)
     return payload
+
+
+def build_cumulative_runs(
+    deltas: list[tuple[int, int]],
+    label: str = "Breakout",
+) -> list[tuple[str, dict]]:
+    """
+    Build PERSISTENCE-window-shaped run history for one `by_strategy`
+    group: `len(deltas) + 1` runs, where `deltas[i]` is the
+    (delta_clean_completed, delta_wins) incremental evidence between
+    run i and run i+1. Cumulative counters grow monotonically, as the
+    real `setup-reasons` endpoint does.
+    """
+
+    cumulative_clean_completed = 0
+    cumulative_wins = 0
+    cumulative_losses = 0
+
+    runs = [
+        (
+            "run-0",
+            make_setup_reasons(
+                by_strategy=[
+                    make_group_row(
+                        label=label,
+                        total=0,
+                        clean_completed=0,
+                        wins=0,
+                        losses=0,
+                        win_rate=0.0,
+                        total_profit=0.0,
+                    )
+                ]
+            ),
+        )
+    ]
+
+    for index, (delta_clean_completed, delta_wins) in enumerate(deltas, start=1):
+        delta_losses = delta_clean_completed - delta_wins
+        cumulative_clean_completed += delta_clean_completed
+        cumulative_wins += delta_wins
+        cumulative_losses += delta_losses
+        win_rate = (
+            (cumulative_wins / cumulative_clean_completed) * 100.0
+            if cumulative_clean_completed
+            else 0.0
+        )
+
+        runs.append(
+            (
+                f"run-{index}",
+                make_setup_reasons(
+                    by_strategy=[
+                        make_group_row(
+                            label=label,
+                            total=cumulative_clean_completed,
+                            clean_completed=cumulative_clean_completed,
+                            wins=cumulative_wins,
+                            losses=cumulative_losses,
+                            win_rate=win_rate,
+                            total_profit=0.0,
+                        )
+                    ]
+                ),
+            )
+        )
+
+    return runs
 
 
 class ClassifyGroupTests(unittest.TestCase):
@@ -95,22 +165,22 @@ class ClassifyGroupTests(unittest.TestCase):
             GroupDisposition.CANDIDATE_SURVIVOR,
         )
 
-    def test_large_sample_loser_win_rate_is_stronger_evidence(self) -> None:
+    def test_large_sample_loser_win_rate_is_stronger_evidence_loser(self) -> None:
         self.assertEqual(
             classify_group(
                 clean_completed=MIN_SAMPLE_SIZE_FOR_STRONGER_EVIDENCE,
                 win_rate=CANDIDATE_LOSER_WIN_RATE_THRESHOLD,
             ),
-            GroupDisposition.STRONGER_EVIDENCE,
+            GroupDisposition.STRONGER_EVIDENCE_LOSER,
         )
 
-    def test_large_sample_survivor_win_rate_is_stronger_evidence(self) -> None:
+    def test_large_sample_survivor_win_rate_is_stronger_evidence_survivor(self) -> None:
         self.assertEqual(
             classify_group(
                 clean_completed=MIN_SAMPLE_SIZE_FOR_STRONGER_EVIDENCE,
                 win_rate=CANDIDATE_SURVIVOR_WIN_RATE_THRESHOLD,
             ),
-            GroupDisposition.STRONGER_EVIDENCE,
+            GroupDisposition.STRONGER_EVIDENCE_SURVIVOR,
         )
 
     def test_large_sample_middle_win_rate_is_still_watch(self) -> None:
@@ -125,6 +195,32 @@ class ClassifyGroupTests(unittest.TestCase):
             ),
             GroupDisposition.WATCH,
         )
+
+    def test_stronger_evidence_direction_is_unambiguous(self) -> None:
+        # STRONGER_EVIDENCE_LOSER and STRONGER_EVIDENCE_SURVIVOR are
+        # distinct disposition values - direction cannot be lost or
+        # confused downstream.
+        self.assertNotEqual(
+            GroupDisposition.STRONGER_EVIDENCE_LOSER,
+            GroupDisposition.STRONGER_EVIDENCE_SURVIVOR,
+        )
+        self.assertTrue(is_loser_leaning(GroupDisposition.STRONGER_EVIDENCE_LOSER))
+        self.assertFalse(is_survivor_leaning(GroupDisposition.STRONGER_EVIDENCE_LOSER))
+        self.assertTrue(
+            is_survivor_leaning(GroupDisposition.STRONGER_EVIDENCE_SURVIVOR)
+        )
+        self.assertFalse(
+            is_loser_leaning(GroupDisposition.STRONGER_EVIDENCE_SURVIVOR)
+        )
+
+    def test_is_loser_survivor_leaning_false_for_insufficient_and_watch(self) -> None:
+        for disposition in (
+            GroupDisposition.INSUFFICIENT_EVIDENCE,
+            GroupDisposition.WATCH,
+        ):
+            with self.subTest(disposition=disposition):
+                self.assertFalse(is_loser_leaning(disposition))
+                self.assertFalse(is_survivor_leaning(disposition))
 
 
 class DailyAnalysisTests(unittest.TestCase):
@@ -282,82 +378,68 @@ class DailyAnalysisTests(unittest.TestCase):
                 self.assertNotIn(forbidden, name.lower())
 
 
+# Incremental deltas that make every window loser-leaning:
+# 8/20 = 40.0% win rate <= CANDIDATE_LOSER_WIN_RATE_THRESHOLD.
+LOSER_WINDOW = (MIN_SAMPLE_SIZE_FOR_VERDICT, 8)
+# 11/20 = 55.0% win rate >= CANDIDATE_SURVIVOR_WIN_RATE_THRESHOLD.
+SURVIVOR_WINDOW = (MIN_SAMPLE_SIZE_FOR_VERDICT, 11)
+# 10/20 = 50.0% win rate -> WATCH (neither loser nor survivor leaning).
+WATCH_WINDOW = (MIN_SAMPLE_SIZE_FOR_VERDICT, 10)
+
+
 class WeeklyAnalysisTests(unittest.TestCase):
-    def _loser_row(self, **overrides) -> dict:
-        base = dict(
-            clean_completed=MIN_SAMPLE_SIZE_FOR_VERDICT,
-            win_rate=CANDIDATE_LOSER_WIN_RATE_THRESHOLD,
-            wins=0,
-        )
-        base.update(overrides)
-        return make_group_row(**base)
-
-    def _survivor_row(self, **overrides) -> dict:
-        return make_group_row(
-            clean_completed=MIN_SAMPLE_SIZE_FOR_VERDICT,
-            win_rate=CANDIDATE_SURVIVOR_WIN_RATE_THRESHOLD,
-            **overrides,
-        )
-
     def test_fewer_than_minimum_runs_yields_no_persistence_claim(self) -> None:
-        runs = [
-            (
-                f"run-{i}",
-                make_setup_reasons(by_strategy=[self._loser_row()]),
-            )
-            for i in range(PERSISTENCE_MIN_CONSECUTIVE_RUNS - 1)
-        ]
+        # PERSISTENCE_MIN_CONSECUTIVE_RUNS - 1 windows -> one short of
+        # the PERSISTENCE_MIN_CONSECUTIVE_RUNS windows required.
+        deltas = [LOSER_WINDOW] * (PERSISTENCE_MIN_CONSECUTIVE_RUNS - 1)
+        runs = build_cumulative_runs(deltas)
 
         result = weekly_analysis(runs)
 
         self.assertEqual(result.persistent_losers, ())
         self.assertEqual(result.persistent_survivors, ())
 
-    def test_loser_leaning_every_run_is_persistent(self) -> None:
-        runs = [
-            (
-                f"run-{i}",
-                make_setup_reasons(by_strategy=[self._loser_row()]),
-            )
-            for i in range(PERSISTENCE_MIN_CONSECUTIVE_RUNS)
-        ]
+    def test_loser_leaning_every_window_is_persistent(self) -> None:
+        deltas = [LOSER_WINDOW] * PERSISTENCE_MIN_CONSECUTIVE_RUNS
+        runs = build_cumulative_runs(deltas)
 
         result = weekly_analysis(runs)
 
         self.assertEqual(len(result.persistent_losers), 1)
         self.assertEqual(result.persistent_losers[0].label, "Breakout")
         self.assertEqual(result.persistent_losers[0].dimension, "by_strategy")
+        self.assertEqual(
+            result.persistent_losers[0].consecutive_windows,
+            PERSISTENCE_MIN_CONSECUTIVE_RUNS,
+        )
 
-    def test_survivor_leaning_every_run_is_persistent(self) -> None:
-        runs = [
-            (
-                f"run-{i}",
-                make_setup_reasons(by_strategy=[self._survivor_row()]),
-            )
-            for i in range(PERSISTENCE_MIN_CONSECUTIVE_RUNS)
-        ]
+    def test_survivor_leaning_every_window_is_persistent(self) -> None:
+        deltas = [SURVIVOR_WINDOW] * PERSISTENCE_MIN_CONSECUTIVE_RUNS
+        runs = build_cumulative_runs(deltas)
 
         result = weekly_analysis(runs)
 
         self.assertEqual(len(result.persistent_survivors), 1)
         self.assertEqual(result.persistent_survivors[0].label, "Breakout")
 
+    def test_same_cumulative_win_rate_across_snapshots_is_not_fabricated_persistence(
+        self,
+    ) -> None:
+        # Regression for the original defect: three snapshots of an
+        # UNCHANGING cumulative total (zero new trades between
+        # captures) must NOT be read as three independent
+        # confirmations. Each window has zero incremental evidence.
+        deltas = [(0, 0)] * PERSISTENCE_MIN_CONSECUTIVE_RUNS
+        # Seed a loser-leaning cumulative history once, then stay flat.
+        runs = build_cumulative_runs([LOSER_WINDOW] + deltas)
+
+        result = weekly_analysis(runs)
+
+        self.assertEqual(result.persistent_losers, ())
+
     def test_flip_from_loser_to_watch_breaks_persistence(self) -> None:
-        runs = [
-            ("run-0", make_setup_reasons(by_strategy=[self._loser_row()])),
-            (
-                "run-1",
-                make_setup_reasons(
-                    by_strategy=[
-                        make_group_row(
-                            clean_completed=MIN_SAMPLE_SIZE_FOR_VERDICT,
-                            win_rate=50.0,
-                        )
-                    ]
-                ),
-            ),
-            ("run-2", make_setup_reasons(by_strategy=[self._loser_row()])),
-        ]
+        deltas = [LOSER_WINDOW, WATCH_WINDOW, LOSER_WINDOW]
+        runs = build_cumulative_runs(deltas)
 
         result = weekly_analysis(runs)
 
@@ -365,51 +447,103 @@ class WeeklyAnalysisTests(unittest.TestCase):
 
     def test_group_absent_from_one_run_is_excluded(self) -> None:
         runs = [
-            ("run-0", make_setup_reasons(by_strategy=[self._loser_row()])),
+            (
+                "run-0",
+                make_setup_reasons(
+                    by_strategy=[
+                        make_group_row(
+                            clean_completed=20, wins=8, losses=12, win_rate=40.0
+                        )
+                    ]
+                ),
+            ),
             ("run-1", make_setup_reasons(by_strategy=[])),
-            ("run-2", make_setup_reasons(by_strategy=[self._loser_row()])),
+            (
+                "run-2",
+                make_setup_reasons(
+                    by_strategy=[
+                        make_group_row(
+                            clean_completed=40, wins=16, losses=24, win_rate=40.0
+                        )
+                    ]
+                ),
+            ),
+            (
+                "run-3",
+                make_setup_reasons(
+                    by_strategy=[
+                        make_group_row(
+                            clean_completed=60, wins=24, losses=36, win_rate=40.0
+                        )
+                    ]
+                ),
+            ),
         ]
 
         result = weekly_analysis(runs)
 
         self.assertEqual(result.persistent_losers, ())
 
-    def test_filter_would_remove_profitable_cases_flag(self) -> None:
-        runs = [
-            (
-                f"run-{i}",
-                make_setup_reasons(by_strategy=[self._loser_row(wins=3)]),
+    def test_non_monotonic_counters_fail_closed(self) -> None:
+        # A cumulative counter going backwards (data reset / anomaly)
+        # must never be silently treated as valid incremental
+        # evidence. At least PERSISTENCE_MIN_CONSECUTIVE_RUNS + 1 runs
+        # are required for weekly_analysis to attempt window
+        # computation at all; the anomaly sits inside that window.
+        def row(clean_completed: int, wins: int) -> dict:
+            losses = clean_completed - wins
+            win_rate = (wins / clean_completed) * 100.0 if clean_completed else 0.0
+            return make_group_row(
+                clean_completed=clean_completed,
+                wins=wins,
+                losses=losses,
+                win_rate=win_rate,
             )
-            for i in range(PERSISTENCE_MIN_CONSECUTIVE_RUNS)
+
+        runs = [
+            ("run-0", make_setup_reasons(by_strategy=[row(40, 16)])),
+            ("run-1", make_setup_reasons(by_strategy=[row(60, 24)])),
+            # Backwards: 60 -> 20 clean_completed between run-1 and run-2.
+            ("run-2", make_setup_reasons(by_strategy=[row(20, 8)])),
+            ("run-3", make_setup_reasons(by_strategy=[row(40, 16)])),
         ]
+
+        with self.assertRaises(OutcomeIntelligenceDataError):
+            weekly_analysis(runs)
+
+    def test_filter_would_remove_profitable_cases_flag(self) -> None:
+        deltas = [LOSER_WINDOW] * PERSISTENCE_MIN_CONSECUTIVE_RUNS
+        runs = build_cumulative_runs(deltas)
 
         result = weekly_analysis(runs)
 
         self.assertTrue(
             result.persistent_losers[0].filter_would_remove_profitable_cases
         )
-        self.assertEqual(result.persistent_losers[0].latest_wins, 3)
+        self.assertEqual(
+            result.persistent_losers[0].wins_during_persistence_window,
+            8 * PERSISTENCE_MIN_CONSECUTIVE_RUNS,
+        )
 
-    def test_no_profitable_cases_flag_false_when_zero_wins(self) -> None:
-        runs = [
-            (
-                f"run-{i}",
-                make_setup_reasons(by_strategy=[self._loser_row(wins=0)]),
-            )
-            for i in range(PERSISTENCE_MIN_CONSECUTIVE_RUNS)
-        ]
+    def test_no_profitable_cases_flag_false_when_zero_incremental_wins(self) -> None:
+        deltas = [(MIN_SAMPLE_SIZE_FOR_VERDICT, 0)] * PERSISTENCE_MIN_CONSECUTIVE_RUNS
+        runs = build_cumulative_runs(deltas)
 
         result = weekly_analysis(runs)
 
+        self.assertEqual(len(result.persistent_losers), 1)
         self.assertFalse(
             result.persistent_losers[0].filter_would_remove_profitable_cases
+        )
+        self.assertEqual(
+            result.persistent_losers[0].wins_during_persistence_window, 0
         )
 
     def test_weekly_analysis_never_disables_anything(self) -> None:
         result = weekly_analysis(
             [
                 (f"run-{i}", make_setup_reasons())
-                for i in range(PERSISTENCE_MIN_CONSECUTIVE_RUNS)
+                for i in range(PERSISTENCE_MIN_CONSECUTIVE_RUNS + 1)
             ]
         )
         result_attrs = {name for name in dir(result) if not name.startswith("_")}
@@ -464,21 +598,8 @@ class RenderSummaryTests(unittest.TestCase):
         self.assertIn("No persistent losers or survivors", summary)
 
     def test_weekly_summary_flags_persistent_loser_with_warning(self) -> None:
-        runs = [
-            (
-                f"run-{i}",
-                make_setup_reasons(
-                    by_strategy=[
-                        make_group_row(
-                            clean_completed=MIN_SAMPLE_SIZE_FOR_VERDICT,
-                            win_rate=CANDIDATE_LOSER_WIN_RATE_THRESHOLD,
-                            wins=2,
-                        )
-                    ]
-                ),
-            )
-            for i in range(PERSISTENCE_MIN_CONSECUTIVE_RUNS)
-        ]
+        deltas = [LOSER_WINDOW] * PERSISTENCE_MIN_CONSECUTIVE_RUNS
+        runs = build_cumulative_runs(deltas)
 
         result = weekly_analysis(runs)
         summary = render_weekly_summary(result)

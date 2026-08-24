@@ -93,12 +93,14 @@ def _daily(output_dir: Path) -> None:
 
 def _weekly(output_dir: Path) -> None:
     manifests = list_run_manifests(output_dir)
+    required_runs = PERSISTENCE_MIN_CONSECUTIVE_RUNS + 1
 
-    if len(manifests) < PERSISTENCE_MIN_CONSECUTIVE_RUNS:
+    if len(manifests) < required_runs:
         print(
-            f"Weekly analysis needs at least "
-            f"{PERSISTENCE_MIN_CONSECUTIVE_RUNS} captured runs "
-            f"(found {len(manifests)}). Run `capture` again later."
+            f"Weekly analysis needs at least {required_runs} captured runs "
+            f"to form {PERSISTENCE_MIN_CONSECUTIVE_RUNS} independent "
+            f"incremental windows (found {len(manifests)}). Run `capture` "
+            "again later."
         )
         return
 

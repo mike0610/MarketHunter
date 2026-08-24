@@ -98,7 +98,7 @@ def _weekly(output_dir: Path) -> None:
     if len(manifests) < required_runs:
         print(
             f"Weekly analysis needs at least {required_runs} captured runs "
-            f"to form {PERSISTENCE_MIN_CONSECUTIVE_RUNS} independent "
+            f"to form {PERSISTENCE_MIN_CONSECUTIVE_RUNS} distinct "
             f"incremental windows (found {len(manifests)}). Run `capture` "
             "again later."
         )

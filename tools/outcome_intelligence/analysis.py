@@ -18,13 +18,22 @@ Responsibilities:
   of persistent losers/survivors.
 - The `setup-reasons` endpoint returns cumulative (all-time) counters
   per group. Three snapshots that all show the same cumulative
-  win_rate are NOT three independent confirmations - they are the
-  same growing history read three times. Weekly persistence is
+  win_rate do NOT constitute three confirmations at all - they are
+  the same growing history read three times. Weekly persistence is
   therefore evaluated on the *incremental* evidence between
   consecutive snapshots (new clean_completed/wins/losses since the
-  prior capture), so each confirming window is a disjoint sample.
+  prior capture), so each confirming window is a distinct,
+  non-overlapping sample of new trades - not a claim that the windows
+  are statistically independent in any formal sense, just that they
+  do not share the same underlying trades.
   A window with zero incremental clean_completed carries no evidence
   and cannot confirm persistence in either direction.
+- Metric coverage is explicit, not silently partial: the grouped
+  endpoint provides win_rate, average_rr, and total_profit per group,
+  and all three are surfaced. profit_factor/expectancy are NOT
+  present at the group level (only in the top-level `/statistics`
+  summary) and are never fabricated here - every daily/weekly summary
+  says so explicitly rather than silently omitting them.
 - Render a concise, decision-oriented text summary - not a raw JSON
   dump.
 
@@ -72,6 +81,12 @@ CANDIDATE_SURVIVOR_WIN_RATE_THRESHOLD = 55.0
 # survivor-leaning) to be reported as "persistent" in the weekly
 # report. Requires PERSISTENCE_MIN_CONSECUTIVE_RUNS + 1 captured runs.
 PERSISTENCE_MIN_CONSECUTIVE_RUNS = 3
+
+# Metrics the grouped `setup-reasons` endpoint does NOT provide per
+# group (only the top-level `/statistics` summary has them). Named
+# explicitly so every render function can say so rather than silently
+# omitting them.
+GROUP_LEVEL_UNSUPPORTED_METRICS: tuple[str, ...] = ("profit_factor", "expectancy")
 
 _SETUP_REASON_DIMENSIONS: tuple[str, ...] = (
     "by_strategy",
@@ -172,7 +187,10 @@ class GroupRow:
     """
     One exact group row as read from a `by_*` breakdown in one
     captured `setup-reasons` payload. All counters are cumulative
-    (all-time) as returned by the endpoint.
+    (all-time) as returned by the endpoint. average_rr is surfaced
+    because the endpoint provides it per group; profit_factor and
+    expectancy are NOT provided per group (see
+    GROUP_LEVEL_UNSUPPORTED_METRICS) and have no field here.
     """
 
     label: str
@@ -182,6 +200,7 @@ class GroupRow:
     losses: int
     win_rate: float
     total_profit: float
+    average_rr: float
 
 
 def _group_row_from_payload(payload: dict[str, object]) -> GroupRow:
@@ -193,6 +212,7 @@ def _group_row_from_payload(payload: dict[str, object]) -> GroupRow:
         losses=int(_require_field(payload, "losses")),
         win_rate=float(_require_field(payload, "win_rate")),
         total_profit=float(_require_field(payload, "total_profit")),
+        average_rr=float(_require_field(payload, "average_rr")),
     )
 
 
@@ -230,6 +250,7 @@ class GroupChange:
     delta_losses: int
     delta_win_rate: float
     delta_total_profit: float
+    delta_average_rr: float
     disposition: GroupDisposition
 
 
@@ -302,6 +323,14 @@ def daily_analysis(
                     latest_row.total_profit
                     - (
                         prior_rows[label].total_profit
+                        if label in prior_rows
+                        else 0.0
+                    )
+                ),
+                delta_average_rr=(
+                    latest_row.average_rr
+                    - (
+                        prior_rows[label].average_rr
                         if label in prior_rows
                         else 0.0
                     )
@@ -388,6 +417,23 @@ def _incremental_window(
 
 
 @dataclass(frozen=True, slots=True)
+class GroupFilterImpact:
+    """
+    GROUP_FILTER_IMPACT: the exact winning and losing trades that
+    were recorded within the incremental persistence window for one
+    group - i.e. what a blanket exclusion of this group would have
+    also discarded during that window. This is a bounded count of
+    documented cases, NOT a before/after counterfactual performance
+    simulation - it does not claim to know what would have happened
+    to overall portfolio results had the group been filtered out.
+    """
+
+    wins_removed: int
+    losses_removed: int
+    would_remove_profitable_cases: bool
+
+
+@dataclass(frozen=True, slots=True)
 class PersistentGroup:
     dimension: str
     label: str
@@ -395,8 +441,8 @@ class PersistentGroup:
     window_run_ids: tuple[str, ...]
     latest_cumulative_win_rate: float
     latest_cumulative_clean_completed: int
-    wins_during_persistence_window: int
-    filter_would_remove_profitable_cases: bool
+    latest_cumulative_average_rr: float
+    filter_impact: GroupFilterImpact
 
 
 @dataclass(frozen=True, slots=True)
@@ -416,12 +462,15 @@ def weekly_analysis(
     which must already be ordered oldest-to-newest.
 
     Each window's evidence is the delta between two adjacent captured
-    runs - a disjoint sample of new clean_completed/wins/losses - not
-    a re-read of the same cumulative total, so three confirming
-    windows are three independent confirmations, not one number seen
-    three times. A window with zero incremental clean_completed
-    carries no evidence and breaks the persistence claim (it cannot
-    confirm in either direction).
+    runs - a distinct, non-overlapping sample of new
+    clean_completed/wins/losses - not a re-read of the same
+    cumulative total, so three confirming windows are three separate
+    pieces of evidence, not one number seen three times. (This is a
+    non-overlap guarantee, not a claim of statistical independence -
+    consecutive windows can still share serial/market correlation.)
+    A window with zero incremental clean_completed carries no
+    evidence and breaks the persistence claim (it cannot confirm in
+    either direction).
 
     Fewer than PERSISTENCE_MIN_CONSECUTIVE_RUNS + 1 runs are supplied
     -> no persistence claim is possible (not enough runs to form
@@ -477,11 +526,12 @@ def weekly_analysis(
                 is_survivor_leaning(window.disposition) for window in windows
             )
 
-            wins_during_persistence_window = sum(
-                window.delta_wins for window in windows
-            )
-            filter_would_remove_profitable_cases = (
-                wins_during_persistence_window > 0
+            wins_removed = sum(window.delta_wins for window in windows)
+            losses_removed = sum(window.delta_losses for window in windows)
+            filter_impact = GroupFilterImpact(
+                wins_removed=wins_removed,
+                losses_removed=losses_removed,
+                would_remove_profitable_cases=wins_removed > 0,
             )
 
             if all_loser:
@@ -495,12 +545,8 @@ def weekly_analysis(
                         latest_cumulative_clean_completed=(
                             latest_row.clean_completed
                         ),
-                        wins_during_persistence_window=(
-                            wins_during_persistence_window
-                        ),
-                        filter_would_remove_profitable_cases=(
-                            filter_would_remove_profitable_cases
-                        ),
+                        latest_cumulative_average_rr=latest_row.average_rr,
+                        filter_impact=filter_impact,
                     )
                 )
 
@@ -515,12 +561,8 @@ def weekly_analysis(
                         latest_cumulative_clean_completed=(
                             latest_row.clean_completed
                         ),
-                        wins_during_persistence_window=(
-                            wins_during_persistence_window
-                        ),
-                        filter_would_remove_profitable_cases=(
-                            filter_would_remove_profitable_cases
-                        ),
+                        latest_cumulative_average_rr=latest_row.average_rr,
+                        filter_impact=filter_impact,
                     )
                 )
 
@@ -539,6 +581,13 @@ _FLAGGED_DAILY_DISPOSITIONS = (
 )
 
 
+_METRIC_COVERAGE_NOTE = (
+    "(group-level metrics: win_rate, average_rr, total_profit - supported "
+    "and reported; " + "/".join(GROUP_LEVEL_UNSUPPORTED_METRICS) + ": NOT "
+    "provided by the grouped endpoint, not fabricated, not reported.)"
+)
+
+
 def render_daily_summary(result: DailyAnalysisResult) -> str:
     """
     Concise, decision-oriented text summary of one daily analysis -
@@ -548,6 +597,7 @@ def render_daily_summary(result: DailyAnalysisResult) -> str:
     lines = [
         f"Outcome Intelligence — daily change "
         f"({result.prior_run_id} -> {result.latest_run_id})",
+        _METRIC_COVERAGE_NOTE,
     ]
 
     any_flagged = False
@@ -569,9 +619,11 @@ def render_daily_summary(result: DailyAnalysisResult) -> str:
             lines.append(
                 f"  - {change.label}: {change.disposition.value} "
                 f"(win_rate={change.latest.win_rate:.1f}%, "
+                f"average_rr={change.latest.average_rr:.2f}, "
                 f"clean_completed={change.latest.clean_completed}, "
                 f"delta_clean_completed={change.delta_clean_completed:+d}, "
-                f"delta_total_profit={change.delta_total_profit:+.2f})"
+                f"delta_total_profit={change.delta_total_profit:+.2f}, "
+                f"delta_average_rr={change.delta_average_rr:+.2f})"
             )
 
     if not any_flagged:
@@ -594,6 +646,7 @@ def render_weekly_summary(result: WeeklyAnalysisResult) -> str:
         f"Outcome Intelligence — weekly review "
         f"({len(result.run_ids)} runs: "
         f"{', '.join(result.run_ids) if result.run_ids else 'none'})",
+        _METRIC_COVERAGE_NOTE,
     ]
 
     if not result.persistent_losers and not result.persistent_survivors:
@@ -609,19 +662,26 @@ def render_weekly_summary(result: WeeklyAnalysisResult) -> str:
         lines.append("\n[Persistent losers]")
 
         for group in result.persistent_losers:
+            impact = group.filter_impact
             warning = (
-                " ⚠ filter would also remove "
-                f"{group.wins_during_persistence_window} profitable "
-                "case(s) recorded during this persistence window"
-                if group.filter_would_remove_profitable_cases
-                else ""
+                " ⚠ GROUP_FILTER_IMPACT: excluding this group would also "
+                f"remove {impact.wins_removed} winning and "
+                f"{impact.losses_removed} losing trade(s) recorded in "
+                "this persistence window"
+                if impact.would_remove_profitable_cases
+                else (
+                    f" GROUP_FILTER_IMPACT: excluding this group would "
+                    f"remove {impact.losses_removed} losing trade(s) and "
+                    "0 winning trades recorded in this persistence window"
+                )
             )
             lines.append(
                 f"  - [{group.dimension}] {group.label}: loser-leaning "
                 f"for {group.consecutive_windows} consecutive incremental "
                 f"windows (runs {', '.join(group.window_run_ids)}; "
                 f"cumulative-to-date win_rate="
-                f"{group.latest_cumulative_win_rate:.1f}% over "
+                f"{group.latest_cumulative_win_rate:.1f}%, average_rr="
+                f"{group.latest_cumulative_average_rr:.2f} over "
                 f"{group.latest_cumulative_clean_completed} trades)."
                 f"{warning}"
             )
@@ -635,7 +695,8 @@ def render_weekly_summary(result: WeeklyAnalysisResult) -> str:
                 f"for {group.consecutive_windows} consecutive incremental "
                 f"windows (runs {', '.join(group.window_run_ids)}; "
                 f"cumulative-to-date win_rate="
-                f"{group.latest_cumulative_win_rate:.1f}% over "
+                f"{group.latest_cumulative_win_rate:.1f}%, average_rr="
+                f"{group.latest_cumulative_average_rr:.2f} over "
                 f"{group.latest_cumulative_clean_completed} trades)."
             )
 

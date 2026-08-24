@@ -12,6 +12,7 @@ import unittest
 from tools.outcome_intelligence.analysis import (
     CANDIDATE_LOSER_WIN_RATE_THRESHOLD,
     CANDIDATE_SURVIVOR_WIN_RATE_THRESHOLD,
+    GROUP_LEVEL_UNSUPPORTED_METRICS,
     GroupDisposition,
     MIN_SAMPLE_SIZE_FOR_STRONGER_EVIDENCE,
     MIN_SAMPLE_SIZE_FOR_VERDICT,
@@ -36,6 +37,7 @@ def make_group_row(**overrides) -> dict:
         losses=30,
         win_rate=57.1,
         total_profit=12.5,
+        average_rr=1.5,
     )
     row.update(overrides)
     return row
@@ -292,7 +294,33 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(change.delta_wins, 5)
         self.assertEqual(change.delta_losses, 5)
         self.assertAlmostEqual(change.delta_total_profit, 5.0)
+        self.assertAlmostEqual(change.delta_average_rr, 0.0)
         self.assertIsNotNone(change.prior)
+
+    def test_delta_average_rr_computed_against_prior_run(self) -> None:
+        prior = make_setup_reasons(
+            by_strategy=[make_group_row(label="Breakout", average_rr=1.0)]
+        )
+        latest = make_setup_reasons(
+            by_strategy=[make_group_row(label="Breakout", average_rr=1.8)]
+        )
+
+        result = daily_analysis(
+            prior_setup_reasons=prior,
+            latest_setup_reasons=latest,
+            prior_run_id="run-1",
+            latest_run_id="run-2",
+        )
+
+        by_strategy_report = next(
+            report
+            for report in result.dimension_reports
+            if report.dimension == "by_strategy"
+        )
+        change = by_strategy_report.changes[0]
+
+        self.assertAlmostEqual(change.latest.average_rr, 1.8)
+        self.assertAlmostEqual(change.delta_average_rr, 0.8)
 
     def test_new_group_has_none_prior(self) -> None:
         prior = make_setup_reasons(by_strategy=[])
@@ -427,8 +455,9 @@ class WeeklyAnalysisTests(unittest.TestCase):
     ) -> None:
         # Regression for the original defect: three snapshots of an
         # UNCHANGING cumulative total (zero new trades between
-        # captures) must NOT be read as three independent
-        # confirmations. Each window has zero incremental evidence.
+        # captures) must NOT be treated as persistence evidence merely
+        # because the cumulative number repeats. Each window has zero
+        # incremental evidence.
         deltas = [(0, 0)] * PERSISTENCE_MIN_CONSECUTIVE_RUNS
         # Seed a loser-leaning cumulative history once, then stay flat.
         runs = build_cumulative_runs([LOSER_WINDOW] + deltas)
@@ -511,32 +540,41 @@ class WeeklyAnalysisTests(unittest.TestCase):
         with self.assertRaises(OutcomeIntelligenceDataError):
             weekly_analysis(runs)
 
-    def test_filter_would_remove_profitable_cases_flag(self) -> None:
+    def test_group_filter_impact_reports_wins_and_losses_removed(self) -> None:
+        # LOSER_WINDOW = (20, 8) -> per window: 8 wins, 12 losses.
+        deltas = [LOSER_WINDOW] * PERSISTENCE_MIN_CONSECUTIVE_RUNS
+        runs = build_cumulative_runs(deltas)
+
+        result = weekly_analysis(runs)
+        impact = result.persistent_losers[0].filter_impact
+
+        self.assertTrue(impact.would_remove_profitable_cases)
+        self.assertEqual(impact.wins_removed, 8 * PERSISTENCE_MIN_CONSECUTIVE_RUNS)
+        self.assertEqual(impact.losses_removed, 12 * PERSISTENCE_MIN_CONSECUTIVE_RUNS)
+
+    def test_group_filter_impact_false_when_zero_incremental_wins(self) -> None:
+        deltas = [(MIN_SAMPLE_SIZE_FOR_VERDICT, 0)] * PERSISTENCE_MIN_CONSECUTIVE_RUNS
+        runs = build_cumulative_runs(deltas)
+
+        result = weekly_analysis(runs)
+        impact = result.persistent_losers[0].filter_impact
+
+        self.assertEqual(len(result.persistent_losers), 1)
+        self.assertFalse(impact.would_remove_profitable_cases)
+        self.assertEqual(impact.wins_removed, 0)
+        self.assertEqual(
+            impact.losses_removed,
+            MIN_SAMPLE_SIZE_FOR_VERDICT * PERSISTENCE_MIN_CONSECUTIVE_RUNS,
+        )
+
+    def test_persistent_group_surfaces_cumulative_average_rr(self) -> None:
         deltas = [LOSER_WINDOW] * PERSISTENCE_MIN_CONSECUTIVE_RUNS
         runs = build_cumulative_runs(deltas)
 
         result = weekly_analysis(runs)
 
-        self.assertTrue(
-            result.persistent_losers[0].filter_would_remove_profitable_cases
-        )
-        self.assertEqual(
-            result.persistent_losers[0].wins_during_persistence_window,
-            8 * PERSISTENCE_MIN_CONSECUTIVE_RUNS,
-        )
-
-    def test_no_profitable_cases_flag_false_when_zero_incremental_wins(self) -> None:
-        deltas = [(MIN_SAMPLE_SIZE_FOR_VERDICT, 0)] * PERSISTENCE_MIN_CONSECUTIVE_RUNS
-        runs = build_cumulative_runs(deltas)
-
-        result = weekly_analysis(runs)
-
-        self.assertEqual(len(result.persistent_losers), 1)
-        self.assertFalse(
-            result.persistent_losers[0].filter_would_remove_profitable_cases
-        )
-        self.assertEqual(
-            result.persistent_losers[0].wins_during_persistence_window, 0
+        self.assertAlmostEqual(
+            result.persistent_losers[0].latest_cumulative_average_rr, 1.5
         )
 
     def test_weekly_analysis_never_disables_anything(self) -> None:
@@ -605,7 +643,57 @@ class RenderSummaryTests(unittest.TestCase):
         summary = render_weekly_summary(result)
 
         self.assertIn("Breakout", summary)
+        self.assertIn("GROUP_FILTER_IMPACT", summary)
         self.assertIn("also remove", summary)
+        self.assertIn("winning", summary)
+        self.assertIn("losing", summary)
+
+    def test_daily_summary_states_unsupported_metrics_explicitly(self) -> None:
+        result = daily_analysis(
+            prior_setup_reasons=make_setup_reasons(),
+            latest_setup_reasons=make_setup_reasons(),
+            prior_run_id="run-1",
+            latest_run_id="run-2",
+        )
+
+        summary = render_daily_summary(result)
+
+        for metric in GROUP_LEVEL_UNSUPPORTED_METRICS:
+            self.assertIn(metric, summary)
+        self.assertIn("NOT", summary)
+
+    def test_weekly_summary_states_unsupported_metrics_explicitly(self) -> None:
+        result = weekly_analysis([("run-0", make_setup_reasons())])
+
+        summary = render_weekly_summary(result)
+
+        for metric in GROUP_LEVEL_UNSUPPORTED_METRICS:
+            self.assertIn(metric, summary)
+        self.assertIn("NOT", summary)
+
+    def test_daily_summary_surfaces_average_rr(self) -> None:
+        prior = make_setup_reasons()
+        latest = make_setup_reasons(
+            by_strategy=[
+                make_group_row(
+                    label="Breakout",
+                    clean_completed=MIN_SAMPLE_SIZE_FOR_VERDICT,
+                    win_rate=CANDIDATE_LOSER_WIN_RATE_THRESHOLD,
+                    average_rr=1.5,
+                )
+            ]
+        )
+
+        result = daily_analysis(
+            prior_setup_reasons=prior,
+            latest_setup_reasons=latest,
+            prior_run_id="run-1",
+            latest_run_id="run-2",
+        )
+
+        summary = render_daily_summary(result)
+
+        self.assertIn("average_rr=1.50", summary)
 
 
 if __name__ == "__main__":

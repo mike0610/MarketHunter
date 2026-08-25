@@ -1,0 +1,63 @@
+name: Export Outcome Intelligence Snapshot
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/export-outcome-snapshot.yml
+
+permissions:
+  contents: read
+
+env:
+  VPS_HOST: 149.56.45.39
+  VPS_USER: ubuntu
+  SNAPSHOT_ID: 20260825T164330Z
+  SNAPSHOT_DIR: /home/ubuntu/MarketHunter/data/outcome_intelligence/runs/20260825T164330Z
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail closed when SSH secret is unavailable
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}" || { echo 'MISSING SSH SECRET'; exit 2; }
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/markethunter_actions_ed25519
+          chmod 600 ~/.ssh/markethunter_actions_ed25519
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Fetch existing snapshot only
+        run: |
+          set -euo pipefail
+          mkdir -p snapshot
+          KEY="$HOME/.ssh/markethunter_actions_ed25519"
+          for f in manifest.json statistics.json setup_reasons.json; do
+            scp -i "$KEY" "${VPS_USER}@${VPS_HOST}:${SNAPSHOT_DIR}/$f" "snapshot/$f"
+          done
+
+      - name: Verify provenance hashes
+        run: |
+          set -euo pipefail
+          echo 'c05421a270297e20192401f09fbff48d04155ab2a2fe2f586b90b624b1c294c3  snapshot/manifest.json' | sha256sum -c -
+          echo '5128d11a13441f9b95b7e21415993cd3271a064f257cf51b5df8c1371628ca47  snapshot/statistics.json' | sha256sum -c -
+          echo '1c104ecd624da5736e2e8ca7c13afef0fea54fa8d9c6d19c6033675e63f9df85  snapshot/setup_reasons.json' | sha256sum -c -
+
+      - name: Publish snapshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: outcome-intelligence-${{ env.SNAPSHOT_ID }}
+          path: snapshot/*.json
+          if-no-files-found: error
+          retention-days: 30

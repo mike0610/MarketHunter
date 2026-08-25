@@ -1,0 +1,26 @@
+# MarketHunter - Outcome Intelligence weekly cycle. Does NOT capture -
+# reads history captured by outcome-intelligence-daily.service, so it
+# needs no API base URL, only the Slack webhook.
+# Triggered by outcome-intelligence-weekly.timer - not enabled directly.
+#
+# Paths/user below match the production layout as reported via the
+# successor bridge (User=ubuntu, repo at /home/ubuntu/MarketHunter).
+# This has not been independently verified by the implementing agent
+# (no VPS access) - confirm against the real host before installing.
+# See deploy/systemd/README.md.
+
+[Unit]
+Description=MarketHunter Outcome Intelligence - weekly persistence report
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/MarketHunter
+EnvironmentFile=/home/ubuntu/MarketHunter/deploy/systemd/outcome-intelligence.env
+ExecStart=/home/ubuntu/MarketHunter/.venv/bin/python -m tools.outcome_intelligence.runtime weekly
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full

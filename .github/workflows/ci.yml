@@ -89,4 +89,6 @@ jobs:
             tests/test_entry_trigger_provenance.py \
             tests/test_outcome_intelligence_acquisition.py \
             tests/test_outcome_intelligence_analysis.py \
+            tests/test_outcome_intelligence_slack_delivery.py \
+            tests/test_outcome_intelligence_runtime.py \
             -v

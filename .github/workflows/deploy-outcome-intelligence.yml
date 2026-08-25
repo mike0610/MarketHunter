@@ -1,0 +1,134 @@
+name: Deploy Outcome Intelligence
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/deploy-outcome-intelligence.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: outcome-intelligence-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VPS_HOST: 149.56.45.39
+      VPS_USER: ubuntu
+      VPS_REPO: /home/ubuntu/MarketHunter
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+      SLACK_WEBHOOK: ${{ secrets.OUTCOME_INTELLIGENCE_SLACK_WEBHOOK_URL }}
+
+    steps:
+      - name: Fail closed when SSH secret is unavailable
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${SSH_PRIVATE_KEY}" ]; then
+            echo "MISSING SSH SECRET: MARKETHUNTER_VPS_SSH_PRIVATE_KEY"
+            exit 2
+          fi
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/markethunter_vps_ed25519
+          chmod 600 ~/.ssh/markethunter_vps_ed25519
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Stage optional Slack runtime env
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${SLACK_WEBHOOK}" ]; then
+            umask 077
+            {
+              printf '%s\n' 'OUTCOME_INTELLIGENCE_API_BASE_URL=http://127.0.0.1:8000'
+              printf 'OUTCOME_INTELLIGENCE_SLACK_WEBHOOK_URL=%s\n' "${SLACK_WEBHOOK}"
+              printf '%s\n' 'OUTCOME_INTELLIGENCE_OUTPUT_DIR=data/outcome_intelligence'
+            } > /tmp/outcome-intelligence.env
+            scp -i "$HOME/.ssh/markethunter_vps_ed25519" \
+              /tmp/outcome-intelligence.env \
+              "${VPS_USER}@${VPS_HOST}:/tmp/outcome-intelligence.env.github-actions"
+            rm -f /tmp/outcome-intelligence.env
+          fi
+
+      - name: Deploy weekly runtime and create first snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEY="$HOME/.ssh/markethunter_vps_ed25519"
+
+          ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          REPO=/home/ubuntu/MarketHunter
+          ENV_FILE="$REPO/deploy/systemd/outcome-intelligence.env"
+          STAGED_ENV=/tmp/outcome-intelligence.env.github-actions
+
+          cd "$REPO"
+          git fetch origin master
+          git checkout master
+          git pull --ff-only origin master
+
+          # Prefer an already-approved runtime env file. Only install the
+          # staged GitHub-secret copy when no runtime env exists yet.
+          if [ ! -f "$ENV_FILE" ]; then
+            if [ ! -f "$STAGED_ENV" ]; then
+              echo "NEEDS-RUNTIME-SECRET: OUTCOME_INTELLIGENCE_SLACK_WEBHOOK_URL"
+              exit 3
+            fi
+            install -m 600 "$STAGED_ENV" "$ENV_FILE"
+            chown ubuntu:ubuntu "$ENV_FILE"
+          fi
+          rm -f "$STAGED_ENV"
+
+          # Install only the one-shot daily service plus weekly autonomous
+          # service/timer. The daily timer is explicitly disabled and removed.
+          sudo cp deploy/systemd/outcome-intelligence-daily.service \
+                  deploy/systemd/outcome-intelligence-weekly.service \
+                  deploy/systemd/outcome-intelligence-weekly.timer \
+                  /etc/systemd/system/
+          sudo systemctl disable --now outcome-intelligence-daily.timer >/dev/null 2>&1 || true
+          sudo rm -f /etc/systemd/system/outcome-intelligence-daily.timer
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now outcome-intelligence-weekly.timer
+
+          # First real production capture now. Then immediately attempt the
+          # weekly analysis against all compatible accumulated history.
+          sudo systemctl start outcome-intelligence-daily.service
+          sudo systemctl start outcome-intelligence-weekly.service
+
+          echo '=== DEPLOYED MASTER ==='
+          git rev-parse HEAD
+          echo '=== WEEKLY TIMER ==='
+          systemctl is-enabled outcome-intelligence-weekly.timer
+          systemctl is-active outcome-intelligence-weekly.timer
+          systemctl list-timers 'outcome-intelligence-weekly.timer' --no-pager
+          echo '=== DAILY TIMER MUST BE DISABLED ==='
+          systemctl is-enabled outcome-intelligence-daily.timer 2>/dev/null || true
+          echo '=== FIRST CAPTURE JOURNAL ==='
+          journalctl -u outcome-intelligence-daily.service -n 80 --no-pager
+          echo '=== FIRST WEEKLY ANALYSIS JOURNAL ==='
+          journalctl -u outcome-intelligence-weekly.service -n 80 --no-pager
+          echo '=== LATEST ARTIFACTS + SHA256 ==='
+          mapfile -t files < <(find "$REPO/data/outcome_intelligence" -maxdepth 3 -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -n 20 | cut -d' ' -f2-)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo 'SNAPSHOT-BLOCKED: no Outcome Intelligence artifacts created'
+            exit 4
+          fi
+          for f in "${files[@]}"; do
+            stat --format='%y %n' "$f"
+            sha256sum "$f"
+          done
+          echo '=== EXISTING SERVICES UNAFFECTED ==='
+          systemctl is-active markethunter-api markethunter-worker markethunter-monitor nginx
+          REMOTE

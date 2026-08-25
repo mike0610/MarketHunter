@@ -1,0 +1,14 @@
+# MarketHunter - runs outcome-intelligence-daily.service once a day.
+# Time is illustrative (06:00 server-local) - adjust OnCalendar= to
+# the desired reporting time before installing.
+
+[Unit]
+Description=Run MarketHunter Outcome Intelligence daily cycle once a day
+
+[Timer]
+OnCalendar=*-*-* 06:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

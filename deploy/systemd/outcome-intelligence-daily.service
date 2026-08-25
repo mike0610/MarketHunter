@@ -1,0 +1,26 @@
+# MarketHunter - Outcome Intelligence daily cycle.
+# Triggered by outcome-intelligence-daily.timer - not enabled directly.
+#
+# EXAMPLE paths/user below (markethunter / /opt/markethunter). Adjust
+# User=, WorkingDirectory=, EnvironmentFile=, and the venv path in
+# ExecStart= to match the real deployment layout - see
+# deploy/systemd/README.md before installing.
+
+[Unit]
+Description=MarketHunter Outcome Intelligence - daily capture + report
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=markethunter
+WorkingDirectory=/opt/markethunter
+EnvironmentFile=/opt/markethunter/deploy/outcome-intelligence.env
+ExecStart=/opt/markethunter/.venv/bin/python -m tools.outcome_intelligence.runtime daily
+
+# Hardening - safe defaults for a short-lived, non-networked-beyond-
+# localhost-and-Slack, filesystem-writing (data/outcome_intelligence/
+# only) oneshot job. Adjust if the real deployment layout differs.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full

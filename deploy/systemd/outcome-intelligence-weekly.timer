@@ -1,0 +1,14 @@
+# MarketHunter - runs outcome-intelligence-weekly.service once a week.
+# Time is illustrative (Monday 06:30 server-local, after the daily
+# cycle) - adjust OnCalendar= before installing.
+
+[Unit]
+Description=Run MarketHunter Outcome Intelligence weekly cycle once a week
+
+[Timer]
+OnCalendar=Mon *-*-* 06:30:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

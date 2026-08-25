@@ -2,10 +2,9 @@ name: Export Outcome Intelligence Snapshot
 
 on:
   workflow_dispatch:
-  push:
-    branches: [master]
-    paths:
-      - .github/workflows/export-outcome-snapshot.yml
+  workflow_run:
+    workflows: ["Deploy Outcome Intelligence"]
+    types: [completed]
 
 permissions:
   contents: read
@@ -13,12 +12,16 @@ permissions:
 env:
   VPS_HOST: 149.56.45.39
   VPS_USER: ubuntu
-  SNAPSHOT_ID: 20260825T164330Z
-  SNAPSHOT_DIR: /home/ubuntu/MarketHunter/data/outcome_intelligence/runs/20260825T164330Z
+  SNAPSHOT_ROOT: /home/ubuntu/MarketHunter/data/outcome_intelligence/runs
 
 jobs:
   export:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
     steps:
       - name: Fail closed when SSH secret is unavailable
         env:
@@ -38,6 +41,17 @@ jobs:
           ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
+      - name: Resolve latest production snapshot
+        run: |
+          set -euo pipefail
+          KEY="$HOME/.ssh/markethunter_actions_ed25519"
+          SNAPSHOT_ID="$(ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" \
+            "find '${SNAPSHOT_ROOT}' -mindepth 1 -maxdepth 1 -type d -printf '%f\\n' 2>/dev/null | sort | tail -n1")"
+          test -n "$SNAPSHOT_ID" || { echo 'SNAPSHOT-BLOCKED: no production snapshot found'; exit 3; }
+          printf 'SNAPSHOT_ID=%s\n' "$SNAPSHOT_ID" >> "$GITHUB_ENV"
+          printf 'SNAPSHOT_DIR=%s/%s\n' "$SNAPSHOT_ROOT" "$SNAPSHOT_ID" >> "$GITHUB_ENV"
+          echo "Resolved snapshot: $SNAPSHOT_ID"
+
       - name: Fetch existing snapshot only
         run: |
           set -euo pipefail
@@ -47,12 +61,42 @@ jobs:
             scp -i "$KEY" "${VPS_USER}@${VPS_HOST}:${SNAPSHOT_DIR}/$f" "snapshot/$f"
           done
 
-      - name: Verify provenance hashes
+      - name: Verify manifest and payload hashes
+        shell: python
         run: |
-          set -euo pipefail
-          echo 'c05421a270297e20192401f09fbff48d04155ab2a2fe2f586b90b624b1c294c3  snapshot/manifest.json' | sha256sum -c -
-          echo '5128d11a13441f9b95b7e21415993cd3271a064f257cf51b5df8c1371628ca47  snapshot/statistics.json' | sha256sum -c -
-          echo '1c104ecd624da5736e2e8ca7c13afef0fea54fa8d9c6d19c6033675e63f9df85  snapshot/setup_reasons.json' | sha256sum -c -
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path("snapshot")
+          manifest_path = root / "manifest.json"
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+          if manifest.get("run_id") != "${{ env.SNAPSHOT_ID }}":
+              raise SystemExit(
+                  f"run_id mismatch: manifest={manifest.get('run_id')} expected=${{ env.SNAPSHOT_ID }}"
+              )
+
+          expected = {
+              item["artifact_filename"]: item["sha256"]
+              for item in manifest.get("snapshots", [])
+          }
+          required = {"statistics.json", "setup_reasons.json"}
+          if set(expected) != required:
+              raise SystemExit(f"unexpected manifest payload set: {sorted(expected)}")
+
+          for filename in sorted(required):
+              path = root / filename
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              if digest != expected[filename]:
+                  raise SystemExit(
+                      f"sha256 mismatch for {filename}: got={digest} expected={expected[filename]}"
+                  )
+              json.loads(path.read_text(encoding="utf-8"))
+              print(f"VERIFIED {filename} sha256={digest}")
+
+          manifest_digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+          print(f"VERIFIED manifest.json sha256={manifest_digest}")
 
       - name: Publish snapshot artifact
         uses: actions/upload-artifact@v4

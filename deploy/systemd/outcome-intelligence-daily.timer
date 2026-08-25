@@ -1,12 +1,12 @@
-# MarketHunter - runs outcome-intelligence-daily.service once a day.
-# Time is illustrative (06:00 server-local) - adjust OnCalendar= to
-# the desired reporting time before installing.
+# MarketHunter - runs outcome-intelligence-daily.service once a day
+# at 06:00 UTC. UTC is specified explicitly so the schedule does not
+# depend on the server's local timezone setting.
 
 [Unit]
 Description=Run MarketHunter Outcome Intelligence daily cycle once a day
 
 [Timer]
-OnCalendar=*-*-* 06:00:00
+OnCalendar=*-*-* 06:00:00 UTC
 Persistent=true
 RandomizedDelaySec=300
 

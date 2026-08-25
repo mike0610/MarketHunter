@@ -4,30 +4,39 @@ This directory contains repo-tracked systemd units and an env-file
 template for running `tools/outcome_intelligence/runtime.py` on an
 autonomous daily/weekly cadence. **Nothing here is installed or live
 until an operator with VPS access performs the steps below** - the
-implementing coding agent does not have VPS/systemd access and has
-not deployed or restarted anything.
+implementing coding agent does not have VPS/systemd/SSH access and
+has not deployed, installed, enabled, or restarted anything.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `outcome-intelligence-daily.service` / `.timer` | Captures one new run, then delivers the daily change report to Slack if ≥2 runs exist. |
-| `outcome-intelligence-weekly.service` / `.timer` | Delivers the weekly persistence report if ≥4 runs exist (`PERSISTENCE_MIN_CONSECUTIVE_RUNS + 1`). Does **not** capture. |
+| `outcome-intelligence-daily.service` / `.timer` | Captures one new run, then delivers the daily change report to Slack if ≥2 runs exist. Runs 06:00 UTC daily. |
+| `outcome-intelligence-weekly.service` / `.timer` | Delivers the weekly persistence report if ≥4 runs exist (`PERSISTENCE_MIN_CONSECUTIVE_RUNS + 1`). Does **not** capture. Runs Monday 06:30 UTC. |
 | `outcome-intelligence.env.example` | Template for the env file referenced by `EnvironmentFile=` in both `.service` units. Copy it, fill in real values, do not commit the filled-in copy. |
 
-The example units assume `User=markethunter`, `WorkingDirectory=/opt/markethunter`,
-a venv at `/opt/markethunter/.venv`, and an env file at
-`/opt/markethunter/deploy/outcome-intelligence.env`. **Adjust every one
-of these to match the real deployment layout before installing** - the
-values here are illustrative placeholders, not confirmed production
-paths.
+The units assume `User=ubuntu`, `WorkingDirectory=/home/ubuntu/MarketHunter`,
+a venv at `/home/ubuntu/MarketHunter/.venv`, and an env file at
+`/home/ubuntu/MarketHunter/deploy/systemd/outcome-intelligence.env` -
+this layout was reported via the successor bridge as the actual
+production configuration. **This has not been independently verified
+by the implementing agent** (no VPS access exists in this session) -
+confirm it against the real host, and adjust the units if it differs,
+before installing.
+
+Both timers pin `OnCalendar=... UTC` explicitly so the schedule does
+not silently shift if the server's local timezone differs from UTC.
 
 ## Required secrets/config (see `outcome-intelligence.env.example`)
 
 - `OUTCOME_INTELLIGENCE_API_BASE_URL` - base URL of the authoritative
-  local MarketHunter API (daily cycle only).
+  local MarketHunter API (daily cycle only). Production value:
+  `http://127.0.0.1:8000`.
 - `OUTCOME_INTELLIGENCE_SLACK_WEBHOOK_URL` - a Slack Incoming Webhook
-  URL for the reporting channel (both cycles).
+  URL for the reporting channel (both cycles). **If an approved Slack
+  webhook already exists for this MarketHunter deployment, reuse its
+  value here instead of creating a new one** - the implementing agent
+  has no VPS read access and could not check for one.
 - `OUTCOME_INTELLIGENCE_OUTPUT_DIR` - optional, defaults to
   `data/outcome_intelligence` under `WorkingDirectory=`.
 
@@ -38,15 +47,16 @@ three names from the process environment only and fails closed
 ## Install steps (run as an operator with VPS access)
 
 ```bash
-# 1. Place the env file (adjust path/values to the real deployment):
-sudo mkdir -p /opt/markethunter/deploy
-sudo cp deploy/systemd/outcome-intelligence.env.example \
-    /opt/markethunter/deploy/outcome-intelligence.env
-sudo $EDITOR /opt/markethunter/deploy/outcome-intelligence.env
-sudo chown markethunter:markethunter /opt/markethunter/deploy/outcome-intelligence.env
-sudo chmod 600 /opt/markethunter/deploy/outcome-intelligence.env
+# 1. Place the env file:
+mkdir -p /home/ubuntu/MarketHunter/deploy/systemd
+cp deploy/systemd/outcome-intelligence.env.example \
+    /home/ubuntu/MarketHunter/deploy/systemd/outcome-intelligence.env
+$EDITOR /home/ubuntu/MarketHunter/deploy/systemd/outcome-intelligence.env
+chown ubuntu:ubuntu /home/ubuntu/MarketHunter/deploy/systemd/outcome-intelligence.env
+chmod 600 /home/ubuntu/MarketHunter/deploy/systemd/outcome-intelligence.env
 
-# 2. Install the units (adjust User=/WorkingDirectory=/paths first if needed):
+# 2. Install the units (confirm User=/WorkingDirectory=/paths match the
+#    real host first - see the note above):
 sudo cp deploy/systemd/outcome-intelligence-daily.service \
         deploy/systemd/outcome-intelligence-daily.timer \
         deploy/systemd/outcome-intelligence-weekly.service \
@@ -58,6 +68,10 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now outcome-intelligence-daily.timer
 sudo systemctl enable --now outcome-intelligence-weekly.timer
 ```
+
+This only touches the two new Outcome Intelligence units - it does
+not restart `markethunter-api`, any worker/monitor service, nginx, or
+touch the database.
 
 ## One-shot manual verification (read-only / safe to run any time)
 
@@ -76,24 +90,26 @@ sudo systemctl start outcome-intelligence-weekly.service
 journalctl -u outcome-intelligence-weekly.service -n 50 --no-pager
 
 # Confirm captured run artifacts exist on disk:
-ls -la /opt/markethunter/data/outcome_intelligence/runs/
+ls -la /home/ubuntu/MarketHunter/data/outcome_intelligence/runs/
 ```
 
 A successful daily/weekly run logs `daily cycle: report delivered` /
 `weekly cycle: report delivered` (or an explicit `insufficient
-history` info line if not enough runs exist yet) via
-`journalctl`. Any failure - missing env var, unreachable API, Slack
-delivery error, malformed data - is logged as an `ERROR` line and the
-service exits non-zero, which `systemctl status` reports as `Main
-PID exited, code=exited, status=<N>/FAILURE`.
+history` info line if not enough runs exist yet - this is expected
+warm-up behavior, not a failure) via `journalctl`. Any real failure -
+missing env var, unreachable API, Slack delivery error, malformed data
+- is logged as an `ERROR` line and the service exits non-zero, which
+`systemctl status` reports as `Main PID exited, code=exited,
+status=<N>/FAILURE`.
 
 ## Definition of done
 
 Once the steps above are performed by an operator:
-- `outcome-intelligence-daily.timer` fires once a day, unattended,
-  captures a fresh snapshot, and (once ≥2 runs exist) posts the daily
-  report to the configured Slack channel.
-- `outcome-intelligence-weekly.timer` fires once a week, unattended,
-  and (once ≥4 runs exist) posts the weekly persistence report.
+- `outcome-intelligence-daily.timer` fires once a day at 06:00 UTC,
+  unattended, captures a fresh snapshot, and (once ≥2 runs exist)
+  posts the daily report to the configured Slack channel.
+- `outcome-intelligence-weekly.timer` fires once a week, Monday 06:30
+  UTC, unattended, and (once ≥4 runs exist) posts the weekly
+  persistence report.
 - Both are inspectable via `systemctl status` / `journalctl` at any
   time, with no additional tooling.

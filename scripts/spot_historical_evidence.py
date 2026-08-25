@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import math
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,10 +20,19 @@ from typing import Callable, Iterable
 
 import httpx
 
-from exchange.endpoints import SPOT_BASE_URL, SPOT_KLINES
+# Allow both `python -m scripts.spot_historical_evidence` and direct
+# `python scripts/spot_historical_evidence.py` execution from the repo.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from exchange.endpoints import SPOT_BASE_URL, SPOT_KLINES  # noqa: E402
 
 SYMBOL = "BTCUSDT"
 MAX_PAGE_SIZE = 1000
+# Fixed-duration Binance intervals only. `1M` is deliberately excluded,
+# and `1w` is excluded because its Monday boundary is not Unix-epoch modulo
+# one week; accepting it here would make the generic alignment test false.
 INTERVAL_MS: dict[str, int] = {
     "1m": 60_000,
     "3m": 180_000,
@@ -37,7 +47,6 @@ INTERVAL_MS: dict[str, int] = {
     "12h": 43_200_000,
     "1d": 86_400_000,
     "3d": 259_200_000,
-    "1w": 604_800_000,
 }
 
 
@@ -79,10 +88,7 @@ def parse_utc(value: str) -> datetime:
         raise EvidenceError(f"invalid datetime {value!r}") from exc
     if result.tzinfo is None or result.utcoffset() is None:
         raise EvidenceError("naive datetime is not allowed")
-    result = result.astimezone(timezone.utc)
-    if result.utcoffset() != timezone.utc.utcoffset(result):
-        raise EvidenceError("bound could not be normalized to UTC")
-    return result
+    return result.astimezone(timezone.utc)
 
 
 def to_epoch_ms(value: datetime) -> int:

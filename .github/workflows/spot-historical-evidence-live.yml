@@ -14,7 +14,7 @@ permissions:
 jobs:
   vps-live-evidence:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout accessor branch
         uses: actions/checkout@v4
@@ -38,7 +38,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          REMOTE_DIR="/tmp/mh-sl-val-mom-003-${GITHUB_RUN_ID}"
+          REMOTE_DIR="/tmp/mh-sl-val-mom-003b-${GITHUB_RUN_ID}"
           echo "REMOTE_DIR=$REMOTE_DIR" >> "$GITHUB_ENV"
           ssh -i ~/.ssh/markethunter_vps ubuntu@149.56.45.39 \
             "rm -rf '$REMOTE_DIR' && mkdir -p '$REMOTE_DIR/scripts' '$REMOTE_DIR/exchange' '$REMOTE_DIR/evidence'"
@@ -47,13 +47,13 @@ jobs:
           scp -i ~/.ssh/markethunter_vps exchange/endpoints.py \
             ubuntu@149.56.45.39:"$REMOTE_DIR/exchange/endpoints.py"
 
-      - name: Execute frozen BTCUSDT Spot acquisition on VPS
+      - name: Execute frozen BTCUSDT Spot 1D acquisition on VPS
         shell: bash
         run: |
           set -euo pipefail
           set +e
           ssh -i ~/.ssh/markethunter_vps ubuntu@149.56.45.39 \
-            "cd '$REMOTE_DIR' && /home/ubuntu/MarketHunter/.venv/bin/python scripts/spot_historical_evidence.py --interval 1h --start 2026-08-22T00:00:00Z --end 2026-08-24T00:00:00Z --output-dir evidence 2>&1 | tee acquisition.log"
+            "cd '$REMOTE_DIR' && /home/ubuntu/MarketHunter/.venv/bin/python scripts/spot_historical_evidence.py --interval 1d --start 2019-01-01T00:00:00Z --end 2026-01-01T00:00:00Z --output-dir evidence 2>&1 | tee acquisition.log"
           status=$?
           set -e
           if [ "$status" -ne 0 ]; then
@@ -68,7 +68,7 @@ jobs:
             exit "$status"
           fi
 
-      - name: Verify immutable evidence locally
+      - name: Verify immutable historical dataset locally
         shell: bash
         run: |
           set -euo pipefail
@@ -82,20 +82,24 @@ jobs:
           dataset = (run_dir / 'dataset.json').read_bytes()
           actual = hashlib.sha256(dataset).hexdigest()
           assert actual == manifest['dataset_sha256'], (actual, manifest['dataset_sha256'])
-          assert manifest['row_count'] == 48, manifest['row_count']
+          assert manifest['interval'] == '1d', manifest['interval']
+          assert manifest['requested_start_utc'].startswith('2019-01-01T00:00:00'), manifest['requested_start_utc']
+          assert manifest['requested_end_utc_exclusive'].startswith('2026-01-01T00:00:00'), manifest['requested_end_utc_exclusive']
+          assert manifest['row_count'] == 2557, manifest['row_count']
           assert all(manifest['integrity'].values()), manifest['integrity']
-          print('TERMINAL_STATE=LIVE-EVIDENCE-READY')
+          print('TERMINAL_STATE=HISTORICAL-DATASET-READY')
           print(f"RUN_DIR={run_dir}")
           print(f"ROW_COUNT={manifest['row_count']}")
+          print(f"PAGE_COUNT={manifest['page_count']}")
           print(f"DATASET_SHA256={actual}")
           print(f"BASE_URL={manifest['base_url']}")
           PY
 
-      - name: Upload immutable evidence artifact
+      - name: Upload immutable historical evidence artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sl-val-mom-003-live-evidence-vps
+          name: sl-val-mom-003b-historical-dataset-vps
           path: |
             evidence/**
             acquisition.log

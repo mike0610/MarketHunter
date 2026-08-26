@@ -1,0 +1,78 @@
+name: Spot Historical Evidence Live Gate
+
+on:
+  push:
+    branches:
+      - chatgpt/spot-historical-evidence-access
+    paths:
+      - .github/workflows/spot-historical-evidence-live.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout accessor branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install bounded runtime dependency
+        run: python -m pip install --disable-pip-version-check 'httpx>=0.27,<1'
+
+      - name: Execute frozen BTCUSDT Spot acquisition
+        id: acquire
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p evidence
+          set +e
+          python scripts/spot_historical_evidence.py \
+            --interval 1h \
+            --start 2026-08-22T00:00:00Z \
+            --end 2026-08-24T00:00:00Z \
+            --output-dir evidence 2>&1 | tee acquisition.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo 'TERMINAL_STATE=BLOCKED-PROVIDER-ACCESS'
+            exit "$status"
+          fi
+          run_dir=$(find evidence -mindepth 1 -maxdepth 1 -type d | head -n 1)
+          test -n "$run_dir"
+          test -f "$run_dir/manifest.json"
+          test -f "$run_dir/dataset.json"
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          run_dir = next(p for p in Path('evidence').iterdir() if p.is_dir())
+          manifest = json.loads((run_dir / 'manifest.json').read_text())
+          dataset = (run_dir / 'dataset.json').read_bytes()
+          actual = hashlib.sha256(dataset).hexdigest()
+          assert actual == manifest['dataset_sha256'], (actual, manifest['dataset_sha256'])
+          assert manifest['row_count'] == 48, manifest['row_count']
+          assert all(manifest['integrity'].values()), manifest['integrity']
+          print('TERMINAL_STATE=LIVE-EVIDENCE-READY')
+          print(f"RUN_DIR={run_dir}")
+          print(f"ROW_COUNT={manifest['row_count']}")
+          print(f"DATASET_SHA256={actual}")
+          print(f"BASE_URL={manifest['base_url']}")
+          PY
+
+      - name: Upload immutable evidence artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sl-val-mom-003-live-evidence
+          path: |
+            evidence/**
+            acquisition.log
+          if-no-files-found: error
+          retention-days: 30

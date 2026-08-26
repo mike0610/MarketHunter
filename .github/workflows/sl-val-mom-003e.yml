@@ -1,0 +1,199 @@
+name: SL VAL MOM 003E Frozen Verdict
+
+on:
+  push:
+    branches:
+      - chatgpt/spot-historical-evidence-access
+    paths:
+      - .github/workflows/sl-val-mom-003e.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  frozen-momentum-verdict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download immutable SL-VAL-MOM-003B evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: sl-val-mom-003b-historical-dataset-vps
+          path: source_artifact
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 32938889228
+
+      - name: Execute frozen momentum contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p result
+          python - <<'PY'
+          import hashlib, json, math
+          from datetime import datetime, timezone, timedelta
+          from pathlib import Path
+
+          EXPECTED_DATASET_SHA = '04094b0316335b91ddd56a1202cc35dace3a613e9721e3f5f3f045905653b690'
+          roots = list(Path('source_artifact').rglob('dataset.json'))
+          if len(roots) != 1:
+              raise SystemExit(f'BLOCKED-EVIDENCE: expected exactly one dataset.json, got {roots}')
+          dataset_path = roots[0]
+          raw = dataset_path.read_bytes()
+          actual_sha = hashlib.sha256(raw).hexdigest()
+          if actual_sha != EXPECTED_DATASET_SHA:
+              raise SystemExit(f'BLOCKED-EVIDENCE: dataset hash mismatch {actual_sha}')
+          rows = json.loads(raw)
+          if len(rows) != 2557:
+              raise SystemExit(f'BLOCKED-EVIDENCE: row count {len(rows)} != 2557')
+
+          by_date = {}
+          for row in rows:
+              ts = datetime.fromtimestamp(int(row[0]) / 1000, tz=timezone.utc)
+              if ts.hour or ts.minute or ts.second or ts.microsecond:
+                  raise SystemExit(f'BLOCKED-EVIDENCE: non-midnight candle {ts.isoformat()}')
+              d = ts.date()
+              if d in by_date:
+                  raise SystemExit(f'BLOCKED-EVIDENCE: duplicate date {d}')
+              by_date[d] = {'open': float(row[1]), 'close': float(row[4])}
+
+          first = min(by_date); last = max(by_date)
+          expected_days = (last-first).days + 1
+          if len(by_date) != expected_days:
+              raise SystemExit('BLOCKED-EVIDENCE: daily continuity failure')
+
+          # Frozen contract: each Monday 00:00 UTC uses the completed Sunday close;
+          # 12-week / 84-calendar-day close-to-close formation; LONG if >0 else FLAT.
+          decisions = []
+          d = first
+          while d.weekday() != 0:
+              d += timedelta(days=1)
+          while d + timedelta(days=7) <= last + timedelta(days=1):
+              sunday = d - timedelta(days=1)
+              anchor = sunday - timedelta(days=84)
+              next_monday = d + timedelta(days=7)
+              if anchor in by_date and sunday in by_date and d in by_date and next_monday in by_date:
+                  formation = by_date[sunday]['close'] / by_date[anchor]['close'] - 1.0
+                  pos = 1 if formation > 0 else 0
+                  weekly_ret = by_date[next_monday]['open'] / by_date[d]['open'] - 1.0
+                  decisions.append({
+                      'decision_date': d.isoformat(),
+                      'formation_anchor_date': anchor.isoformat(),
+                      'formation_end_date': sunday.isoformat(),
+                      'formation_return': formation,
+                      'position': 'LONG' if pos else 'FLAT',
+                      'entry_open': by_date[d]['open'],
+                      'next_open': by_date[next_monday]['open'],
+                      'weekly_return_if_long': weekly_ret,
+                  })
+              d += timedelta(days=7)
+
+          def partition(start, end_exclusive):
+              obs = [x for x in decisions if start <= x['decision_date'] < end_exclusive]
+              if not obs:
+                  raise SystemExit(f'BLOCKED-EVIDENCE: empty partition {start}..{end_exclusive}')
+              gross_eq = 1.0
+              stressed_eq = 1.0
+              gross_curve = [1.0]
+              stressed_curve = [1.0]
+              episodes = 0
+              in_long = False
+              for i, x in enumerate(obs):
+                  is_long = x['position'] == 'LONG'
+                  if is_long and not in_long:
+                      episodes += 1
+                      in_long = True
+                  if is_long:
+                      r = x['weekly_return_if_long']
+                      gross_eq *= 1.0 + r
+                      stressed_eq *= 1.0 + r
+                  next_is_long = (i + 1 < len(obs) and obs[i+1]['position'] == 'LONG')
+                  if in_long and not next_is_long:
+                      stressed_eq *= 0.998
+                      in_long = False
+                  gross_curve.append(gross_eq)
+                  stressed_curve.append(stressed_eq)
+
+              def max_dd(curve):
+                  peak = curve[0]
+                  worst = 0.0
+                  for v in curve:
+                      peak = max(peak, v)
+                      worst = min(worst, v / peak - 1.0)
+                  return worst
+
+              years = len(obs) * 7 / 365.2425
+              long_count = sum(x['position']=='LONG' for x in obs)
+              flat_count = len(obs) - long_count
+              first_open = obs[0]['entry_open']
+              last_open = obs[-1]['next_open']
+              passive = last_open / first_open - 1.0
+              return {
+                  'decision_count': len(obs),
+                  'long_count': long_count,
+                  'flat_count': flat_count,
+                  'exposure_fraction': long_count / len(obs),
+                  'completed_long_episodes': episodes,
+                  'gross_cumulative_return': gross_eq - 1.0,
+                  'stressed_20bps_cumulative_return': stressed_eq - 1.0,
+                  'gross_annualized_return': gross_eq ** (1/years) - 1.0,
+                  'stressed_annualized_return': stressed_eq ** (1/years) - 1.0,
+                  'gross_max_drawdown': max_dd(gross_curve),
+                  'stressed_max_drawdown': max_dd(stressed_curve),
+                  'passive_btc_cumulative_return_same_bounds': passive,
+                  'first_decision': obs[0]['decision_date'],
+                  'last_decision': obs[-1]['decision_date'],
+                  'last_exit_boundary': (datetime.fromisoformat(obs[-1]['decision_date']) + timedelta(days=7)).date().isoformat(),
+              }
+
+          discovery = partition('2019-01-01', '2022-01-01')
+          validation = partition('2022-01-01', '2026-01-01')
+
+          # Positive support criterion is intentionally not threshold-mined: terminal verdict
+          # remains CANDIDATE when the locked partition is positive after the pre-frozen cost stress.
+          # PROMOTION-ELIGIBLE is deliberately withheld pending robustness/dependence review.
+          terminal = 'CANDIDATE' if validation['stressed_20bps_cumulative_return'] > 0 else 'REJECTED'
+
+          payload = {
+              'object': 'SL-VAL-MOM-003E',
+              'terminal_verdict': terminal,
+              'source_dataset_sha256': actual_sha,
+              'frozen_contract': {
+                  'formation_days': 84,
+                  'formation_end': 'completed Sunday daily close',
+                  'decision_boundary': 'Monday 00:00 UTC',
+                  'position_rule': 'LONG if formation_return > 0 else FLAT',
+                  'entry_reference': 'Monday 00:00 UTC daily open',
+                  'holding': 'to next Monday 00:00 UTC',
+                  'friction': '20 bps round-trip per completed LONG exposure episode',
+              },
+              'discovery_2019_2021': discovery,
+              'locked_validation_2022_2025': validation,
+              'promotion_note': 'PROMOTION-ELIGIBLE intentionally withheld pending later robustness/dependence review.',
+          }
+          result_bytes = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()
+          Path('result/sl_val_mom_003e_result.json').write_bytes(result_bytes)
+          Path('result/weekly_observations.json').write_text(json.dumps(decisions, sort_keys=True, separators=(',', ':')))
+          result_sha = hashlib.sha256(result_bytes).hexdigest()
+          weekly_sha = hashlib.sha256(Path('result/weekly_observations.json').read_bytes()).hexdigest()
+          print(f'TERMINAL_VERDICT={terminal}')
+          print(f'RESULT_SHA256={result_sha}')
+          print(f'WEEKLY_OBSERVATIONS_SHA256={weekly_sha}')
+          print('DISCOVERY=' + json.dumps(discovery, sort_keys=True))
+          print('LOCKED_VALIDATION=' + json.dumps(validation, sort_keys=True))
+          PY
+
+      - name: Hash executable workflow provenance
+        shell: bash
+        run: |
+          sha256sum .github/workflows/sl-val-mom-003e.yml 2>/dev/null || true
+
+      - name: Upload frozen verdict evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: sl-val-mom-003e-frozen-verdict
+          path: result/**
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,10 @@
+{
+  "object_id": "HARNESS-SMOKE",
+  "executor": "vps",
+  "timeout_minutes": 5,
+  "terminal_states": [
+    "HARNESS-PASS",
+    "BLOCKED-TOOLING",
+    "EXECUTION-TIMEOUT"
+  ]
+}

@@ -25,7 +25,8 @@ def main() -> int:
         "checks": {
             "python_execution": True,
             "job_manifest_readable": True,
-            "result_directory_writable": True
+            "result_directory_writable": True,
+            "terminal_delivery_contract": True
         }
     }
     result_bytes = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()

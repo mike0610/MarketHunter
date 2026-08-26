@@ -1,0 +1,156 @@
+name: Research Execution Harness
+
+on:
+  workflow_dispatch:
+    inputs:
+      object_id:
+        description: Research object directory under research/jobs
+        required: true
+        default: HARNESS-SMOKE
+  push:
+    branches:
+      - chatgpt/research-execution-harness-v1
+    paths:
+      - '.github/workflows/research-execution-harness.yml'
+      - 'research/jobs/HARNESS-SMOKE/**'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VPS_HOST: 149.56.45.39
+      VPS_USER: ubuntu
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+      OBJECT_ID: HARNESS-SMOKE
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve requested object
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "OBJECT_ID=${{ inputs.object_id }}" >> "$GITHUB_ENV"
+
+      - name: Validate frozen job contract
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          object_id = os.environ['OBJECT_ID']
+          if not re.fullmatch(r'[A-Z0-9][A-Z0-9._-]{1,127}', object_id):
+              raise SystemExit('invalid object id')
+          job_dir = Path('research/jobs') / object_id
+          job = json.loads((job_dir / 'job.json').read_text())
+          if job.get('object_id') != object_id or not (job_dir / 'run.py').is_file():
+              raise SystemExit('invalid frozen job contract')
+          if job.get('executor') != 'vps':
+              raise SystemExit('v1 requires executor=vps')
+          timeout = int(job.get('timeout_minutes', 0))
+          if not 1 <= timeout <= 20:
+              raise SystemExit('timeout_minutes must be 1..20')
+          states = job.get('terminal_states')
+          if not isinstance(states, list) or not states:
+              raise SystemExit('terminal_states required')
+          print('CONTRACT_OK', object_id, timeout, states)
+          PY
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          test -n "$SSH_PRIVATE_KEY" || { echo 'MISSING SSH SECRET'; exit 2; }
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/markethunter_vps_ed25519
+          chmod 600 ~/.ssh/markethunter_vps_ed25519
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Execute isolated VPS job
+        run: |
+          set -euo pipefail
+          KEY="$HOME/.ssh/markethunter_vps_ed25519"
+          JOB_DIR="research/jobs/${OBJECT_ID}"
+          REMOTE_DIR="/tmp/mh-research-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p evidence
+          trap 'ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "rm -rf '${REMOTE_DIR}'" >/dev/null 2>&1 || true' EXIT
+          scp -i "$KEY" -r "$JOB_DIR" "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}"
+          ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "cd '${REMOTE_DIR}' && mkdir -p result && timeout 20m python3 run.py --job job.json --output result"
+          scp -i "$KEY" -r "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}/result/." evidence/
+          test -s evidence/terminal_result.json
+
+      - name: Validate terminal result and write provenance
+        id: terminal
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          object_id = os.environ['OBJECT_ID']
+          job = json.loads((Path('research/jobs') / object_id / 'job.json').read_text())
+          result_path = Path('evidence/terminal_result.json')
+          result = json.loads(result_path.read_text())
+          state = result.get('terminal_state')
+          allowed = set(job['terminal_states']) | {'BLOCKED-TOOLING', 'EXECUTION-TIMEOUT'}
+          if result.get('object_id') != object_id or state not in allowed:
+              raise SystemExit('invalid terminal result')
+          result_sha = hashlib.sha256(result_path.read_bytes()).hexdigest()
+          hashes = {}
+          for p in sorted(Path('evidence').rglob('*')):
+              if p.is_file():
+                  hashes[str(p.relative_to('evidence'))] = hashlib.sha256(p.read_bytes()).hexdigest()
+          manifest = {
+              'object_id': object_id,
+              'terminal_state': state,
+              'github_run_id': os.environ['GITHUB_RUN_ID'],
+              'github_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'git_sha': os.environ['GITHUB_SHA'],
+              'validated_at_utc': datetime.now(timezone.utc).isoformat(),
+              'files_sha256': hashes,
+          }
+          mp = Path('evidence/harness_manifest.json')
+          mp.write_text(json.dumps(manifest, sort_keys=True, separators=(',', ':')))
+          manifest_sha = hashlib.sha256(mp.read_bytes()).hexdigest()
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'state={state}\nresult_sha={result_sha}\nmanifest_sha={manifest_sha}\n')
+          print('TERMINAL_STATE=' + state)
+          print('TERMINAL_RESULT_SHA256=' + result_sha)
+          PY
+
+      - name: Upload immutable terminal evidence
+        id: artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-terminal-${{ env.OBJECT_ID }}-${{ github.run_id }}
+          path: evidence/**
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish terminal result to durable mailbox
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TERMINAL_STATE: ${{ steps.terminal.outputs.state }}
+          TERMINAL_RESULT_SHA256: ${{ steps.terminal.outputs.result_sha }}
+          HARNESS_MANIFEST_SHA256: ${{ steps.terminal.outputs.manifest_sha }}
+          ARTIFACT_ID: ${{ steps.artifact.outputs.artifact-id }}
+          ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' \
+            '<!-- MH_RESEARCH_TERMINAL run_id='"$GITHUB_RUN_ID"' attempt='"$GITHUB_RUN_ATTEMPT"' -->' \
+            '**RESEARCH TERMINAL RESULT**' \
+            '' \
+            '- object_id: `'$OBJECT_ID'`' \
+            '- terminal_state: `'$TERMINAL_STATE'`' \
+            '- run_id: `'$GITHUB_RUN_ID'`' \
+            '- run_attempt: `'$GITHUB_RUN_ATTEMPT'`' \
+            '- git_sha: `'$GITHUB_SHA'`' \
+            '- terminal_result_sha256: `'$TERMINAL_RESULT_SHA256'`' \
+            '- harness_manifest_sha256: `'$HARNESS_MANIFEST_SHA256'`' \
+            '- artifact_id: `'$ARTIFACT_ID'`' \
+            '- artifact: '$ARTIFACT_URL > /tmp/terminal-comment.md
+          gh issue comment 40 --repo "$GITHUB_REPOSITORY" --body-file /tmp/terminal-comment.md

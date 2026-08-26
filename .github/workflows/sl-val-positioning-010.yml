@@ -1,0 +1,179 @@
+name: SL VAL POSITIONING 010 Alignment
+
+on:
+  push:
+    branches:
+      - chatgpt/spot-historical-evidence-access
+    paths:
+      - .github/workflows/sl-val-positioning-010.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  price-alignment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Acquire Coin Metrics NY-close anchors and validate timing
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p result
+          python - <<'PY'
+          import hashlib, json, sys, urllib.parse, urllib.request
+          from datetime import date, datetime, time, timezone
+          from pathlib import Path
+          from zoneinfo import ZoneInfo
+
+          releases = [
+            ('2026-01-23','2026-01-20'),('2026-01-30','2026-01-27'),
+            ('2026-02-06','2026-02-03'),('2026-02-13','2026-02-10'),('2026-02-20','2026-02-17'),('2026-02-27','2026-02-24'),
+            ('2026-03-06','2026-03-03'),('2026-03-13','2026-03-10'),('2026-03-20','2026-03-17'),('2026-03-27','2026-03-24'),
+            ('2026-04-03','2026-03-31'),('2026-04-10','2026-04-07'),('2026-04-17','2026-04-14'),('2026-04-24','2026-04-21'),
+            ('2026-05-01','2026-04-28'),('2026-05-08','2026-05-05'),('2026-05-15','2026-05-12'),('2026-05-22','2026-05-19'),('2026-05-29','2026-05-26'),
+            ('2026-06-05','2026-06-02'),('2026-06-12','2026-06-09'),('2026-06-22','2026-06-16'),('2026-06-26','2026-06-23'),
+            ('2026-07-06','2026-06-30'),('2026-07-10','2026-07-07'),('2026-07-17','2026-07-14'),('2026-07-24','2026-07-21'),('2026-07-31','2026-07-28'),
+            ('2026-08-07','2026-08-04'),('2026-08-14','2026-08-11'),('2026-08-21','2026-08-18'),
+          ]
+          if len(releases) != 31 or len({r for r,_ in releases}) != 31:
+              print('TERMINAL_STATE=ALIGNMENT-FAIL')
+              raise SystemExit('release census contract failure')
+
+          params = urllib.parse.urlencode({
+              'assets':'btc',
+              'metrics':'ReferenceRateUSD',
+              'frequency':'1d-ny-close',
+              'start_time':'2026-01-23',
+              'end_time':'2026-08-22',
+              'page_size':'10000',
+          })
+          url = 'https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?' + params
+          req = urllib.request.Request(url, headers={'User-Agent':'MarketHunter-Research/1.0','Accept':'application/json'})
+          try:
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  status = resp.status
+                  raw = resp.read()
+                  headers = dict(resp.headers.items())
+          except Exception as exc:
+              print('TERMINAL_STATE=BLOCKED-PROVIDER-ACCESS')
+              print(f'ERROR={type(exc).__name__}: {exc}')
+              raise
+          Path('result/coinmetrics_raw.json').write_bytes(raw)
+          raw_sha = hashlib.sha256(raw).hexdigest()
+          if status != 200:
+              print('TERMINAL_STATE=BLOCKED-PROVIDER-ACCESS')
+              raise SystemExit(f'HTTP {status}')
+          payload = json.loads(raw)
+          data = payload.get('data')
+          if not isinstance(data, list):
+              print('TERMINAL_STATE=ALIGNMENT-FAIL')
+              raise SystemExit('Coin Metrics payload missing data list')
+
+          ny = ZoneInfo('America/New_York')
+          anchors = {}
+          duplicates = []
+          for item in data:
+              if not isinstance(item, dict) or 'time' not in item or 'ReferenceRateUSD' not in item:
+                  continue
+              text = item['time']
+              # Python fromisoformat accepts microseconds but not nanoseconds; truncate fractional seconds deterministically.
+              if text.endswith('Z'):
+                  base = text[:-1]
+                  if '.' in base:
+                      head, frac = base.split('.', 1)
+                      base = head + '.' + frac[:6]
+                  dt = datetime.fromisoformat(base).replace(tzinfo=timezone.utc)
+              else:
+                  dt = datetime.fromisoformat(text)
+                  if dt.tzinfo is None:
+                      print('TERMINAL_STATE=ALIGNMENT-FAIL')
+                      raise SystemExit('naive provider timestamp')
+                  dt = dt.astimezone(timezone.utc)
+              local = dt.astimezone(ny)
+              local_date = local.date().isoformat()
+              if local.hour != 16 or local.minute != 0:
+                  continue
+              if local_date in anchors:
+                  duplicates.append(local_date)
+              anchors[local_date] = {'timestamp_utc': dt.isoformat(), 'value': item['ReferenceRateUSD']}
+
+          rows = []
+          missing = []
+          ordering_failures = []
+          for i, (release_date, report_date) in enumerate(releases):
+              anchor = anchors.get(release_date)
+              if anchor is None:
+                  missing.append(release_date)
+                  continue
+              rd = date.fromisoformat(release_date)
+              release_local = datetime.combine(rd, time(15,30), tzinfo=ny)
+              anchor_utc = datetime.fromisoformat(anchor['timestamp_utc'])
+              anchor_local = anchor_utc.astimezone(ny)
+              if not release_local < anchor_local:
+                  ordering_failures.append(release_date)
+              next_release = releases[i+1][0] if i+1 < len(releases) else None
+              rows.append({
+                  'release_date': release_date,
+                  'release_time_local': release_local.isoformat(),
+                  'release_time_utc': release_local.astimezone(timezone.utc).isoformat(),
+                  'tff_report_date': report_date,
+                  'anchor_timestamp_utc': anchor_utc.isoformat(),
+                  'anchor_time_local': anchor_local.isoformat(),
+                  'reference_rate_usd': anchor['value'],
+                  'next_release_anchor_date': next_release,
+              })
+
+          timestamps = [datetime.fromisoformat(r['anchor_timestamp_utc']) for r in rows]
+          monotonic = all(b > a for a,b in zip(timestamps, timestamps[1:]))
+          unique_ts = len(set(timestamps)) == len(timestamps)
+          complete_intervals = max(0, len(rows)-1)
+          integrity = {
+              'expected_release_count':31,
+              'observed_anchor_count':len(rows),
+              'missing_release_dates':missing,
+              'duplicate_local_dates':sorted(set(duplicates) & {r for r,_ in releases}),
+              'monotonic_timestamps':monotonic,
+              'unique_timestamps':unique_ts,
+              'adjacent_forward_intervals':complete_intervals,
+              'ordering_failures':ordering_failures,
+              'dst_timezone':'America/New_York',
+              'release_before_same_date_16_ny':not ordering_failures,
+          }
+
+          Path('result/alignment.json').write_text(json.dumps(rows, sort_keys=True, separators=(',',':')))
+          Path('result/integrity.json').write_text(json.dumps(integrity, sort_keys=True, separators=(',',':')))
+          provenance = {
+              'object':'SL-VAL-POSITIONING-010',
+              'provider':'Coin Metrics Community API',
+              'request_url':url,
+              'retrieved_at_utc':datetime.now(timezone.utc).isoformat(),
+              'http_status':status,
+              'raw_payload_sha256':raw_sha,
+              'response_headers_subset':{k:v for k,v in headers.items() if k.lower() in {'content-type','date','etag','last-modified'}},
+              'cftc_release_contract_note':'31 official release dates Jan 23 through Aug 21 2026, including Jun 22 and Jul 6 federal-holiday delays; 15:30 America/New_York.',
+          }
+          Path('result/provenance.json').write_text(json.dumps(provenance, sort_keys=True, separators=(',',':')))
+
+          for p in sorted(Path('result').glob('*.json')):
+              print(f'SHA256 {p.name}={hashlib.sha256(p.read_bytes()).hexdigest()}')
+
+          passed = (
+              len(rows)==31 and not missing and not (set(duplicates) & {r for r,_ in releases}) and
+              monotonic and unique_ts and complete_intervals==30 and not ordering_failures
+          )
+          print('TERMINAL_STATE=' + ('ALIGNMENT-PASS' if passed else 'ALIGNMENT-FAIL'))
+          print('INTEGRITY=' + json.dumps(integrity, sort_keys=True))
+          if not passed:
+              raise SystemExit(1)
+          PY
+
+      - name: Upload immutable alignment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sl-val-positioning-010-alignment
+          path: result/**
+          if-no-files-found: warn
+          retention-days: 30

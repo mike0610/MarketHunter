@@ -1,0 +1,1 @@
+{"object_id":"SL-VAL-LIQUIDITY-008","executor":"vps","timeout_minutes":20,"terminal_states":["STRESS-EPOCH-PASSED","STRESS-EPOCH-FAILED","BLOCKED-PROVIDER-ACCESS","BLOCKED-TOOLING"],"scope":"BTCUSDT USD-M Futures Binance Vision daily bookTicker + bookDepth, 2023-06-01..2023-06-30 UTC, data-integrity only","production_mutation":false,"merge":false}

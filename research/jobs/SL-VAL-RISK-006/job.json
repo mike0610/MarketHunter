@@ -1,0 +1,11 @@
+{
+  "object_id": "SL-VAL-RISK-006",
+  "executor": "vps",
+  "timeout_minutes": 10,
+  "terminal_states": [
+    "EXPOSURE-MATCHED-TIMING-VALUE-PASS",
+    "EXPOSURE-MATCHED-TIMING-VALUE-FAIL",
+    "DATA-INTEGRITY-FAIL",
+    "BLOCKED-PROVIDER"
+  ]
+}

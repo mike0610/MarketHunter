@@ -1,0 +1,199 @@
+name: Research Execution Harness
+
+on:
+  workflow_dispatch:
+    inputs:
+      object_id:
+        description: Research object directory under research/jobs
+        required: true
+        default: HARNESS-SMOKE
+  push:
+    branches:
+      - chatgpt/research-execution-harness-v1
+    paths:
+      - '.github/workflows/research-execution-harness.yml'
+      - 'research/jobs/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: research-execution-${{ github.ref }}-${{ inputs.object_id || 'HARNESS-SMOKE' }}
+  cancel-in-progress: false
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VPS_HOST: 149.56.45.39
+      VPS_USER: ubuntu
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+      OBJECT_ID: ${{ inputs.object_id || 'HARNESS-SMOKE' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate frozen job contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, re
+          from pathlib import Path
+
+          object_id = os.environ['OBJECT_ID']
+          if not re.fullmatch(r'[A-Z0-9][A-Z0-9._-]{1,127}', object_id):
+              raise SystemExit('invalid object id')
+          job_dir = Path('research/jobs') / object_id
+          job_path = job_dir / 'job.json'
+          run_path = job_dir / 'run.py'
+          if not job_path.is_file() or not run_path.is_file():
+              raise SystemExit(f'missing frozen job files for {object_id}')
+          job = json.loads(job_path.read_text())
+          if job.get('object_id') != object_id:
+              raise SystemExit('object id mismatch')
+          if job.get('executor') != 'vps':
+              raise SystemExit('v1 only permits the bounded vps executor')
+          timeout = int(job.get('timeout_minutes', 0))
+          if not 1 <= timeout <= 20:
+              raise SystemExit('timeout_minutes must be 1..20')
+          states = job.get('terminal_states')
+          if not isinstance(states, list) or not states or any(not isinstance(x, str) for x in states):
+              raise SystemExit('terminal_states must be a non-empty string list')
+          print(f'CONTRACT_OK object={object_id} timeout={timeout} states={states}')
+          PY
+
+      - name: Fail closed when SSH secret is unavailable
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${SSH_PRIVATE_KEY}" ]; then
+            echo 'MISSING SSH SECRET: MARKETHUNTER_VPS_SSH_PRIVATE_KEY'
+            exit 2
+          fi
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/markethunter_vps_ed25519
+          chmod 600 ~/.ssh/markethunter_vps_ed25519
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Execute frozen job on isolated VPS temp path
+        id: remote
+        shell: bash
+        run: |
+          set -uo pipefail
+          KEY="$HOME/.ssh/markethunter_vps_ed25519"
+          JOB_DIR="research/jobs/${OBJECT_ID}"
+          REMOTE_DIR="/tmp/mh-research-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p evidence
+
+          scp -i "$KEY" -r "$JOB_DIR" "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}"
+
+          set +e
+          ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" \
+            "REMOTE_DIR='${REMOTE_DIR}' bash -s" <<'REMOTE'
+          set -uo pipefail
+          cd "$REMOTE_DIR"
+          mkdir -p result
+          TIMEOUT_MINUTES=$(python3 - <<'PY'
+          import json
+          print(int(json.load(open('job.json'))['timeout_minutes']))
+          PY
+          )
+          timeout "${TIMEOUT_MINUTES}m" python3 run.py --job job.json --output result
+          code=$?
+          if [ "$code" -eq 124 ] && [ ! -f result/terminal_result.json ]; then
+            python3 - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+          Path('result/terminal_result.json').write_text(json.dumps({
+              'object_id': json.load(open('job.json'))['object_id'],
+              'terminal_state': 'EXECUTION-TIMEOUT',
+              'executed_at_utc': datetime.now(timezone.utc).isoformat(),
+              'executor': 'vps'
+          }, sort_keys=True, separators=(',', ':')))
+          PY
+          fi
+          if [ "$code" -ne 0 ] && [ "$code" -ne 124 ] && [ ! -f result/terminal_result.json ]; then
+            CODE="$code" python3 - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          Path('result/terminal_result.json').write_text(json.dumps({
+              'object_id': json.load(open('job.json'))['object_id'],
+              'terminal_state': 'BLOCKED-TOOLING',
+              'executed_at_utc': datetime.now(timezone.utc).isoformat(),
+              'executor': 'vps',
+              'runner_exit_code': int(os.environ['CODE'])
+          }, sort_keys=True, separators=(',', ':')))
+          PY
+          fi
+          exit 0
+          REMOTE
+          ssh_code=$?
+          set -e
+
+          if [ "$ssh_code" -ne 0 ]; then
+            printf '{"object_id":"%s","terminal_state":"BLOCKED-TOOLING","executor":"github-actions","reason":"ssh-execution-failed"}\n' "$OBJECT_ID" > evidence/terminal_result.json
+          else
+            scp -i "$KEY" -r "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}/result/." evidence/ || true
+          fi
+
+          ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "rm -rf '${REMOTE_DIR}'" || true
+
+          if [ ! -f evidence/terminal_result.json ]; then
+            printf '{"object_id":"%s","terminal_state":"BLOCKED-TOOLING","executor":"github-actions","reason":"terminal-result-missing"}\n' "$OBJECT_ID" > evidence/terminal_result.json
+          fi
+
+      - name: Validate terminal result and build provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          object_id = os.environ['OBJECT_ID']
+          job = json.loads((Path('research/jobs') / object_id / 'job.json').read_text())
+          result_path = Path('evidence/terminal_result.json')
+          result = json.loads(result_path.read_text())
+          if result.get('object_id') != object_id:
+              raise SystemExit('terminal result object mismatch')
+          state = result.get('terminal_state')
+          allowed = set(job['terminal_states']) | {'BLOCKED-TOOLING', 'EXECUTION-TIMEOUT'}
+          if state not in allowed:
+              raise SystemExit(f'unapproved terminal state: {state}')
+
+          hashes = {}
+          for p in sorted(Path('evidence').rglob('*')):
+              if p.is_file():
+                  hashes[str(p.relative_to('evidence'))] = hashlib.sha256(p.read_bytes()).hexdigest()
+          manifest = {
+              'object_id': object_id,
+              'terminal_state': state,
+              'github_run_id': os.environ['GITHUB_RUN_ID'],
+              'github_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'git_sha': os.environ['GITHUB_SHA'],
+              'validated_at_utc': datetime.now(timezone.utc).isoformat(),
+              'files_sha256': hashes,
+          }
+          Path('evidence/harness_manifest.json').write_text(json.dumps(manifest, sort_keys=True, separators=(',', ':')))
+          print('TERMINAL_STATE=' + state)
+          print('TERMINAL_RESULT_SHA256=' + hashes['terminal_result.json'])
+          PY
+
+      - name: Upload immutable terminal evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-terminal-${{ env.OBJECT_ID }}-${{ github.run_id }}
+          path: evidence/**
+          if-no-files-found: error
+          retention-days: 30

@@ -12,10 +12,11 @@ on:
       - chatgpt/research-execution-harness-v1
     paths:
       - '.github/workflows/research-execution-harness.yml'
-      - 'research/jobs/**'
+      - 'research/jobs/HARNESS-SMOKE/**'
 
 permissions:
   contents: read
+  issues: write
 
 concurrency:
   group: research-execution-${{ github.ref }}-${{ inputs.object_id || 'HARNESS-SMOKE' }}
@@ -30,18 +31,21 @@ jobs:
       VPS_USER: ubuntu
       SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
       OBJECT_ID: ${{ inputs.object_id || 'HARNESS-SMOKE' }}
+      TERMINAL_MAILBOX_ISSUE: '40'
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Validate frozen job contract
+        id: contract
         shell: bash
         run: |
-          set -euo pipefail
+          set -u
+          mkdir -p evidence
+          set +e
           python - <<'PY'
           import json, os, re
           from pathlib import Path
-
           object_id = os.environ['OBJECT_ID']
           if not re.fullmatch(r'[A-Z0-9][A-Z0-9._-]{1,127}', object_id):
               raise SystemExit('invalid object id')
@@ -63,28 +67,41 @@ jobs:
               raise SystemExit('terminal_states must be a non-empty string list')
           print(f'CONTRACT_OK object={object_id} timeout={timeout} states={states}')
           PY
-
-      - name: Fail closed when SSH secret is unavailable
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -z "${SSH_PRIVATE_KEY}" ]; then
-            echo 'MISSING SSH SECRET: MARKETHUNTER_VPS_SSH_PRIVATE_KEY'
-            exit 2
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then
+            echo 'ok=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ok=false' >> "$GITHUB_OUTPUT"
+            printf '{"object_id":"%s","terminal_state":"BLOCKED-TOOLING","executor":"github-actions","reason":"invalid-frozen-job-contract"}\n' "$OBJECT_ID" > evidence/terminal_result.json
           fi
 
-      - name: Configure SSH
+      - name: Configure SSH or fail closed into a terminal result
+        id: ssh
+        if: steps.contract.outputs.ok == 'true'
         shell: bash
         run: |
-          set -euo pipefail
+          set -u
+          mkdir -p evidence
+          if [ -z "${SSH_PRIVATE_KEY}" ]; then
+            printf '{"object_id":"%s","terminal_state":"BLOCKED-TOOLING","executor":"github-actions","reason":"missing-MARKETHUNTER_VPS_SSH_PRIVATE_KEY"}\n' "$OBJECT_ID" > evidence/terminal_result.json
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          set -e
           install -m 700 -d ~/.ssh
           printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/markethunter_vps_ed25519
           chmod 600 ~/.ssh/markethunter_vps_ed25519
-          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+          if ! ssh-keyscan -T 15 -H "${VPS_HOST}" >> ~/.ssh/known_hosts; then
+            printf '{"object_id":"%s","terminal_state":"BLOCKED-TOOLING","executor":"github-actions","reason":"vps-host-keyscan-failed"}\n' "$OBJECT_ID" > evidence/terminal_result.json
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           chmod 600 ~/.ssh/known_hosts
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
 
       - name: Execute frozen job on isolated VPS temp path
-        id: remote
+        if: steps.contract.outputs.ok == 'true' && steps.ssh.outputs.ready == 'true'
         shell: bash
         run: |
           set -uo pipefail
@@ -93,11 +110,11 @@ jobs:
           REMOTE_DIR="/tmp/mh-research-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           mkdir -p evidence
 
-          scp -i "$KEY" -r "$JOB_DIR" "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}"
-
-          set +e
-          ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" \
-            "REMOTE_DIR='${REMOTE_DIR}' bash -s" <<'REMOTE'
+          if ! scp -i "$KEY" -r "$JOB_DIR" "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}"; then
+            printf '{"object_id":"%s","terminal_state":"BLOCKED-TOOLING","executor":"github-actions","reason":"scp-stage-failed"}\n' "$OBJECT_ID" > evidence/terminal_result.json
+          else
+            set +e
+            ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "REMOTE_DIR='${REMOTE_DIR}' bash -s" <<'REMOTE'
           set -uo pipefail
           cd "$REMOTE_DIR"
           mkdir -p result
@@ -137,41 +154,54 @@ jobs:
           fi
           exit 0
           REMOTE
-          ssh_code=$?
-          set -e
-
-          if [ "$ssh_code" -ne 0 ]; then
-            printf '{"object_id":"%s","terminal_state":"BLOCKED-TOOLING","executor":"github-actions","reason":"ssh-execution-failed"}\n' "$OBJECT_ID" > evidence/terminal_result.json
-          else
-            scp -i "$KEY" -r "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}/result/." evidence/ || true
+            ssh_code=$?
+            set -e
+            if [ "$ssh_code" -ne 0 ]; then
+              printf '{"object_id":"%s","terminal_state":"BLOCKED-TOOLING","executor":"github-actions","reason":"ssh-execution-failed"}\n' "$OBJECT_ID" > evidence/terminal_result.json
+            else
+              scp -i "$KEY" -r "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}/result/." evidence/ || true
+            fi
+            ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "rm -rf '${REMOTE_DIR}'" || true
           fi
-
-          ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "rm -rf '${REMOTE_DIR}'" || true
 
           if [ ! -f evidence/terminal_result.json ]; then
             printf '{"object_id":"%s","terminal_state":"BLOCKED-TOOLING","executor":"github-actions","reason":"terminal-result-missing"}\n' "$OBJECT_ID" > evidence/terminal_result.json
           fi
 
       - name: Validate terminal result and build provenance
+        id: terminal
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p evidence
+          if [ ! -f evidence/terminal_result.json ]; then
+            printf '{"object_id":"%s","terminal_state":"BLOCKED-TOOLING","executor":"github-actions","reason":"terminal-result-not-produced"}\n' "$OBJECT_ID" > evidence/terminal_result.json
+          fi
           python - <<'PY'
           import hashlib, json, os
           from datetime import datetime, timezone
           from pathlib import Path
-
           object_id = os.environ['OBJECT_ID']
-          job = json.loads((Path('research/jobs') / object_id / 'job.json').read_text())
           result_path = Path('evidence/terminal_result.json')
           result = json.loads(result_path.read_text())
           if result.get('object_id') != object_id:
-              raise SystemExit('terminal result object mismatch')
-          state = result.get('terminal_state')
-          allowed = set(job['terminal_states']) | {'BLOCKED-TOOLING', 'EXECUTION-TIMEOUT'}
+              result = {'object_id': object_id, 'terminal_state': 'BLOCKED-TOOLING', 'executor': 'github-actions', 'reason': 'terminal-result-object-mismatch'}
+              result_path.write_text(json.dumps(result, sort_keys=True, separators=(',', ':')))
+          state = result.get('terminal_state') or 'BLOCKED-TOOLING'
+          job_path = Path('research/jobs') / object_id / 'job.json'
+          allowed = {'BLOCKED-TOOLING', 'EXECUTION-TIMEOUT'}
+          if job_path.is_file():
+              try:
+                  allowed |= set(json.loads(job_path.read_text()).get('terminal_states', []))
+              except Exception:
+                  pass
           if state not in allowed:
-              raise SystemExit(f'unapproved terminal state: {state}')
-
+              state = 'BLOCKED-TOOLING'
+              result['terminal_state'] = state
+              result['reason'] = 'unapproved-terminal-state'
+              result_path.write_text(json.dumps(result, sort_keys=True, separators=(',', ':')))
+          result_sha = hashlib.sha256(result_path.read_bytes()).hexdigest()
           hashes = {}
           for p in sorted(Path('evidence').rglob('*')):
               if p.is_file():
@@ -185,15 +215,52 @@ jobs:
               'validated_at_utc': datetime.now(timezone.utc).isoformat(),
               'files_sha256': hashes,
           }
-          Path('evidence/harness_manifest.json').write_text(json.dumps(manifest, sort_keys=True, separators=(',', ':')))
+          manifest_path = Path('evidence/harness_manifest.json')
+          manifest_path.write_text(json.dumps(manifest, sort_keys=True, separators=(',', ':')))
+          manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'state={state}\n')
+              f.write(f'result_sha={result_sha}\n')
+              f.write(f'manifest_sha={manifest_sha}\n')
           print('TERMINAL_STATE=' + state)
-          print('TERMINAL_RESULT_SHA256=' + hashes['terminal_result.json'])
+          print('TERMINAL_RESULT_SHA256=' + result_sha)
+          print('HARNESS_MANIFEST_SHA256=' + manifest_sha)
           PY
 
       - name: Upload immutable terminal evidence
+        id: artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: research-terminal-${{ env.OBJECT_ID }}-${{ github.run_id }}
           path: evidence/**
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish terminal result to durable mailbox
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TERMINAL_STATE: ${{ steps.terminal.outputs.state }}
+          TERMINAL_RESULT_SHA256: ${{ steps.terminal.outputs.result_sha }}
+          HARNESS_MANIFEST_SHA256: ${{ steps.terminal.outputs.manifest_sha }}
+          ARTIFACT_ID: ${{ steps.artifact.outputs.artifact-id }}
+          ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/terminal-comment.md <<EOF
+          <!-- MH_RESEARCH_TERMINAL run_id=${GITHUB_RUN_ID} attempt=${GITHUB_RUN_ATTEMPT} -->
+          **RESEARCH TERMINAL RESULT**
+
+          - object_id: \`${OBJECT_ID}\`
+          - terminal_state: \`${TERMINAL_STATE:-BLOCKED-TOOLING}\`
+          - run_id: \`${GITHUB_RUN_ID}\`
+          - run_attempt: \`${GITHUB_RUN_ATTEMPT}\`
+          - git_sha: \`${GITHUB_SHA}\`
+          - terminal_result_sha256: \`${TERMINAL_RESULT_SHA256}\`
+          - harness_manifest_sha256: \`${HARNESS_MANIFEST_SHA256}\`
+          - artifact_id: \`${ARTIFACT_ID}\`
+          - artifact: ${ARTIFACT_URL}
+          EOF
+          gh issue comment "$TERMINAL_MAILBOX_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file /tmp/terminal-comment.md

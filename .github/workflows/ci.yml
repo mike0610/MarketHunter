@@ -87,6 +87,9 @@ jobs:
             tests/test_strategy_promotion_foundation.py \
             tests/test_trend_context_foundation.py \
             tests/test_entry_trigger_provenance.py \
+            tests/test_market_data_provenance.py \
+            tests/test_data_quality_policy_provenance.py \
+            tests/test_portfolio_monetary_authorization.py \
             tests/test_outcome_intelligence_acquisition.py \
             tests/test_outcome_intelligence_analysis.py \
             tests/test_outcome_intelligence_slack_delivery.py \

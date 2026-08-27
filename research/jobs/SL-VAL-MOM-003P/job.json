@@ -1,0 +1,10 @@
+{
+  "object_id": "SL-VAL-MOM-003P",
+  "executor": "vps",
+  "timeout_minutes": 10,
+  "terminal_states": [
+    "DATASET-INTEGRITY-PASS",
+    "DATASET-INTEGRITY-FAIL",
+    "PROVIDER-BLOCKED"
+  ]
+}

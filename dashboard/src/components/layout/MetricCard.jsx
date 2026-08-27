@@ -39,11 +39,11 @@ export default function MetricCard({
 
             <Typography
                 variant="h5"
-                fontWeight={700}
                 color={valueColor}
                 sx={{
                     mt: 1,
                     wordBreak: "break-word",
+                    fontWeight: 700,
                 }}
             >
                 {value}

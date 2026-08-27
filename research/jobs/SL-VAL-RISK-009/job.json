@@ -1,0 +1,10 @@
+{
+  "object_id": "SL-VAL-RISK-009",
+  "executor": "vps",
+  "timeout_minutes": 10,
+  "terminal_states": [
+    "ATTRIBUTION-RESULT",
+    "DATA-INTEGRITY-FAIL",
+    "BLOCKED-PROVIDER"
+  ]
+}

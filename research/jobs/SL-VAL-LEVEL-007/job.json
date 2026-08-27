@@ -1,0 +1,10 @@
+{
+  "object_id": "SL-VAL-LEVEL-007",
+  "executor": "vps",
+  "timeout_minutes": 12,
+  "terminal_states": [
+    "CENSUS-PASS",
+    "CENSUS-FAIL",
+    "PROVIDER-BLOCKED"
+  ]
+}

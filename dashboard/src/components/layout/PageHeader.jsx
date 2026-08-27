@@ -42,7 +42,7 @@ export default function PageHeader({
             <Box sx={{ minWidth: 0 }}>
                 <Typography
                     variant="h3"
-                    fontWeight={700}
+                    sx={{ fontWeight: 700 }}
                 >
                     {title}
                 </Typography>
@@ -50,11 +50,11 @@ export default function PageHeader({
                 {subtitle && (
                     <Typography
                         variant="body1"
-                        fontWeight={400}
                         color="text.secondary"
                         sx={{
                             mt: 1,
                             wordBreak: "break-word",
+                            fontWeight: 400,
                         }}
                     >
                         {subtitle}

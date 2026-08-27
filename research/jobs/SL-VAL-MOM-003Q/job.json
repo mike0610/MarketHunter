@@ -1,0 +1,10 @@
+{
+  "object_id": "SL-VAL-MOM-003Q",
+  "executor": "vps",
+  "timeout_minutes": 10,
+  "terminal_states": [
+    "OOS-OUTCOME-COMPLETE",
+    "OOS-EVIDENCE-FAIL",
+    "PROVIDER-BLOCKED"
+  ]
+}

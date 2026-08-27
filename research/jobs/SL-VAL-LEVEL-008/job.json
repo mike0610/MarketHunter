@@ -1,0 +1,26 @@
+{
+  "object_id": "SL-VAL-LEVEL-008",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "terminal_states": [
+    "LEVEL-FORWARD-SUPPORT",
+    "LEVEL-FORWARD-NO-SUPPORT",
+    "BLOCKED-EVIDENCE",
+    "PROVIDER-BLOCKED"
+  ],
+  "parent_object_id": "SL-VAL-LEVEL-007",
+  "parent_census_sha256": "9d767934ec1142b1c2b88920098a951bb11bac448ccd0baeacc6ea4545039c8b",
+  "contract_version": "LEVEL-008-forward-v1",
+  "scope": "BTCUSDT Spot 1d; event census 2019-01-01..2021-12-31; 2018 history for lagged RV; 2022-01 horizon tail only",
+  "primary_grid": "PRIMARY",
+  "sensitivity_grid": "HALF",
+  "horizons_days": [1, 3, 5, 10],
+  "matching": {
+    "feature": "20-day realized volatility from strictly prior completed daily log returns",
+    "decile": "trailing empirical decile using up to 252 strictly prior valid RV20 observations; no forward outcome enters matching",
+    "pool": "same calendar year, same grid family, same direction convention, clean raw non-event dates with valid 10D horizon",
+    "assignment": "minimum absolute decile distance; ties earliest unused date; one comparator date per event within each grid"
+  },
+  "terminal_rule": "PRIMARY only: SUPPORT iff paired event-minus-comparator median signed return > 0 at both 5D and 10D, event win fraction > comparator at both 5D and 10D, and event median MAE is no worse (>= comparator median MAE) at both 5D and 10D. HALF is sensitivity only and cannot rescue PRIMARY.",
+  "anti_mining": "No grid/horizon/volatility-window/event-population/filter/fee/stop/TP/sizing tuning after outcomes."
+}

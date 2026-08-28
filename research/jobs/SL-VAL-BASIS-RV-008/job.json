@@ -1,0 +1,10 @@
+{
+  "object_id": "SL-VAL-BASIS-RV-008",
+  "executor": "vps",
+  "timeout_minutes": 12,
+  "terminal_states": [
+    "ALIGNMENT-PASS",
+    "ALIGNMENT-FAIL",
+    "PROVIDER-BLOCKED"
+  ]
+}

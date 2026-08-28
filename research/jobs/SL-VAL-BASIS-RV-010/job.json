@@ -1,0 +1,11 @@
+{
+  "object_id": "SL-VAL-BASIS-RV-010",
+  "executor": "vps",
+  "timeout_minutes": 15,
+  "terminal_states": [
+    "BASIS-ROBUSTNESS-SUPPORT",
+    "BASIS-ROBUSTNESS-FAIL",
+    "BLOCKED-EVIDENCE",
+    "PROVIDER-BLOCKED"
+  ]
+}

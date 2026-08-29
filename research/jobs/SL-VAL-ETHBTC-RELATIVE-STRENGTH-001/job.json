@@ -1,0 +1,19 @@
+{
+  "object_id": "SL-VAL-ETHBTC-RELATIVE-STRENGTH-001",
+  "status": "FROZEN",
+  "family": "crypto_cross_relative_strength",
+  "book": "SPOT",
+  "capital_usdt_equivalent": 1000,
+  "leverage": 1.0,
+  "borrow": false,
+  "market": "ETHBTC",
+  "timeframe": "4h",
+  "hypothesis": "ETH/BTC medium-horizon relative strength may persist after a decisive relative breakout, allowing unlevered spot rotation without requiring an USDT-quoted leg.",
+  "data": {"venue":"Binance Spot","symbol":"ETHBTC","start":"2022-01-01","end":"2026-08-01","split":"2025-01-01"},
+  "signal": {"lookback_bars":42,"direction":"LONG_ETH_ONLY","trigger":"close above strictly-prior 42-bar high","entry":"next bar open","hold_bars":18,"decluster_bars":18},
+  "costs": {"base_round_trip_bps":10,"oos_stress_round_trip_bps":20},
+  "risk_constraints": {"spot_only":true,"max_notional_fraction_of_book":1.0,"no_leverage":true,"no_margin_borrow":true,"no_shorting":true},
+  "terminal_gate": {"min_oos_events":30,"candidate_if":"OOS10 mean > 0 AND PF > 1 AND OOS20 mean > 0 AND top winner share < 50%","otherwise":"REJECTED"},
+  "diagnostics": ["monthly OOS profile","event frequency","max drawdown","loss streak","winner concentration","capital feasibility at 1000 USDT equivalent"],
+  "anti_tuning": "No parameter, side, holding-period, universe, or regime changes after outcomes are opened. Any discovered filter becomes a new frozen hypothesis on untouched/OOS evidence."
+}

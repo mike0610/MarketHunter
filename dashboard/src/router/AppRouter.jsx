@@ -6,8 +6,10 @@ import {
 
 import AppLayout from "../components/layout/AppLayout";
 
+import ActiveTrading from "../pages/ActiveTrading";
 import Backtests from "../pages/Backtests";
 import Dashboard from "../pages/Dashboard";
+import Investments from "../pages/Investments";
 import Portfolio from "../pages/Portfolio";
 import Reports from "../pages/Reports";
 import Research from "../pages/Research";
@@ -51,8 +53,18 @@ export default function AppRouter() {
                 />
 
                 <Route
+                    path="/active-trading"
+                    element={<ActiveTrading />}
+                />
+
+                <Route
                     path="/portfolio"
                     element={<Portfolio />}
+                />
+
+                <Route
+                    path="/investments"
+                    element={<Investments />}
                 />
 
                 <Route

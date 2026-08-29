@@ -8,9 +8,11 @@ import {
     Typography,
 } from "@mui/material";
 
+import AccountBalanceIcon from "@mui/icons-material/AccountBalance";
 import AccountBalanceWalletIcon from "@mui/icons-material/AccountBalanceWallet";
 import AnalyticsIcon from "@mui/icons-material/Analytics";
 import AssessmentIcon from "@mui/icons-material/Assessment";
+import CandlestickChartIcon from "@mui/icons-material/CandlestickChart";
 import DashboardIcon from "@mui/icons-material/Dashboard";
 import SearchIcon from "@mui/icons-material/Search";
 import SettingsIcon from "@mui/icons-material/Settings";
@@ -44,9 +46,19 @@ const items = [
         path: "/research",
     },
     {
+        text: "Active Trading",
+        icon: <CandlestickChartIcon />,
+        path: "/active-trading",
+    },
+    {
         text: "Portfolio",
         icon: <AccountBalanceWalletIcon />,
         path: "/portfolio",
+    },
+    {
+        text: "Investments",
+        icon: <AccountBalanceIcon />,
+        path: "/investments",
     },
     {
         text: "Backtests",

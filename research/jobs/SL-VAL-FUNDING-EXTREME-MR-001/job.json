@@ -1,0 +1,18 @@
+{
+  "object_id": "SL-VAL-FUNDING-EXTREME-MR-001",
+  "status": "FROZEN",
+  "family": "futures_funding_extreme_mean_reversion",
+  "book": "FUTURES",
+  "capital_usdt": 1000,
+  "market": "BTCUSDT perpetual",
+  "timeframe": "1h",
+  "hypothesis": "Extreme perpetual funding rates may mark crowded positioning that mean-reverts over the next 24h, after accounting for funding, fees and controlled leverage.",
+  "data": {"venue":"Binance USD-M Futures","start":"2022-01-01","end":"2026-08-01","split":"2025-01-01"},
+  "signal": {"funding_lookback_days":180,"upper_quantile":0.95,"lower_quantile":0.05,"positive_extreme":"SHORT","negative_extreme":"LONG","entry":"next 1h bar open after funding timestamp","hold_hours":24,"decluster_hours":24},
+  "costs": {"base_round_trip_bps":10,"oos_stress_round_trip_bps":20,"include_realized_funding_during_hold":true},
+  "risk_constraints": {"book_equity_usdt":1000,"planned_risk_per_trade_fraction":0.005,"aggregate_planned_risk_fraction":0.02,"max_test_leverage":3.0,"leverage_is_risk_tool_not_edge":true,"no_cross_book_netting":true},
+  "leverage_diagnostics": [1.0,2.0,3.0],
+  "terminal_gate": {"min_oos_events":30,"edge_candidate_if":"unlevered OOS10 mean > 0 AND PF > 1 AND unlevered OOS20 mean > 0 AND top winner share < 50%","portfolio_eligibility_requires":"survival diagnostics acceptable at research leverage envelope; leverage cannot rescue failed unlevered edge","otherwise":"REJECTED"},
+  "diagnostics": ["funding PnL contribution","monthly OOS profile","event frequency","max drawdown","loss streak","winner concentration","1x/2x/3x equity stress","capital feasibility at 1000 USDT","approx liquidation-distance warning"],
+  "anti_tuning": "No percentile, hold, leverage ceiling, side, or regime changes after outcomes are opened. Any discovered filter becomes a new frozen hypothesis on untouched/OOS evidence."
+}

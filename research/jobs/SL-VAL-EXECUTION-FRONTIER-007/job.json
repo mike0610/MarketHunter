@@ -1,0 +1,6 @@
+{
+  "object_id": "SL-VAL-EXECUTION-FRONTIER-007",
+  "executor": "vps",
+  "timeout_minutes": 10,
+  "terminal_states": ["FRONTIER-SELECTED", "FRONTIER-EXHAUSTED", "EVIDENCE-FAIL"]
+}

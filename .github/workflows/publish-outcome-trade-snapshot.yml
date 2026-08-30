@@ -1,0 +1,188 @@
+name: Publish Outcome Intelligence Trade Snapshot
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: write
+
+env:
+  VPS_HOST: 149.56.45.39
+  VPS_USER: ubuntu
+  LOCAL_API_PORT: "18080"
+  SNAPSHOT_BRANCH: outcome-intelligence-snapshots
+  SNAPSHOT_PATH: data/outcome_intelligence/latest
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fail closed when SSH secret is unavailable
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}" || { echo 'MISSING SSH SECRET'; exit 2; }
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/markethunter_actions_ed25519
+          chmod 600 ~/.ssh/markethunter_actions_ed25519
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Open read-only API tunnel
+        run: |
+          set -euo pipefail
+          KEY="$HOME/.ssh/markethunter_actions_ed25519"
+          ssh -f -N \
+            -o ExitOnForwardFailure=yes \
+            -o ServerAliveInterval=30 \
+            -i "$KEY" \
+            -L "${LOCAL_API_PORT}:127.0.0.1:8000" \
+            "${VPS_USER}@${VPS_HOST}"
+
+      - name: Capture full paginated trade population
+        shell: python
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          import hashlib
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          base_url = f"http://127.0.0.1:{os.environ['LOCAL_API_PORT']}/research/trades"
+          limit = 200
+          offset = 0
+          expected_total = None
+          trades = []
+
+          while True:
+              query = urllib.parse.urlencode({"limit": limit, "offset": offset})
+              url = f"{base_url}?{query}"
+              request = urllib.request.Request(url, method="GET")
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  if response.status != 200:
+                      raise SystemExit(f"TRADE-SNAPSHOT-BLOCKED: HTTP {response.status}")
+                  payload = json.loads(response.read())
+
+              if not isinstance(payload, dict) or not isinstance(payload.get("trades"), list):
+                  raise SystemExit("TRADE-SNAPSHOT-BLOCKED: malformed response")
+
+              page_total = int(payload.get("total", -1))
+              page_offset = int(payload.get("offset", -1))
+              if page_offset != offset or page_total < 0:
+                  raise SystemExit("TRADE-SNAPSHOT-BLOCKED: invalid pagination metadata")
+
+              if expected_total is None:
+                  expected_total = page_total
+              elif page_total != expected_total:
+                  raise SystemExit("TRADE-SNAPSHOT-BLOCKED: trade population changed during capture")
+
+              page = payload["trades"]
+              trades.extend(page)
+              offset += len(page)
+
+              if offset >= expected_total:
+                  break
+              if not page:
+                  raise SystemExit("TRADE-SNAPSHOT-BLOCKED: incomplete pagination")
+
+          ids = [trade.get("id") for trade in trades]
+          if len(trades) != expected_total or len(ids) != len(set(ids)):
+              raise SystemExit("TRADE-SNAPSHOT-BLOCKED: incomplete or duplicate trade population")
+
+          captured_at = datetime.now(timezone.utc).isoformat()
+          snapshot = {
+              "captured_at_utc": captured_at,
+              "source": "/research/trades",
+              "source_revision": os.environ["SOURCE_SHA"],
+              "total": expected_total,
+              "trades": trades,
+          }
+
+          out = Path("snapshot")
+          out.mkdir(parents=True, exist_ok=True)
+          trades_path = out / "trades.json"
+          raw = (json.dumps(snapshot, indent=2, sort_keys=True) + "\n").encode("utf-8")
+          trades_path.write_bytes(raw)
+
+          manifest = {
+              "captured_at_utc": captured_at,
+              "source": "/research/trades",
+              "source_revision": os.environ["SOURCE_SHA"],
+              "total": expected_total,
+              "artifact": "trades.json",
+              "byte_count": len(raw),
+              "sha256": hashlib.sha256(raw).hexdigest(),
+          }
+          (out / "manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(f"CAPTURED full trade snapshot total={expected_total} sha256={manifest['sha256']}")
+
+      - name: Verify snapshot integrity
+        shell: python
+        run: |
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path("snapshot")
+          manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+          raw = (root / "trades.json").read_bytes()
+          snapshot = json.loads(raw)
+
+          if hashlib.sha256(raw).hexdigest() != manifest["sha256"]:
+              raise SystemExit("TRADE-SNAPSHOT-BLOCKED: sha256 mismatch")
+          if snapshot["total"] != manifest["total"]:
+              raise SystemExit("TRADE-SNAPSHOT-BLOCKED: manifest total mismatch")
+          if len(snapshot["trades"]) != snapshot["total"]:
+              raise SystemExit("TRADE-SNAPSHOT-BLOCKED: payload total mismatch")
+          print(f"VERIFIED total={snapshot['total']} sha256={manifest['sha256']}")
+
+      - name: Publish durable latest snapshot branch
+        run: |
+          set -euo pipefail
+          git fetch origin "${SNAPSHOT_BRANCH}"
+          git worktree add snapshot-branch "origin/${SNAPSHOT_BRANCH}"
+          cd snapshot-branch
+          git switch -C "${SNAPSHOT_BRANCH}" "origin/${SNAPSHOT_BRANCH}"
+          mkdir -p "${SNAPSHOT_PATH}"
+          cp ../snapshot/manifest.json "${SNAPSHOT_PATH}/manifest.json"
+          cp ../snapshot/trades.json "${SNAPSHOT_PATH}/trades.json"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "${SNAPSHOT_PATH}/manifest.json" "${SNAPSHOT_PATH}/trades.json"
+          if git diff --cached --quiet; then
+            echo "Snapshot unchanged; nothing to publish"
+            exit 0
+          fi
+          git commit -m "data(outcome-intelligence): refresh read-only trade snapshot"
+          git push origin "HEAD:${SNAPSHOT_BRANCH}"
+
+      - name: Publish workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: outcome-intelligence-trades-${{ github.run_id }}
+          path: snapshot/*.json
+          if-no-files-found: error
+          retention-days: 30

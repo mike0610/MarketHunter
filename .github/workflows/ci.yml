@@ -94,4 +94,5 @@ jobs:
             tests/test_outcome_intelligence_analysis.py \
             tests/test_outcome_intelligence_slack_delivery.py \
             tests/test_outcome_intelligence_runtime.py \
+            tests/test_outcome_trade_snapshot_workflow_contract.py \
             -v

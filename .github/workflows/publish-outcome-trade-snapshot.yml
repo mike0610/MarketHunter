@@ -1,6 +1,8 @@
 name: Publish Outcome Intelligence Trade Snapshot
 
 on:
+  push:
+    branches: [master]
   workflow_dispatch:
   schedule:
     - cron: "17 */6 * * *"

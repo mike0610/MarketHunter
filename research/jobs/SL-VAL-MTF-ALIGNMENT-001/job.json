@@ -1,0 +1,6 @@
+{
+  "object_id": "SL-VAL-MTF-ALIGNMENT-001",
+  "executor": "vps",
+  "timeout_minutes": 15,
+  "terminal_states": ["OUTCOME-COMPLETE", "EVIDENCE-FAIL", "PROVIDER-BLOCKED"]
+}

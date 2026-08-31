@@ -1,11 +1,16 @@
-import io, json, math, hashlib, zipfile, urllib.request
+import argparse, io, json, math, hashlib, zipfile, urllib.request
 from pathlib import Path
 import numpy as np
 import pandas as pd
 
 OBJ='SL-VAL-ETHBTC-RELATIVE-STRENGTH-001'; SYM='ETHBTC'
 START=pd.Timestamp('2022-01-01',tz='UTC'); END=pd.Timestamp('2026-08-01',tz='UTC'); SPLIT=pd.Timestamp('2025-01-01',tz='UTC')
-OUT=Path('research_output'); OUT.mkdir(exist_ok=True)
+
+parser=argparse.ArgumentParser()
+parser.add_argument('--job', required=False)
+parser.add_argument('--output', default='research_output')
+args=parser.parse_args()
+OUT=Path(args.output); OUT.mkdir(parents=True, exist_ok=True)
 
 def load_month(y,m):
     name=f'{SYM}-4h-{y}-{m:02d}.zip'; url=f'https://data.binance.vision/data/spot/monthly/klines/{SYM}/4h/{name}'

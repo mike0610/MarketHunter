@@ -14,7 +14,11 @@ import {
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 
 import { extractApiError } from "../api/researchApi";
-import { listBacktests, runBacktest } from "../api/backtestApi";
+import {
+    listBacktests,
+    runBacktest,
+    runStrategyBacktest,
+} from "../api/backtestApi";
 import PageHeader from "../components/layout/PageHeader";
 
 const SAMPLE_PROFITS = "120,-60,180,-80,90,140,-70,210,-50,160";
@@ -34,6 +38,9 @@ export default function Backtests() {
     const [label, setLabel] = useState("Manual historical P&L");
     const [balance, setBalance] = useState("10000");
     const [profits, setProfits] = useState(SAMPLE_PROFITS);
+    const [symbol, setSymbol] = useState("BTCUSDT");
+    const [timeframe, setTimeframe] = useState("1h");
+    const [candleLimit, setCandleLimit] = useState("500");
     const [results, setResults] = useState([]);
 
     async function refresh() {
@@ -46,7 +53,26 @@ export default function Backtests() {
 
     useEffect(() => { refresh(); }, []);
 
-    async function handleRun() {
+    async function handleStrategyRun() {
+        try {
+            setRunning(true);
+            setError("");
+            await runStrategyBacktest({
+                symbol: symbol.trim().toUpperCase(),
+                market: "futures",
+                timeframe: timeframe.trim(),
+                candle_limit: Number(candleLimit),
+                initial_balance: Number(balance),
+            });
+            await refresh();
+        } catch (runError) {
+            setError(extractApiError(runError));
+        } finally {
+            setRunning(false);
+        }
+    }
+
+    async function handleManualRun() {
         try {
             setRunning(true);
             setError("");
@@ -73,32 +99,53 @@ export default function Backtests() {
         <Box sx={{ width: "100%", maxWidth: "100%", minWidth: 0 }}>
             <PageHeader
                 title="Backtests"
-                subtitle="Реальний розрахунок історичної P&L-серії та збереження результатів поточного API-процесу."
+                subtitle="Історичні тести стратегій з реальними candles та збереженням результатів."
             />
 
             {error && <Alert severity="warning" sx={{ mb: 3 }}>{error}</Alert>}
 
             <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4, mb: 3 }}>
                 <Stack spacing={2}>
-                    <Typography variant="h6" sx={{ fontWeight: 700 }}>Новий backtest</Typography>
-                    <TextField label="Назва" value={label} onChange={(e) => setLabel(e.target.value)} />
+                    <Typography variant="h6" sx={{ fontWeight: 700 }}>Breakout на Binance candles</Typography>
+                    <Alert severity="info">
+                        Вхід на відкритті наступної свічки, stop = 1 ATR, target = 2 ATR.
+                        Це research-модель, не live execution.
+                    </Alert>
+                    <TextField label="Symbol" value={symbol} onChange={(e) => setSymbol(e.target.value)} />
+                    <TextField label="Timeframe" value={timeframe} onChange={(e) => setTimeframe(e.target.value)} helperText="Наприклад: 1h, 4h, 1d" />
+                    <TextField label="Candles" type="number" value={candleLimit} onChange={(e) => setCandleLimit(e.target.value)} inputProps={{ min: 220, max: 1000 }} />
                     <TextField label="Початковий баланс" type="number" value={balance} onChange={(e) => setBalance(e.target.value)} />
+                    <Button
+                        variant="contained"
+                        startIcon={running ? <CircularProgress size={18} color="inherit" /> : <PlayArrowIcon />}
+                        onClick={handleStrategyRun}
+                        disabled={running}
+                        sx={{ alignSelf: "flex-start" }}
+                    >
+                        Запустити Breakout backtest
+                    </Button>
+                </Stack>
+            </Paper>
+
+            <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4, mb: 3 }}>
+                <Stack spacing={2}>
+                    <Typography variant="h6" sx={{ fontWeight: 700 }}>Ручний P&L тест</Typography>
+                    <TextField label="Назва" value={label} onChange={(e) => setLabel(e.target.value)} />
                     <TextField
                         label="P&L кожної історичної угоди, через кому"
                         multiline
                         minRows={3}
                         value={profits}
                         onChange={(e) => setProfits(e.target.value)}
-                        helperText="Поки v1 приймає вже сформовану історичну P&L-серію. Наступний шар підключить стратегію та candles напряму."
                     />
                     <Button
-                        variant="contained"
+                        variant="outlined"
                         startIcon={running ? <CircularProgress size={18} color="inherit" /> : <PlayArrowIcon />}
-                        onClick={handleRun}
+                        onClick={handleManualRun}
                         disabled={running}
                         sx={{ alignSelf: "flex-start" }}
                     >
-                        Запустити backtest
+                        Запустити ручний тест
                     </Button>
                 </Stack>
             </Paper>

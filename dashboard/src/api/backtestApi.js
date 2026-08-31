@@ -9,6 +9,11 @@ export async function runBacktest(payload) {
     return response.data;
 }
 
+export async function runStrategyBacktest(payload) {
+    const response = await api.post("/backtest/run/strategy", payload);
+    return response.data;
+}
+
 export async function listBacktests() {
     const response = await api.get("/backtest/results");
     return response.data;

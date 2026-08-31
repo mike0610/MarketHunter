@@ -1,72 +1,194 @@
-import argparse, io, json, math, hashlib, zipfile, urllib.request
+import argparse
+import csv
+import io
+import json
+import math
+import urllib.request
+import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
-import numpy as np
-import pandas as pd
 
-OBJ='SL-VAL-ETHBTC-RELATIVE-STRENGTH-001'; SYM='ETHBTC'
-START=pd.Timestamp('2022-01-01',tz='UTC'); END=pd.Timestamp('2026-08-01',tz='UTC'); SPLIT=pd.Timestamp('2025-01-01',tz='UTC')
+OBJ = 'SL-VAL-ETHBTC-RELATIVE-STRENGTH-001'
+SYM = 'ETHBTC'
+START = datetime(2022, 1, 1, tzinfo=timezone.utc)
+END = datetime(2026, 8, 1, tzinfo=timezone.utc)
+SPLIT = datetime(2025, 1, 1, tzinfo=timezone.utc)
 
-parser=argparse.ArgumentParser()
+parser = argparse.ArgumentParser()
 parser.add_argument('--job', required=False)
 parser.add_argument('--output', default='research_output')
-args=parser.parse_args()
-OUT=Path(args.output); OUT.mkdir(parents=True, exist_ok=True)
+args = parser.parse_args()
+OUT = Path(args.output)
+OUT.mkdir(parents=True, exist_ok=True)
 
-def load_month(y,m):
-    name=f'{SYM}-4h-{y}-{m:02d}.zip'; url=f'https://data.binance.vision/data/spot/monthly/klines/{SYM}/4h/{name}'
+
+def month_iter(start_year, start_month, end_year, end_month):
+    y, m = start_year, start_month
+    while (y, m) <= (end_year, end_month):
+        yield y, m
+        m += 1
+        if m == 13:
+            y += 1
+            m = 1
+
+
+def parse_time(raw):
+    value = int(raw)
+    seconds = value / (1_000_000 if value > 10**14 else 1_000)
+    return datetime.fromtimestamp(seconds, tz=timezone.utc)
+
+
+def load_month(y, m):
+    name = f'{SYM}-4h-{y}-{m:02d}.zip'
+    url = f'https://data.binance.vision/data/spot/monthly/klines/{SYM}/4h/{name}'
     try:
-        raw=urllib.request.urlopen(url,timeout=30).read()
+        raw = urllib.request.urlopen(url, timeout=30).read()
     except Exception:
-        return None
-    z=zipfile.ZipFile(io.BytesIO(raw)); f=z.open(z.namelist()[0])
-    cols=['open_time','open','high','low','close','volume','close_time','qv','trades','tb','tq','ignore']
-    d=pd.read_csv(f,header=None,names=cols); d=d[['open_time','open','high','low','close']]
-    unit='us' if d.open_time.iloc[0]>10**14 else 'ms'; d['time']=pd.to_datetime(d.open_time,unit=unit,utc=True)
-    for c in ['open','high','low','close']: d[c]=pd.to_numeric(d[c],errors='coerce')
-    return d[['time','open','high','low','close']]
+        return []
 
-frames=[]
-for y in range(2021,2027):
-  for m in range(1,13):
-    t=pd.Timestamp(y,m,1,tz='UTC')
-    if t>END or t<pd.Timestamp('2021-10-01',tz='UTC'): continue
-    d=load_month(y,m)
-    if d is not None: frames.append(d)
-if not frames: raise RuntimeError('no data')
-df=pd.concat(frames).drop_duplicates('time').sort_values('time').reset_index(drop=True)
-df=df[(df.time>=pd.Timestamp('2021-10-01',tz='UTC'))&(df.time<=END)].copy()
-df['prior_high42']=df.close.shift(1).rolling(42,min_periods=42).max()
-df['signal']=(df.close>df.prior_high42)
-tr=[]; next_allowed=-1
-for i in range(len(df)-19):
-    if i<next_allowed or not bool(df.signal.iloc[i]) or df.time.iloc[i]<START: continue
-    entry_i=i+1; exit_i=entry_i+18
-    if exit_i>=len(df): break
-    entry=float(df.open.iloc[entry_i]); exitp=float(df.open.iloc[exit_i]); gross=exitp/entry-1
-    tr.append({'signal_time':df.time.iloc[i],'entry_time':df.time.iloc[entry_i],'exit_time':df.time.iloc[exit_i],'gross_return':gross})
-    next_allowed=i+18
-T=pd.DataFrame(tr)
+    rows = []
+    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+        with zf.open(zf.namelist()[0]) as fh:
+            text = io.TextIOWrapper(fh, encoding='utf-8')
+            reader = csv.reader(text)
+            for r in reader:
+                if len(r) < 5:
+                    continue
+                try:
+                    rows.append({
+                        'time': parse_time(r[0]),
+                        'open': float(r[1]),
+                        'high': float(r[2]),
+                        'low': float(r[3]),
+                        'close': float(r[4]),
+                    })
+                except (ValueError, OverflowError):
+                    continue
+    return rows
 
-def metrics(x,cost_bps):
-    if len(x)==0:return {'n':0}
-    r=x.gross_return.to_numpy()-cost_bps/10000
-    pos=r[r>0].sum(); neg=-r[r<0].sum(); eq=np.cumprod(1+r); peak=np.maximum.accumulate(np.r_[1,eq]); dd=np.r_[1,eq]/peak-1
-    wins=np.sort(r[r>0])[::-1]; share=float(wins[0]/wins.sum()) if wins.sum()>0 else None
-    loss=0; maxloss=0
-    for v in r:
-        loss=loss+1 if v<0 else 0; maxloss=max(maxloss,loss)
-    return {'n':int(len(r)),'mean_pct':float(r.mean()*100),'median_pct':float(np.median(r)*100),'hit_rate':float((r>0).mean()),'profit_factor':float(pos/neg) if neg>0 else None,'cumulative_pct':float((eq[-1]-1)*100),'max_drawdown_pct':float(dd.min()*100),'top_positive_trade_share':share,'max_loss_streak':int(maxloss)}
 
-T['sample']=np.where(T.entry_time<SPLIT,'IS','OOS')
-res={'object_id':OBJ,'terminal_state':'OUTCOME-COMPLETE','market':SYM,'book':'SPOT','leverage':1.0,'total_events':int(len(T)),'is_10bps':metrics(T[T['sample']=='IS'],10),'oos_10bps':metrics(T[T['sample']=='OOS'],10),'oos_20bps':metrics(T[T['sample']=='OOS'],20)}
-o=res['oos_10bps']; s=res['oos_20bps']
-if o.get('n',0)<30: verdict='BLOCKED-EVIDENCE'
-elif o['mean_pct']>0 and o['profit_factor']>1 and s['mean_pct']>0 and (o['top_positive_trade_share'] or 1)<.5: verdict='CANDIDATE'
-else: verdict='REJECTED'
-res['terminal_verdict']=verdict
-if len(T):
-    oo=T[T['sample']=='OOS'].copy(); oo['net10']=oo.gross_return-.001; oo['month']=oo.entry_time.dt.to_period('M').astype(str)
-    res['oos_monthly']=oo.groupby('month').net10.agg(['count','mean','sum']).reset_index().to_dict('records')
-    T.to_csv(OUT/'trades.csv',index=False)
-(OUT/'terminal_result.json').write_text(json.dumps(res,indent=2,default=str))
-print(json.dumps(res,indent=2,default=str))
+rows = []
+for y, m in month_iter(2021, 10, 2026, 8):
+    rows.extend(load_month(y, m))
+if not rows:
+    raise RuntimeError('no data')
+
+by_time = {r['time']: r for r in rows if datetime(2021, 10, 1, tzinfo=timezone.utc) <= r['time'] <= END}
+rows = [by_time[t] for t in sorted(by_time)]
+
+trades = []
+next_allowed = -1
+for i in range(42, len(rows) - 19):
+    prior_high42 = max(r['close'] for r in rows[i - 42:i])
+    signal = rows[i]['close'] > prior_high42
+    if i < next_allowed or not signal or rows[i]['time'] < START:
+        continue
+    entry_i = i + 1
+    exit_i = entry_i + 18
+    if exit_i >= len(rows):
+        break
+    entry = rows[entry_i]['open']
+    exitp = rows[exit_i]['open']
+    gross = exitp / entry - 1.0
+    trades.append({
+        'signal_time': rows[i]['time'],
+        'entry_time': rows[entry_i]['time'],
+        'exit_time': rows[exit_i]['time'],
+        'gross_return': gross,
+        'sample': 'IS' if rows[entry_i]['time'] < SPLIT else 'OOS',
+    })
+    next_allowed = i + 18
+
+
+def metrics(items, cost_bps):
+    if not items:
+        return {'n': 0}
+    net = [t['gross_return'] - cost_bps / 10000.0 for t in items]
+    positives = [r for r in net if r > 0]
+    negatives = [-r for r in net if r < 0]
+    pos = sum(positives)
+    neg = sum(negatives)
+
+    equity = 1.0
+    peak = 1.0
+    max_dd = 0.0
+    for r in net:
+        equity *= 1.0 + r
+        peak = max(peak, equity)
+        max_dd = min(max_dd, equity / peak - 1.0)
+
+    wins = sorted(positives, reverse=True)
+    top_share = wins[0] / sum(wins) if wins and sum(wins) > 0 else None
+
+    loss = 0
+    max_loss = 0
+    for r in net:
+        loss = loss + 1 if r < 0 else 0
+        max_loss = max(max_loss, loss)
+
+    ordered = sorted(net)
+    n = len(ordered)
+    if n % 2:
+        median = ordered[n // 2]
+    else:
+        median = (ordered[n // 2 - 1] + ordered[n // 2]) / 2.0
+
+    return {
+        'n': len(net),
+        'mean_pct': sum(net) / len(net) * 100.0,
+        'median_pct': median * 100.0,
+        'hit_rate': sum(1 for r in net if r > 0) / len(net),
+        'profit_factor': pos / neg if neg > 0 else None,
+        'cumulative_pct': (equity - 1.0) * 100.0,
+        'max_drawdown_pct': max_dd * 100.0,
+        'top_positive_trade_share': top_share,
+        'max_loss_streak': max_loss,
+    }
+
+
+is_trades = [t for t in trades if t['sample'] == 'IS']
+oos_trades = [t for t in trades if t['sample'] == 'OOS']
+res = {
+    'object_id': OBJ,
+    'terminal_state': 'OUTCOME-COMPLETE',
+    'market': SYM,
+    'book': 'SPOT',
+    'leverage': 1.0,
+    'total_events': len(trades),
+    'is_10bps': metrics(is_trades, 10),
+    'oos_10bps': metrics(oos_trades, 10),
+    'oos_20bps': metrics(oos_trades, 20),
+}
+
+o = res['oos_10bps']
+s = res['oos_20bps']
+if o.get('n', 0) < 30:
+    verdict = 'BLOCKED-EVIDENCE'
+elif o['mean_pct'] > 0 and o['profit_factor'] is not None and o['profit_factor'] > 1 and s['mean_pct'] > 0 and (o['top_positive_trade_share'] or 1) < 0.5:
+    verdict = 'CANDIDATE'
+else:
+    verdict = 'REJECTED'
+res['terminal_verdict'] = verdict
+
+monthly = {}
+for t in oos_trades:
+    key = t['entry_time'].strftime('%Y-%m')
+    monthly.setdefault(key, []).append(t['gross_return'] - 0.001)
+res['oos_monthly'] = [
+    {'month': month, 'count': len(vals), 'mean': sum(vals) / len(vals), 'sum': sum(vals)}
+    for month, vals in sorted(monthly.items())
+]
+
+with (OUT / 'trades.csv').open('w', newline='', encoding='utf-8') as fh:
+    writer = csv.DictWriter(fh, fieldnames=['signal_time', 'entry_time', 'exit_time', 'gross_return', 'sample'])
+    writer.writeheader()
+    for t in trades:
+        writer.writerow({
+            **t,
+            'signal_time': t['signal_time'].isoformat(),
+            'entry_time': t['entry_time'].isoformat(),
+            'exit_time': t['exit_time'].isoformat(),
+        })
+
+(OUT / 'terminal_result.json').write_text(json.dumps(res, indent=2), encoding='utf-8')
+print(json.dumps(res, indent=2))

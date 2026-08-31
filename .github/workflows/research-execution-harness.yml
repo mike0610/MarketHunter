@@ -86,7 +86,7 @@ jobs:
           print('CONTRACT_OK', object_id, timeout, states)
           PY
 
-      - name: Execute isolated VPS job and always materialize terminal result
+      - name: Execute detached VPS job and always materialize terminal result
         shell: bash
         run: |
           set -uo pipefail
@@ -103,8 +103,22 @@ jobs:
               'object_id': os.environ['OBJECT_ID'],
               'terminal_state': 'BLOCKED-TOOLING',
               'executed_at_utc': datetime.now(timezone.utc).isoformat(),
-              'executor': 'github-actions/vps',
+              'executor': 'github-actions/vps-detached',
               'reason': sys.argv[1],
+          }, sort_keys=True, separators=(',', ':')))
+          PY
+          }
+
+          write_timeout() {
+            python - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          Path('evidence/terminal_result.json').write_text(json.dumps({
+              'object_id': os.environ['OBJECT_ID'],
+              'terminal_state': 'EXECUTION-TIMEOUT',
+              'executed_at_utc': datetime.now(timezone.utc).isoformat(),
+              'executor': 'vps-detached'
           }, sort_keys=True, separators=(',', ':')))
           PY
           }
@@ -124,15 +138,11 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
 
           KEY="$HOME/.ssh/markethunter_vps_ed25519"
+          SSH=(ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=2 -i "$KEY")
+          SCP=(scp -o BatchMode=yes -o ConnectTimeout=10 -i "$KEY")
+          REMOTE="${VPS_USER}@${VPS_HOST}"
           JOB_DIR="research/jobs/${OBJECT_ID}"
           REMOTE_DIR="/tmp/mh-research-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          cleanup() { ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "rm -rf '${REMOTE_DIR}'" >/dev/null 2>&1 || true; }
-          trap cleanup EXIT
-
-          if ! scp -i "$KEY" -r "$JOB_DIR" "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}"; then
-            write_blocked 'scp-job-upload-failed'
-            exit 0
-          fi
 
           timeout_minutes=$(python - <<'PY'
           import json, os
@@ -140,35 +150,74 @@ jobs:
           PY
           )
 
-          set +e
-          ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" \
-            "cd '${REMOTE_DIR}' && mkdir -p result && timeout '${timeout_minutes}m' python3 run.py --job job.json --output result"
-          remote_code=$?
-          set -e
-
-          if scp -i "$KEY" -r "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}/result/." evidence/ 2>/dev/null; then
-            :
-          fi
-
-          if [ -s evidence/terminal_result.json ]; then
+          if ! "${SCP[@]}" -r "$JOB_DIR" "${REMOTE}:${REMOTE_DIR}"; then
+            write_blocked 'scp-job-upload-failed'
             exit 0
           fi
 
-          if [ "$remote_code" -eq 124 ]; then
-            python - <<'PY'
-          import json, os
-          from datetime import datetime, timezone
-          from pathlib import Path
-          Path('evidence/terminal_result.json').write_text(json.dumps({
-              'object_id': os.environ['OBJECT_ID'],
-              'terminal_state': 'EXECUTION-TIMEOUT',
-              'executed_at_utc': datetime.now(timezone.utc).isoformat(),
-              'executor': 'vps'
-          }, sort_keys=True, separators=(',', ':')))
-          PY
-          else
-            write_blocked "remote-exit-${remote_code}-without-terminal-result"
+          if ! "${SSH[@]}" "$REMOTE" "cd '${REMOTE_DIR}' && mkdir -p result && rm -f exit_code runner.log runner.pid && nohup sh -c 'python3 run.py --job job.json --output result; code=\$?; printf \"%s\\n\" \"\$code\" > exit_code' > runner.log 2>&1 < /dev/null & echo \$! > runner.pid"; then
+            write_blocked 'remote-detached-start-failed'
+            exit 0
           fi
+
+          deadline=$(( $(date +%s) + timeout_minutes * 60 ))
+          remote_code=""
+          poll_failures=0
+
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            set +e
+            status=$("${SSH[@]}" "$REMOTE" "cd '${REMOTE_DIR}' 2>/dev/null || exit 3; if [ -s result/terminal_result.json ]; then echo terminal; elif [ -s exit_code ]; then printf 'exit:'; cat exit_code; else echo running; fi" 2>/dev/null)
+            rc=$?
+            set -e
+
+            if [ "$rc" -ne 0 ]; then
+              poll_failures=$((poll_failures + 1))
+              if [ "$poll_failures" -ge 4 ]; then
+                write_blocked 'repeated-ssh-poll-failure'
+                break
+              fi
+              sleep 10
+              continue
+            fi
+
+            poll_failures=0
+            case "$status" in
+              terminal)
+                break
+                ;;
+              exit:*)
+                remote_code="${status#exit:}"
+                break
+                ;;
+              running)
+                sleep 10
+                ;;
+              *)
+                write_blocked 'invalid-remote-poll-state'
+                break
+                ;;
+            esac
+          done
+
+          if [ ! -s evidence/terminal_result.json ] && [ "$(date +%s)" -ge "$deadline" ]; then
+            "${SSH[@]}" "$REMOTE" "cd '${REMOTE_DIR}' 2>/dev/null && if [ -s runner.pid ]; then kill \$(cat runner.pid) 2>/dev/null || true; fi" >/dev/null 2>&1 || true
+            write_timeout
+          fi
+
+          if [ ! -s evidence/terminal_result.json ]; then
+            "${SCP[@]}" -r "${REMOTE}:${REMOTE_DIR}/result/." evidence/ 2>/dev/null || true
+          fi
+
+          if [ -s evidence/terminal_result.json ]; then
+            :
+          elif [ -n "$remote_code" ]; then
+            write_blocked "remote-exit-${remote_code}-without-terminal-result"
+          else
+            write_blocked 'remote-finished-without-terminal-result'
+          fi
+
+          "${SCP[@]}" "${REMOTE}:${REMOTE_DIR}/runner.log" evidence/runner.log 2>/dev/null || true
+          "${SSH[@]}" "$REMOTE" "rm -rf '${REMOTE_DIR}'" >/dev/null 2>&1 || true
 
       - name: Validate terminal result and write provenance
         id: terminal

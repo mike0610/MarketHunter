@@ -33,6 +33,8 @@ jobs:
 
       - name: Build dashboard
         working-directory: dashboard
+        env:
+          VITE_API_BASE_URL: /api
         run: |
           set -euo pipefail
           npm ci
@@ -78,9 +80,9 @@ jobs:
           KEY="$HOME/.ssh/markethunter_actions_ed25519"
           ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "set -euo pipefail; TMP=/tmp/markethunter-dashboard-${GITHUB_SHA}; rm -rf \"\$TMP\"; mkdir -p \"\$TMP\"; tar -xzf /tmp/markethunter-dashboard-${GITHUB_SHA}.tgz -C \"\$TMP\"; test -f \"\$TMP/dist/index.html\"; sudo mkdir -p '${DASHBOARD_ROOT}'; sudo rsync -a --delete \"\$TMP/dist/\" '${DASHBOARD_ROOT}/'; rm -rf \"\$TMP\" /tmp/markethunter-dashboard-${GITHUB_SHA}.tgz"
 
-      - name: Verify deployed route
+      - name: Verify deployed route and API
         run: |
           set -euo pipefail
           KEY="$HOME/.ssh/markethunter_actions_ed25519"
-          ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "test -f '${DASHBOARD_ROOT}/index.html'; curl -fsS -o /dev/null http://127.0.0.1/active-trading || curl -fsS -o /dev/null http://127.0.0.1/"
-          echo "DEPLOYED dashboard SHA=${GITHUB_SHA} route=/active-trading"
+          ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "test -f '${DASHBOARD_ROOT}/index.html'; curl -fsS -o /dev/null http://127.0.0.1/active-trading || curl -fsS -o /dev/null http://127.0.0.1/; curl -fsS http://127.0.0.1/api/health >/dev/null"
+          echo "DEPLOYED dashboard SHA=${GITHUB_SHA} route=/active-trading api=/api"

@@ -4,14 +4,15 @@ import {
 } from "react";
 
 import {
-
     AppBar,
+    Chip,
+    IconButton,
+    Stack,
     Toolbar,
     Typography,
-    Chip,
-    Stack,
-
 } from "@mui/material";
+
+import MenuIcon from "@mui/icons-material/Menu";
 
 import { getHealth } from "../../api/healthApi";
 import { getWorkerStatus } from "../../api/researchApi";
@@ -35,7 +36,6 @@ const WORKER_STATE_COLORS = {
     not_started: "default",
 };
 
-
 function workerChipProps(workerState) {
     const normalized = String(workerState || "").trim().toLowerCase();
 
@@ -45,8 +45,7 @@ function workerChipProps(workerState) {
     };
 }
 
-
-export default function AppTopBar() {
+export default function AppTopBar({ onMenuClick }) {
     const [apiOnline, setApiOnline] = useState(null);
     const [workerState, setWorkerState] = useState(null);
 
@@ -57,7 +56,6 @@ export default function AppTopBar() {
             async function poll() {
                 try {
                     await getHealth();
-
                     if (active) {
                         setApiOnline(true);
                     }
@@ -69,7 +67,6 @@ export default function AppTopBar() {
 
                 try {
                     const status = await getWorkerStatus();
-
                     if (active) {
                         setWorkerState(status?.state ?? null);
                     }
@@ -81,11 +78,7 @@ export default function AppTopBar() {
             }
 
             void poll();
-
-            const intervalId = setInterval(
-                poll,
-                POLL_INTERVAL_MS,
-            );
+            const intervalId = setInterval(poll, POLL_INTERVAL_MS);
 
             return () => {
                 active = false;
@@ -98,31 +91,48 @@ export default function AppTopBar() {
     const workerChip = workerChipProps(workerState);
 
     return (
-
-        <AppBar
-            position="static"
-            elevation={1}
-        >
-
-            <Toolbar>
+        <AppBar position="static" elevation={1}>
+            <Toolbar sx={{ gap: 1 }}>
+                <IconButton
+                    color="inherit"
+                    edge="start"
+                    aria-label="Відкрити меню"
+                    onClick={onMenuClick}
+                    sx={{ display: { xs: "inline-flex", md: "none" } }}
+                >
+                    <MenuIcon />
+                </IconButton>
 
                 <Typography
                     variant="h6"
                     sx={{
                         flexGrow: 1,
+                        minWidth: 0,
+                        fontSize: { xs: "1rem", sm: "1.25rem" },
+                        whiteSpace: { xs: "nowrap", sm: "normal" },
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
                     }}
                 >
-
                     MarketHunter Terminal
-
                 </Typography>
 
                 <Stack
                     direction="row"
-                    spacing={2}
+                    spacing={1}
+                    sx={{
+                        flexShrink: 0,
+                        "& .MuiChip-root": {
+                            maxWidth: { xs: 104, sm: "none" },
+                        },
+                        "& .MuiChip-label": {
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                        },
+                    }}
                 >
-
                     <Chip
+                        size="small"
                         label={
                             apiOnline === null
                                 ? "API: перевірка..."
@@ -140,16 +150,13 @@ export default function AppTopBar() {
                     />
 
                     <Chip
+                        size="small"
                         label={workerChip.label}
                         color={workerChip.color}
+                        sx={{ display: { xs: "none", sm: "inline-flex" } }}
                     />
-
                 </Stack>
-
             </Toolbar>
-
         </AppBar>
-
     );
-
 }

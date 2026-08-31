@@ -11,6 +11,10 @@ from pydantic import BaseModel, Field
 
 from backtesting.backtester import Backtester
 from backtesting.repository import BacktestRepository
+from backtesting.strategy_replay import StrategyReplayEngine
+from models.market_symbol import MarketSymbol
+from services.market_data import MarketDataService
+from strategies.breakout import BreakoutStrategy
 
 
 router = APIRouter(prefix="/backtest", tags=["Backtest"])
@@ -23,8 +27,27 @@ class BacktestRunRequest(BaseModel):
     label: str = Field(default="Manual backtest", min_length=1, max_length=120)
 
 
+class StrategyBacktestRequest(BaseModel):
+    symbol: str = Field(default="BTCUSDT", min_length=3, max_length=30)
+    market: str = Field(default="futures", pattern="^(spot|futures)$")
+    timeframe: str = Field(default="1h", min_length=1, max_length=10)
+    candle_limit: int = Field(default=500, ge=220, le=1000)
+    initial_balance: float = Field(default=10_000.0, gt=0)
+
+
 def _public_result(record: dict) -> dict:
     return {**record, "result": dict(record["result"])}
+
+
+def _save_report(label: str, report) -> dict:
+    record = {
+        "id": str(uuid4()),
+        "label": label,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "result": asdict(report),
+    }
+    repository.save(record)
+    return _public_result(record)
 
 
 @router.post("/run")
@@ -34,14 +57,47 @@ async def run_backtest(payload: BacktestRunRequest):
         initial_balance=payload.initial_balance,
         profits=payload.profits,
     )
-    record = {
-        "id": str(uuid4()),
-        "label": payload.label,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "result": asdict(report),
-    }
-    repository.save(record)
-    return _public_result(record)
+    return _save_report(payload.label, report)
+
+
+@router.post("/run/strategy")
+async def run_strategy_backtest(payload: StrategyBacktestRequest):
+    """Replay the existing Breakout strategy over public Binance candles."""
+    symbol_name = payload.symbol.strip().upper()
+    base_asset = symbol_name.removesuffix("USDT") or symbol_name
+    market_symbol = MarketSymbol(
+        symbol=symbol_name,
+        base_asset=base_asset,
+        quote_asset="USDT",
+        market=payload.market,
+    )
+
+    candles = await MarketDataService().load_candles(
+        symbol=market_symbol,
+        interval=payload.timeframe,
+        limit=payload.candle_limit,
+    )
+    profits = await StrategyReplayEngine().run(
+        strategy=BreakoutStrategy(),
+        symbol=symbol_name,
+        market=payload.market,
+        candles=candles,
+    )
+    if not profits:
+        raise HTTPException(
+            status_code=422,
+            detail="Breakout produced no executable signals in the selected window.",
+        )
+
+    report = Backtester().build_report(
+        initial_balance=payload.initial_balance,
+        profits=profits,
+    )
+    label = (
+        f"Breakout {symbol_name} {payload.market} {payload.timeframe} "
+        f"({payload.candle_limit} candles)"
+    )
+    return _save_report(label, report)
 
 
 @router.get("/results")

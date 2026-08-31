@@ -2,5 +2,6 @@
   "object_id": "SL-VAL-VOL-COMPRESSION-BREAKOUT-001",
   "executor": "vps",
   "timeout_minutes": 10,
-  "terminal_states": ["OUTCOME-COMPLETE", "EVIDENCE-FAIL", "PROVIDER-BLOCKED"]
+  "terminal_states": ["OUTCOME-COMPLETE", "EVIDENCE-FAIL", "PROVIDER-BLOCKED"],
+  "execution_revision": "2026-08-31-run-1"
 }

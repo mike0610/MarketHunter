@@ -1,6 +1,9 @@
 {
   "object_id": "SL-VAL-ETHBTC-RELATIVE-STRENGTH-001",
   "status": "FROZEN",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "terminal_states": ["OUTCOME-COMPLETE"],
   "family": "crypto_cross_relative_strength",
   "book": "SPOT",
   "capital_usdt_equivalent": 1000,

@@ -1,21 +1,25 @@
+import { useState } from "react";
+
 import { Box } from "@mui/material";
 
 import AppSidebar from "../sidebar/AppSidebar";
 import AppTopBar from "../topbar/AppTopBar";
 
 export default function AppLayout({ children }) {
+    const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
     return (
-
         <Box
             sx={{
                 display: "flex",
-                height: "100vh",
+                minHeight: "100vh",
                 bgcolor: "background.default",
             }}
         >
-
-            <AppSidebar />
+            <AppSidebar
+                mobileOpen={mobileNavOpen}
+                onMobileClose={() => setMobileNavOpen(false)}
+            />
 
             <Box
                 sx={{
@@ -25,26 +29,22 @@ export default function AppLayout({ children }) {
                     flexDirection: "column",
                 }}
             >
-
-                <AppTopBar />
+                <AppTopBar onMenuClick={() => setMobileNavOpen(true)} />
 
                 <Box
+                    component="main"
                     sx={{
                         flex: 1,
                         minWidth: 0,
-                        p: 3,
-                        overflow: "auto",
+                        width: "100%",
+                        p: { xs: 2, sm: 3 },
+                        overflowX: "hidden",
+                        overflowY: "auto",
                     }}
                 >
-
                     {children}
-
                 </Box>
-
             </Box>
-
         </Box>
-
     );
-
 }

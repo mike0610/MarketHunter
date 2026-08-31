@@ -1,4 +1,5 @@
 import {
+    Box,
     Drawer,
     List,
     ListItemButton,
@@ -25,78 +26,23 @@ import { NavLink } from "react-router-dom";
 const drawerWidth = 240;
 
 const items = [
-    {
-        text: "Dashboard",
-        icon: <DashboardIcon />,
-        path: "/dashboard",
-    },
-    {
-        text: "Scanner",
-        icon: <SearchIcon />,
-        path: "/scanner",
-    },
-    {
-        text: "Signals",
-        icon: <TimelineIcon />,
-        path: "/signals",
-    },
-    {
-        text: "Research",
-        icon: <AnalyticsIcon />,
-        path: "/research",
-    },
-    {
-        text: "Active Trading",
-        icon: <CandlestickChartIcon />,
-        path: "/active-trading",
-    },
-    {
-        text: "Portfolio",
-        icon: <AccountBalanceWalletIcon />,
-        path: "/portfolio",
-    },
-    {
-        text: "Investments",
-        icon: <AccountBalanceIcon />,
-        path: "/investments",
-    },
-    {
-        text: "Backtests",
-        icon: <ShowChartIcon />,
-        path: "/backtests",
-    },
-    {
-        text: "Reports",
-        icon: <AssessmentIcon />,
-        path: "/reports",
-    },
-    {
-        text: "Settings",
-        icon: <SettingsIcon />,
-        path: "/settings",
-    },
+    { text: "Dashboard", icon: <DashboardIcon />, path: "/dashboard" },
+    { text: "Scanner", icon: <SearchIcon />, path: "/scanner" },
+    { text: "Signals", icon: <TimelineIcon />, path: "/signals" },
+    { text: "Research", icon: <AnalyticsIcon />, path: "/research" },
+    { text: "Active Trading", icon: <CandlestickChartIcon />, path: "/active-trading" },
+    { text: "Portfolio", icon: <AccountBalanceWalletIcon />, path: "/portfolio" },
+    { text: "Investments", icon: <AccountBalanceIcon />, path: "/investments" },
+    { text: "Backtests", icon: <ShowChartIcon />, path: "/backtests" },
+    { text: "Reports", icon: <AssessmentIcon />, path: "/reports" },
+    { text: "Settings", icon: <SettingsIcon />, path: "/settings" },
 ];
 
-
-export default function AppSidebar() {
+function SidebarContent({ onNavigate }) {
     return (
-        <Drawer
-            variant="permanent"
-            sx={{
-                width: drawerWidth,
-                flexShrink: 0,
-
-                "& .MuiDrawer-paper": {
-                    width: drawerWidth,
-                    boxSizing: "border-box",
-                },
-            }}
-        >
+        <Box sx={{ width: drawerWidth }}>
             <Toolbar>
-                <Typography
-                    variant="h6"
-                    fontWeight="bold"
-                >
+                <Typography variant="h6" sx={{ fontWeight: 700 }}>
                     🏹 MarketHunter
                 </Typography>
             </Toolbar>
@@ -107,22 +53,56 @@ export default function AppSidebar() {
                         key={item.text}
                         component={NavLink}
                         to={item.path}
+                        onClick={onNavigate}
                         sx={{
                             "&.active": {
                                 bgcolor: "action.selected",
                             },
                         }}
                     >
-                        <ListItemIcon>
-                            {item.icon}
-                        </ListItemIcon>
-
-                        <ListItemText
-                            primary={item.text}
-                        />
+                        <ListItemIcon>{item.icon}</ListItemIcon>
+                        <ListItemText primary={item.text} />
                     </ListItemButton>
                 ))}
             </List>
-        </Drawer>
+        </Box>
+    );
+}
+
+export default function AppSidebar({ mobileOpen = false, onMobileClose }) {
+    return (
+        <>
+            <Drawer
+                variant="temporary"
+                open={mobileOpen}
+                onClose={onMobileClose}
+                ModalProps={{ keepMounted: true }}
+                sx={{
+                    display: { xs: "block", md: "none" },
+                    "& .MuiDrawer-paper": {
+                        width: drawerWidth,
+                        boxSizing: "border-box",
+                    },
+                }}
+            >
+                <SidebarContent onNavigate={onMobileClose} />
+            </Drawer>
+
+            <Drawer
+                variant="permanent"
+                open
+                sx={{
+                    display: { xs: "none", md: "block" },
+                    width: drawerWidth,
+                    flexShrink: 0,
+                    "& .MuiDrawer-paper": {
+                        width: drawerWidth,
+                        boxSizing: "border-box",
+                    },
+                }}
+            >
+                <SidebarContent />
+            </Drawer>
+        </>
     );
 }

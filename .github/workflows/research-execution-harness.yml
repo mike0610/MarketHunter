@@ -155,7 +155,7 @@ jobs:
             exit 0
           fi
 
-          if ! "${SSH[@]}" "$REMOTE" "cd '${REMOTE_DIR}' && mkdir -p result && rm -f exit_code runner.log runner.pid && nohup sh -c 'python3 run.py --job job.json --output result; code=\$?; printf \"%s\\n\" \"\$code\" > exit_code' > runner.log 2>&1 < /dev/null & echo \$! > runner.pid"; then
+          if ! "${SSH[@]}" "$REMOTE" "cd '${REMOTE_DIR}' && mkdir -p result && rm -f exit_code runner.log runner.pid && rm -rf ./--job && nohup sh -c 'python3 run.py --job job.json --output result; code=\$?; if [ \"\$code\" -eq 0 ] && [ ! -s result/terminal_result.json ] && [ -s ./--job/terminal_result.json ]; then cp -a ./--job/. result/; fi; printf \"%s\\n\" \"\$code\" > exit_code' > runner.log 2>&1 < /dev/null & echo \$! > runner.pid"; then
             write_blocked 'remote-detached-start-failed'
             exit 0
           fi

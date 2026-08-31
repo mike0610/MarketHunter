@@ -1,0 +1,97 @@
+name: Deploy Dashboard
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - "dashboard/**"
+      - ".github/workflows/deploy-dashboard.yml"
+
+permissions:
+  contents: read
+
+env:
+  VPS_HOST: 149.56.45.39
+  VPS_USER: ubuntu
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Build dashboard
+        working-directory: dashboard
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
+      - name: Fail closed when SSH secret is unavailable
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}" || { echo 'MISSING SSH SECRET'; exit 2; }
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/markethunter_actions_ed25519
+          chmod 600 ~/.ssh/markethunter_actions_ed25519
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Discover dashboard web root
+        run: |
+          set -euo pipefail
+          KEY="$HOME/.ssh/markethunter_actions_ed25519"
+          ROOT="$(ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" 'sudo nginx -T 2>/dev/null | awk '\''/^[[:space:]]*root[[:space:]]+.*dashboard\/dist/ {gsub(";", "", $2); print $2; exit}'\'')"
+          test -n "$ROOT" || { echo 'DEPLOY-BLOCKED: dashboard/dist nginx root not found'; exit 3; }
+          printf 'DASHBOARD_ROOT=%s\n' "$ROOT" >> "$GITHUB_ENV"
+          echo "Resolved dashboard root: $ROOT"
+
+      - name: Stage dashboard build
+        run: |
+          set -euo pipefail
+          KEY="$HOME/.ssh/markethunter_actions_ed25519"
+          tar -C dashboard -czf dashboard-dist.tgz dist
+          scp -i "$KEY" dashboard-dist.tgz "${VPS_USER}@${VPS_HOST}:/tmp/markethunter-dashboard-${GITHUB_SHA}.tgz"
+
+      - name: Deploy dashboard atomically
+        run: |
+          set -euo pipefail
+          KEY="$HOME/.ssh/markethunter_actions_ed25519"
+          ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "\
+            set -euo pipefail; \
+            TMP=/tmp/markethunter-dashboard-${GITHUB_SHA}; \
+            rm -rf \"\$TMP\"; mkdir -p \"\$TMP\"; \
+            tar -xzf /tmp/markethunter-dashboard-${GITHUB_SHA}.tgz -C \"\$TMP\"; \
+            test -f \"\$TMP/dist/index.html\"; \
+            sudo mkdir -p '${DASHBOARD_ROOT}'; \
+            sudo rsync -a --delete \"\$TMP/dist/\" '${DASHBOARD_ROOT}/'; \
+            rm -rf \"\$TMP\" /tmp/markethunter-dashboard-${GITHUB_SHA}.tgz"
+
+      - name: Verify deployed route
+        run: |
+          set -euo pipefail
+          KEY="$HOME/.ssh/markethunter_actions_ed25519"
+          ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "\
+            test -f '${DASHBOARD_ROOT}/index.html'; \
+            curl -fsS -o /dev/null http://127.0.0.1/active-trading || \
+            curl -fsS -o /dev/null http://127.0.0.1/"
+          echo "DEPLOYED dashboard SHA=${GITHUB_SHA} route=/active-trading"

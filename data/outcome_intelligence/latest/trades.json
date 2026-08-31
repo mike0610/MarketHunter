@@ -1,11 +1,11 @@
 {
-  "captured_at_utc": "2026-08-31T06:14:38.087308+00:00",
+  "captured_at_utc": "2026-08-31T07:51:01.223123+00:00",
   "source": "/research/trades",
-  "source_revision": "dd3ce251cdf08d25e7dc8838ca4dea7698ca5dac",
+  "source_revision": "013615ecee606618224e3e9f29880f1e7f6a2e7c",
   "total": 219,
   "trades": [
     {
-      "active_candles": 0,
+      "active_candles": 1,
       "close_reason": "LIVE_ENTRY_FILLED",
       "closed_at": null,
       "created_at": "2026-08-31T06:03:34.052924Z",
@@ -15,10 +15,10 @@
       "id": "a144866e-4591-4876-9228-f5006ad4ae17",
       "is_experimental": true,
       "is_profitable_expired": false,
-      "last_processed_candle_at": "2026-08-31T06:03:38.364488Z",
+      "last_processed_candle_at": "2026-08-31T06:59:59.999000Z",
       "market": "spot",
       "max_active_candles": 30,
-      "max_drawdown_percent": -2.060439560439565,
+      "max_drawdown_percent": -5.219780219780218,
       "max_profit_percent": 0.0,
       "mtf": null,
       "notional": 100.0,
@@ -50,7 +50,7 @@
       "timeframe": "1h"
     },
     {
-      "active_candles": 6,
+      "active_candles": 7,
       "close_reason": "LIVE_ENTRY_FILLED",
       "closed_at": null,
       "created_at": "2026-08-31T00:03:30.722076Z",
@@ -60,7 +60,7 @@
       "id": "f0f82c46-e628-433a-90c2-3c8f43af579d",
       "is_experimental": false,
       "is_profitable_expired": false,
-      "last_processed_candle_at": "2026-08-31T05:59:59.999000Z",
+      "last_processed_candle_at": "2026-08-31T06:59:59.999000Z",
       "market": "futures",
       "max_active_candles": 30,
       "max_drawdown_percent": -3.3424018655266168,
@@ -139,7 +139,7 @@
       "timeframe": "1h"
     },
     {
-      "active_candles": 9,
+      "active_candles": 10,
       "close_reason": "LIVE_ENTRY_FILLED",
       "closed_at": null,
       "created_at": "2026-08-30T21:03:33.769378Z",
@@ -149,7 +149,7 @@
       "id": "d83ab271-2a33-494d-ad30-28e22efd4546",
       "is_experimental": true,
       "is_profitable_expired": false,
-      "last_processed_candle_at": "2026-08-31T05:59:59.999000Z",
+      "last_processed_candle_at": "2026-08-31T06:59:59.999000Z",
       "market": "spot",
       "max_active_candles": 30,
       "max_drawdown_percent": -2.1798365122615753,

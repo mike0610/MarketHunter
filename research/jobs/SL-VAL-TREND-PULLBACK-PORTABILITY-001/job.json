@@ -1,0 +1,49 @@
+{
+  "anti_tuning": "Exact parent rule copied unchanged. No parameter, side, holding-period, cost, or regime changes after outcomes are opened.",
+  "book": "FUTURES-DIAGNOSTIC",
+  "capital_usdt_equivalent": 1000,
+  "costs": {
+    "base_round_trip_bps": 10,
+    "oos_stress_round_trip_bps": 20
+  },
+  "data": {
+    "end": "2026-08-01",
+    "split": "2025-01-01",
+    "start": "2021-01-01",
+    "symbol": "ETHUSDT",
+    "venue": "Binance Spot",
+    "warm_start": "2020-01-01"
+  },
+  "executor": "vps",
+  "family": "crypto_trend_pullback_portability",
+  "hypothesis": "The exact BTCUSDT trend-pullback rule should retain positive OOS expectancy on untouched ETHUSDT if the observed edge is not BTC-specific.",
+  "leverage": 1.0,
+  "market": "ETHUSDT",
+  "object_id": "SL-VAL-TREND-PULLBACK-PORTABILITY-001",
+  "parent_object": "SL-VAL-TREND-PULLBACK-001",
+  "signal": {
+    "decluster_bars": 18,
+    "entry": "next bar open",
+    "hold_bars": 12,
+    "pullback_bars": 3,
+    "sides": [
+      "LONG",
+      "SHORT"
+    ],
+    "threshold_lookback_bars": 1080,
+    "threshold_quantile": 0.9,
+    "trend_bars": 180
+  },
+  "status": "FROZEN",
+  "terminal_gate": {
+    "min_oos_events": 30,
+    "otherwise": "PORTABILITY-FAILED",
+    "support_if": "OOS10 mean > 0 AND PF > 1 AND OOS20 mean > 0 AND top winner share < 50%"
+  },
+  "terminal_states": [
+    "OUTCOME-COMPLETE",
+    "PROVIDER-BLOCKED"
+  ],
+  "timeframe": "4h",
+  "timeout_minutes": 20
+}

@@ -7,5 +7,5 @@
     "DATA-INTEGRITY-FAIL",
     "BLOCKED-PROVIDER"
   ],
-  "harness_revision": "detached-v2"
+  "harness_revision": "detached-v2-legacy-compatible"
 }

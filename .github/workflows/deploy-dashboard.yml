@@ -60,8 +60,8 @@ jobs:
         run: |
           set -euo pipefail
           KEY="$HOME/.ssh/markethunter_actions_ed25519"
-          ROOT="$(ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" 'sudo nginx -T 2>/dev/null | awk '\''/^[[:space:]]*root[[:space:]]+.*dashboard\/dist/ {gsub(";", "", $2); print $2; exit}'\'')"
-          test -n "$ROOT" || { echo 'DEPLOY-BLOCKED: dashboard/dist nginx root not found'; exit 3; }
+          ROOT="$(ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "sudo nginx -T 2>/dev/null | grep -E '^[[:space:]]*root[[:space:]]+' | sed -E 's/^[[:space:]]*root[[:space:]]+([^;]+);/\1/' | grep -E 'dashboard|MarketHunter|var/www' | head -n1")"
+          test -n "$ROOT" || { echo 'DEPLOY-BLOCKED: nginx dashboard root not found'; exit 3; }
           printf 'DASHBOARD_ROOT=%s\n' "$ROOT" >> "$GITHUB_ENV"
           echo "Resolved dashboard root: $ROOT"
 
@@ -72,26 +72,15 @@ jobs:
           tar -C dashboard -czf dashboard-dist.tgz dist
           scp -i "$KEY" dashboard-dist.tgz "${VPS_USER}@${VPS_HOST}:/tmp/markethunter-dashboard-${GITHUB_SHA}.tgz"
 
-      - name: Deploy dashboard atomically
+      - name: Deploy dashboard
         run: |
           set -euo pipefail
           KEY="$HOME/.ssh/markethunter_actions_ed25519"
-          ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "\
-            set -euo pipefail; \
-            TMP=/tmp/markethunter-dashboard-${GITHUB_SHA}; \
-            rm -rf \"\$TMP\"; mkdir -p \"\$TMP\"; \
-            tar -xzf /tmp/markethunter-dashboard-${GITHUB_SHA}.tgz -C \"\$TMP\"; \
-            test -f \"\$TMP/dist/index.html\"; \
-            sudo mkdir -p '${DASHBOARD_ROOT}'; \
-            sudo rsync -a --delete \"\$TMP/dist/\" '${DASHBOARD_ROOT}/'; \
-            rm -rf \"\$TMP\" /tmp/markethunter-dashboard-${GITHUB_SHA}.tgz"
+          ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "set -euo pipefail; TMP=/tmp/markethunter-dashboard-${GITHUB_SHA}; rm -rf \"\$TMP\"; mkdir -p \"\$TMP\"; tar -xzf /tmp/markethunter-dashboard-${GITHUB_SHA}.tgz -C \"\$TMP\"; test -f \"\$TMP/dist/index.html\"; sudo mkdir -p '${DASHBOARD_ROOT}'; sudo rsync -a --delete \"\$TMP/dist/\" '${DASHBOARD_ROOT}/'; rm -rf \"\$TMP\" /tmp/markethunter-dashboard-${GITHUB_SHA}.tgz"
 
       - name: Verify deployed route
         run: |
           set -euo pipefail
           KEY="$HOME/.ssh/markethunter_actions_ed25519"
-          ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "\
-            test -f '${DASHBOARD_ROOT}/index.html'; \
-            curl -fsS -o /dev/null http://127.0.0.1/active-trading || \
-            curl -fsS -o /dev/null http://127.0.0.1/"
+          ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "test -f '${DASHBOARD_ROOT}/index.html'; curl -fsS -o /dev/null http://127.0.0.1/active-trading || curl -fsS -o /dev/null http://127.0.0.1/"
           echo "DEPLOYED dashboard SHA=${GITHUB_SHA} route=/active-trading"

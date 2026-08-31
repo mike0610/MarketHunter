@@ -6,5 +6,6 @@
     "ATTRIBUTION-RESULT",
     "DATA-INTEGRITY-FAIL",
     "BLOCKED-PROVIDER"
-  ]
+  ],
+  "harness_revision": "detached-v2"
 }

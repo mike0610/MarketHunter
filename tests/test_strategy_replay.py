@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from backtesting.strategy_replay import StrategyReplayEngine
+from backtesting.strategy_replay import ReplayAssumptions, StrategyReplayEngine
 from models.candle import Candle
 from models.signal import Signal
 from strategies.base_strategy import BaseStrategy
@@ -51,3 +51,69 @@ async def test_strategy_replay_produces_profits():
     )
     assert profits
     assert all(isinstance(value, float) for value in profits)
+
+
+@pytest.mark.asyncio
+async def test_execution_costs_reduce_replay_pnl():
+    zero_cost = StrategyReplayEngine(
+        ReplayAssumptions(
+            fee_bps_per_side=0.0,
+            slippage_bps_per_side=0.0,
+        )
+    )
+    with_costs = StrategyReplayEngine(
+        ReplayAssumptions(
+            fee_bps_per_side=10.0,
+            slippage_bps_per_side=10.0,
+        )
+    )
+
+    zero_profits = await zero_cost.run(
+        strategy=AlwaysLongStrategy(),
+        symbol="BTCUSDT",
+        market="futures",
+        candles=_candles(),
+    )
+    cost_profits = await with_costs.run(
+        strategy=AlwaysLongStrategy(),
+        symbol="BTCUSDT",
+        market="futures",
+        candles=_candles(),
+    )
+
+    assert len(zero_profits) == len(cost_profits)
+    assert sum(cost_profits) < sum(zero_profits)
+
+
+@pytest.mark.asyncio
+async def test_non_overlapping_mode_limits_reentries():
+    candles = _candles(210)
+    overlapping = StrategyReplayEngine(
+        ReplayAssumptions(
+            fee_bps_per_side=0.0,
+            slippage_bps_per_side=0.0,
+            allow_overlapping_positions=True,
+        )
+    )
+    sequential = StrategyReplayEngine(
+        ReplayAssumptions(
+            fee_bps_per_side=0.0,
+            slippage_bps_per_side=0.0,
+            allow_overlapping_positions=False,
+        )
+    )
+
+    overlapping_profits = await overlapping.run(
+        strategy=AlwaysLongStrategy(),
+        symbol="BTCUSDT",
+        market="futures",
+        candles=candles,
+    )
+    sequential_profits = await sequential.run(
+        strategy=AlwaysLongStrategy(),
+        symbol="BTCUSDT",
+        market="futures",
+        candles=candles,
+    )
+
+    assert len(sequential_profits) <= len(overlapping_profits)

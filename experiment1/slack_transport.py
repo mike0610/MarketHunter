@@ -19,6 +19,8 @@ logger = logging.getLogger("experiment1.slack_transport")
 MARKER = "GIL DECISION ENVELOPE v1"
 CANONICAL_CHANNEL_ID = "C0BNACTF4E4"
 CANONICAL_GIL_USER_ID = "U0BMKMQ4U04"
+CHATGPT_SLACK_APP_USER_ID = "U0BME2V91TQ"
+CHATGPT_CONNECTOR_FOOTER = f"*Sent using* <@{CHATGPT_SLACK_APP_USER_ID}|ChatGPT>"
 
 ENV_ENABLED = "GIL_SLACK_TRANSPORT_ENABLED"
 ENV_TOKEN = "GIL_SLACK_BOT_TOKEN"
@@ -29,9 +31,19 @@ ENV_CHECKPOINT_PATH = "GIL_SLACK_CHECKPOINT_PATH"
 DEFAULT_CHECKPOINT_PATH = Path("data/experiment1_gil_slack_checkpoint.json")
 SLACK_HISTORY_URL = "https://slack.com/api/conversations.history"
 
-_ENVELOPE_RE = re.compile(
+# Native/manual Slack form: preserve the original strict contract.
+_CANONICAL_ENVELOPE_RE = re.compile(
     r"\A\s*GIL DECISION ENVELOPE v1\s*\n```json\s*\n(?P<payload>\{.*\})\s*\n```\s*\Z",
     re.DOTALL,
+)
+
+# ChatGPT's Slack connector deterministically serializes a code block as
+# ```{...}``` (no language tag/newlines) and appends one exact provenance
+# footer. Accept ONLY that observed closed form; arbitrary trailing prose or a
+# look-alike footer is still rejected. The compact canonical JSON emitted by
+# decision_to_json is one line, so deliberately do not allow newlines here.
+_CONNECTOR_ENVELOPE_RE = re.compile(
+    rf"\A\s*GIL DECISION ENVELOPE v1\s*\n```(?P<payload>\{{[^\r\n]*\}})```\s*\n{re.escape(CHATGPT_CONNECTOR_FOOTER)}\s*\Z"
 )
 
 _TOP_LEVEL_KEYS = {
@@ -179,10 +191,15 @@ def _validate_exact_schema(data: object) -> dict:
 
 def parse_structured_envelope(text: str) -> str | None:
     """
-    Return canonical decision JSON only when the *entire* Slack message is a
-    strict machine envelope. Ordinary GIL research text is always ignored.
+    Return canonical decision JSON only when the entire Slack message is one
+    of two explicitly supported machine forms: the original canonical fenced
+    JSON form, or the deterministic ChatGPT Slack-connector rendering with its
+    exact provenance footer. Ordinary GIL research text is always ignored.
     """
-    match = _ENVELOPE_RE.match(text or "")
+    raw = text or ""
+    match = _CANONICAL_ENVELOPE_RE.match(raw)
+    if match is None:
+        match = _CONNECTOR_ENVELOPE_RE.match(raw)
     if match is None:
         return None
     data = json.loads(match.group("payload"))

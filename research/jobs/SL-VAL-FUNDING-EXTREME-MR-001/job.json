@@ -14,5 +14,8 @@
   "leverage_diagnostics": [1.0,2.0,3.0],
   "terminal_gate": {"min_oos_events":30,"edge_candidate_if":"unlevered OOS10 mean > 0 AND PF > 1 AND unlevered OOS20 mean > 0 AND top winner share < 50%","portfolio_eligibility_requires":"survival diagnostics acceptable at research leverage envelope; leverage cannot rescue failed unlevered edge","otherwise":"REJECTED"},
   "diagnostics": ["funding PnL contribution","monthly OOS profile","event frequency","max drawdown","loss streak","winner concentration","1x/2x/3x equity stress","capital feasibility at 1000 USDT","approx liquidation-distance warning"],
-  "anti_tuning": "No percentile, hold, leverage ceiling, side, or regime changes after outcomes are opened. Any discovered filter becomes a new frozen hypothesis on untouched/OOS evidence."
+  "anti_tuning": "No percentile, hold, leverage ceiling, side, or regime changes after outcomes are opened. Any discovered filter becomes a new frozen hypothesis on untouched/OOS evidence.",
+  "executor": "vps",
+  "terminal_states": ["OUTCOME-COMPLETE", "PROVIDER-BLOCKED"],
+  "timeout_minutes": 20
 }

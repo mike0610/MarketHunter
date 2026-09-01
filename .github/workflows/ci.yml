@@ -92,6 +92,7 @@ jobs:
             tests/test_experiment1_mtm.py \
             tests/test_experiment1_gil_decision.py \
             tests/test_experiment1_runtime_scheduler.py \
+            tests/test_experiment1_slack_transport.py \
             tests/test_experiment1_lifecycle.py \
             tests/test_strategy_runtime_release_manifest.py \
             tests/test_strategy_execution_binding.py \

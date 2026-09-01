@@ -83,6 +83,7 @@ jobs:
             tests/test_simulation_repository.py \
             tests/test_simulation_runtime.py \
             tests/test_experiment1_engine.py \
+            tests/test_experiment1_api.py \
             tests/test_experiment1_watcher.py \
             tests/test_experiment1_market_source.py \
             tests/test_experiment1_runtime.py \

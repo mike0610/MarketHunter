@@ -7,7 +7,14 @@ from enum import Enum
 
 
 class AccountKind(str, Enum):
+    # Legacy single Investments account. Preserved (never removed) so any
+    # pre-existing production history under this key stays reachable -
+    # STARTING_CASH no longer creates it for fresh deployments; the
+    # canonical Investments model is the three independent ledgers below.
     INVESTMENTS = "INVESTMENTS"
+    INVESTMENTS_DEFENSIVE = "INVESTMENTS_DEFENSIVE"
+    INVESTMENTS_BALANCED = "INVESTMENTS_BALANCED"
+    INVESTMENTS_GROWTH = "INVESTMENTS_GROWTH"
     SPOT = "SPOT"
     FUTURES = "FUTURES"
 
@@ -122,3 +129,11 @@ class PositionState:
     quantity: Decimal
     average_price: Decimal
     leverage: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class ContributionRecord:
+    account: AccountKind
+    period: str
+    amount: Decimal
+    applied_at: datetime

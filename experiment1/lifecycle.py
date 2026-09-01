@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from experiment1.engine import Experiment1Engine, Experiment1Error
-from experiment1.models import AccountKind, DecisionAction, FillRecord, OrderIntent
+from experiment1.engine import Experiment1Engine, Experiment1Error, NO_LEVERAGE_ACCOUNTS
+from experiment1.models import DecisionAction, FillRecord, OrderIntent
 from experiment1.runtime import AsyncQuoteSource
 
 
@@ -31,7 +31,7 @@ def _trigger_reason(intent: OrderIntent, price: Decimal) -> str | None:
 
 
 def _exit_action(intent: OrderIntent) -> DecisionAction:
-    if intent.account in (AccountKind.INVESTMENTS, AccountKind.SPOT):
+    if intent.account in NO_LEVERAGE_ACCOUNTS:
         return DecisionAction.SELL
     if intent.action is DecisionAction.LONG:
         return DecisionAction.SHORT

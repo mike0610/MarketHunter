@@ -15,6 +15,13 @@ import {
 import PageHeader from "../components/layout/PageHeader";
 import MetricCard from "../components/layout/MetricCard";
 
+const STARTING_CAPITAL = 2000;
+
+const ACCOUNT_TYPES = [
+    { key: "spot", label: "Spot" },
+    { key: "futures", label: "Futures" },
+];
+
 const ASSET_CLASSES = [
     { key: "all", label: "Усі" },
     { key: "stocks", label: "Акції" },
@@ -53,6 +60,14 @@ const MARKET_CARDS = [
 const ACTIVE_TRADES = [];
 const COMPLETED_TRADES = [];
 
+function formatUsd(value) {
+    return new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        maximumFractionDigits: 0,
+    }).format(value);
+}
+
 function EmptyTradeState({ message }) {
     return (
         <Paper variant="outlined" sx={{ p: 3, borderRadius: 3 }}>
@@ -85,6 +100,7 @@ function TradeList({ trades, emptyMessage }) {
                                 <Typography variant="h6" sx={{ fontWeight: 700 }}>
                                     {trade.symbol}
                                 </Typography>
+                                <Chip size="small" label={trade.accountType} variant="outlined" />
                                 <Chip size="small" label={trade.assetClass} variant="outlined" />
                                 <Chip
                                     size="small"
@@ -110,34 +126,39 @@ function TradeList({ trades, emptyMessage }) {
 }
 
 export default function ActiveTrading() {
+    const [accountType, setAccountType] = useState("spot");
     const [assetClass, setAssetClass] = useState("all");
     const [tradeView, setTradeView] = useState("active");
 
     const filteredActive = useMemo(
         () =>
             ACTIVE_TRADES.filter(
-                (trade) => assetClass === "all" || trade.assetClassKey === assetClass,
+                (trade) =>
+                    trade.accountTypeKey === accountType &&
+                    (assetClass === "all" || trade.assetClassKey === assetClass),
             ),
-        [assetClass],
+        [accountType, assetClass],
     );
 
     const filteredCompleted = useMemo(
         () =>
             COMPLETED_TRADES.filter(
-                (trade) => assetClass === "all" || trade.assetClassKey === assetClass,
+                (trade) =>
+                    trade.accountTypeKey === accountType &&
+                    (assetClass === "all" || trade.assetClassKey === assetClass),
             ),
-        [assetClass],
+        [accountType, assetClass],
     );
 
     return (
         <Box sx={{ width: "100%", minWidth: 0 }}>
             <PageHeader
                 title="Active Trading"
-                subtitle="Окремий paper-trading контур для акцій, ETF, металів та індексів."
+                subtitle="Experiment 1: два незалежні paper-trading рахунки Spot і Futures, окремо від Investments та crypto statistics."
             />
 
             <Alert severity="info" sx={{ mb: 3, borderRadius: 3 }}>
-                Тестовий режим. Тут відображатимуться multi-asset угоди окремо від крипти. Реальні брокерські ордери вимкнені.
+                Simulation only. Spot і Futures мають окремі баланси, P&L, drawdown та статистику. Реальні брокерські ордери вимкнені.
             </Alert>
 
             <Box
@@ -145,17 +166,53 @@ export default function ActiveTrading() {
                     display: "grid",
                     gridTemplateColumns: {
                         xs: "1fr",
-                        sm: "repeat(2, minmax(0, 1fr))",
-                        xl: "repeat(4, minmax(0, 1fr))",
+                        md: "repeat(2, minmax(0, 1fr))",
                     },
                     gap: 2,
                     mb: 3,
                 }}
             >
-                <MetricCard label="Режим" value="Paper" caption="Без реальних ордерів" />
-                <MetricCard label="Класи активів" value="4" caption="Stocks / ETF / Metals / Indices" />
-                <MetricCard label="Активні угоди" value={String(ACTIVE_TRADES.length)} caption="Multi-asset paper trades" />
-                <MetricCard label="Завершені" value={String(COMPLETED_TRADES.length)} caption="Для окремої статистики" />
+                <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3 }}>
+                    <Stack spacing={1.5}>
+                        <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
+                            <Typography variant="h6" sx={{ fontWeight: 700 }}>⚡ Spot account</Typography>
+                            <Chip label="Paper" size="small" variant="outlined" />
+                        </Stack>
+                        <Box
+                            sx={{
+                                display: "grid",
+                                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                                gap: 1.5,
+                            }}
+                        >
+                            <MetricCard label="Balance" value={formatUsd(STARTING_CAPITAL)} caption="Стартовий депозит" />
+                            <MetricCard label="P&L" value="$0" caption="Окремо від Futures" />
+                            <MetricCard label="Drawdown" value="0%" caption="Поки немає угод" />
+                            <MetricCard label="Trades" value="0" caption="Завершені paper trades" />
+                        </Box>
+                    </Stack>
+                </Paper>
+
+                <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3 }}>
+                    <Stack spacing={1.5}>
+                        <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
+                            <Typography variant="h6" sx={{ fontWeight: 700 }}>🔥 Futures account</Typography>
+                            <Chip label="Conservative leverage" size="small" variant="outlined" />
+                        </Stack>
+                        <Box
+                            sx={{
+                                display: "grid",
+                                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                                gap: 1.5,
+                            }}
+                        >
+                            <MetricCard label="Balance" value={formatUsd(STARTING_CAPITAL)} caption="Стартовий депозит" />
+                            <MetricCard label="P&L" value="$0" caption="LONG + SHORT" />
+                            <MetricCard label="Drawdown" value="0%" caption="Survival first" />
+                            <MetricCard label="Trades" value="0" caption="Завершені paper trades" />
+                        </Box>
+                    </Stack>
+                </Paper>
             </Box>
 
             <Typography variant="h5" sx={{ mb: 2, fontWeight: 700 }}>
@@ -188,13 +245,23 @@ export default function ActiveTrading() {
                             <Chip label={market.state} size="small" variant="outlined" />
                         </Stack>
                         <Typography variant="body2" color="text.secondary">
-                            Угоди цього класу активів будуть потрапляти у спільний Active Trading журнал з окремим фільтром і статистикою.
+                            Угоди цього класу активів потраплятимуть у журнал відповідного Spot або Futures account.
                         </Typography>
                     </Paper>
                 ))}
             </Box>
 
             <Paper variant="outlined" sx={{ borderRadius: 3, overflow: "hidden" }}>
+                <Box sx={{ px: 2, pt: 1.5 }}>
+                    <Tabs value={accountType} onChange={(_, value) => setAccountType(value)}>
+                        {ACCOUNT_TYPES.map((item) => (
+                            <Tab key={item.key} value={item.key} label={item.label} />
+                        ))}
+                    </Tabs>
+                </Box>
+
+                <Divider />
+
                 <Box sx={{ px: 2, pt: 1.5 }}>
                     <Tabs
                         value={assetClass}
@@ -224,14 +291,14 @@ export default function ActiveTrading() {
                     {tradeView === "active" && (
                         <TradeList
                             trades={filteredActive}
-                            emptyMessage="Коли multi-asset scanner почне створювати paper trades, відкриті позиції зʼявляться тут."
+                            emptyMessage={`Коли ${accountType === "spot" ? "Spot" : "Futures"} scanner створить paper trades, відкриті позиції зʼявляться тут.`}
                         />
                     )}
 
                     {tradeView === "completed" && (
                         <TradeList
                             trades={filteredCompleted}
-                            emptyMessage="Після TP / SL / expiry завершені угоди з акцій, ETF, металів та індексів зʼявляться тут."
+                            emptyMessage={`Завершені ${accountType === "spot" ? "Spot" : "Futures"} угоди зʼявляться тут після exit.`}
                         />
                     )}
 
@@ -247,9 +314,9 @@ export default function ActiveTrading() {
                                 gap: 2,
                             }}
                         >
-                            <MetricCard label="Trades" value="0" caption="Завершені paper trades" />
-                            <MetricCard label="Win rate" value="—" caption="Після першої вибірки" />
-                            <MetricCard label="P&L" value="—" caption="Окремо від crypto" />
+                            <MetricCard label="Return" value="—" caption={`${accountType === "spot" ? "Spot" : "Futures"} only`} />
+                            <MetricCard label="Max drawdown" value="—" caption="Після першої вибірки" />
+                            <MetricCard label="Expectancy" value="—" caption="Після завершених угод" />
                             <MetricCard label="Profit factor" value="—" caption="Після достатньої статистики" />
                         </Box>
                     )}

@@ -1,0 +1,6 @@
+{
+  "object_id": "SL-VAL-CROSS-SECTIONAL-MOMENTUM-001",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "terminal_states": ["OUTCOME-COMPLETE", "PROVIDER-BLOCKED"]
+}

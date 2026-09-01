@@ -137,3 +137,22 @@ class ContributionRecord:
     period: str
     amount: Decimal
     applied_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ClosedTrade:
+    """
+    One deterministic round-trip trade (flat -> non-flat -> flat) for one
+    symbol in one account, reconstructed from the immutable fills log.
+    realized_pnl/fees_paid are exact sums of the authoritative per-fill
+    values the engine itself recorded at fill time - never re-derived or
+    estimated - so this can never drift from account_state().realized_pnl.
+    """
+
+    account: AccountKind
+    symbol: str
+    opened_at: datetime
+    closed_at: datetime
+    realized_pnl: Decimal
+    fees_paid: Decimal
+    fill_count: int

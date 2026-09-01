@@ -8,6 +8,7 @@ from pathlib import Path
 from experiment1.models import (
     AccountKind,
     AccountState,
+    ClosedTrade,
     ContributionRecord,
     DecisionAction,
     FillRecord,
@@ -123,7 +124,8 @@ class Experiment1Engine:
                     leverage TEXT NOT NULL,
                     observed_at TEXT NOT NULL,
                     source TEXT NOT NULL,
-                    source_reference TEXT NOT NULL
+                    source_reference TEXT NOT NULL,
+                    realized_pnl_delta TEXT NOT NULL DEFAULT '0'
                 );
                 CREATE TABLE IF NOT EXISTS experiment1_contributions (
                     account TEXT NOT NULL,
@@ -134,6 +136,17 @@ class Experiment1Engine:
                 );
                 """
             )
+            # Migration guard for a database created before realized_pnl_delta
+            # existed - CREATE TABLE IF NOT EXISTS above is a no-op against an
+            # already-existing table, so an old file needs the column added
+            # explicitly. Never touches any existing row's other columns.
+            existing_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(experiment1_fills)").fetchall()
+            }
+            if "realized_pnl_delta" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE experiment1_fills ADD COLUMN realized_pnl_delta TEXT NOT NULL DEFAULT '0'"
+                )
 
     def _ensure_accounts(self) -> None:
         with self._connect() as conn:
@@ -172,25 +185,76 @@ class Experiment1Engine:
                     )
 
     def submit_intent(self, intent: OrderIntent) -> IntentStatus:
-        self._validate_intent_policy(intent)
-        status = IntentStatus.NO_ACTION if intent.action in (DecisionAction.WAIT, DecisionAction.HOLD) else IntentStatus.PENDING
+        """
+        Submit one intent for MarketHunter validation. A policy rejection
+        is persisted as an auditable IntentStatus.BLOCKED row with its
+        exact status_reason (never silently dropped) before the
+        Experiment1Error is (still) raised, preserving the existing
+        caller contract (e.g. the API's HTTP 400 mapping). Resubmitting
+        the exact same intent_id + content afterwards - blocked or not -
+        is idempotent: it returns the already-recorded status without
+        re-raising or re-validating.
+        """
+        # The BLOCKED-row insert below must be committed even though the
+        # caller still sees an exception - so the exception is raised
+        # AFTER the `with` block exits (and commits), never from inside
+        # it, since exiting a sqlite3 connection context manager via an
+        # exception rolls back everything written in that transaction.
+        validation_error: Experiment1Error | None = None
+
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM experiment1_intents WHERE intent_id=?", (intent.intent_id,)).fetchone()
             if row is not None:
                 if self._intent_from_row(row) == intent:
                     return IntentStatus(row["status"])
                 raise Experiment1Error("intent_id already exists with different content")
-            conn.execute(
-                """INSERT INTO experiment1_intents
-                (intent_id, created_at, account, action, symbol, quantity, reason,
-                 leverage, stop_loss, take_profit, status, status_reason)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)""",
-                (intent.intent_id, intent.created_at.isoformat(), intent.account.value, intent.action.value,
-                 intent.symbol, str(intent.quantity), intent.reason, str(intent.leverage),
-                 None if intent.stop_loss is None else str(intent.stop_loss),
-                 None if intent.take_profit is None else str(intent.take_profit), status.value),
-            )
+
+            try:
+                self._validate_intent_policy(intent)
+            except Experiment1Error as exc:
+                validation_error = exc
+                status = IntentStatus.BLOCKED
+                status_reason = str(exc)
+            else:
+                status = IntentStatus.NO_ACTION if intent.action in (DecisionAction.WAIT, DecisionAction.HOLD) else IntentStatus.PENDING
+                status_reason = None
+
+            self._insert_intent_row(conn, intent, status, status_reason)
+
+        if validation_error is not None:
+            raise validation_error
         return status
+
+    def _insert_intent_row(
+        self, conn: sqlite3.Connection, intent: OrderIntent, status: IntentStatus, status_reason: str | None
+    ) -> None:
+        conn.execute(
+            """INSERT INTO experiment1_intents
+            (intent_id, created_at, account, action, symbol, quantity, reason,
+             leverage, stop_loss, take_profit, status, status_reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (intent.intent_id, intent.created_at.isoformat(), intent.account.value, intent.action.value,
+             intent.symbol, str(intent.quantity), intent.reason, str(intent.leverage),
+             None if intent.stop_loss is None else str(intent.stop_loss),
+             None if intent.take_profit is None else str(intent.take_profit), status.value, status_reason),
+        )
+
+    def blocked_intent_ids(self) -> tuple[str, ...]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT intent_id FROM experiment1_intents WHERE status=? ORDER BY created_at, intent_id",
+                (IntentStatus.BLOCKED.value,),
+            ).fetchall()
+            return tuple(row["intent_id"] for row in rows)
+
+    def intent_status_reason(self, intent_id: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT status_reason FROM experiment1_intents WHERE intent_id=?", (intent_id,)
+            ).fetchone()
+            if row is None:
+                raise Experiment1Error("unknown intent")
+            return row["status_reason"]
 
     def pending_intent_ids(self) -> tuple[str, ...]:
         with self._connect() as conn:
@@ -254,6 +318,7 @@ class Experiment1Engine:
         cash = Decimal(account["cash"]); realized = Decimal(account["realized_pnl"]); fees_paid = Decimal(account["fees_paid"])
         row = conn.execute("SELECT * FROM experiment1_positions WHERE account=? AND symbol=?", (fill.account.value, fill.symbol)).fetchone()
         old_qty = Decimal(row["quantity"]) if row else Decimal("0"); old_avg = Decimal(row["average_price"]) if row else Decimal("0")
+        realized_delta = Decimal("0")
         if fill.account in NO_LEVERAGE_ACCOUNTS:
             if fill.action is DecisionAction.BUY:
                 cost = fill.fill_price * fill.quantity + fill.fee
@@ -263,7 +328,8 @@ class Experiment1Engine:
                 cash -= cost
             else:
                 if fill.quantity > old_qty: raise Experiment1Error("cannot paper-sell more than held quantity")
-                realized += (fill.fill_price - old_avg) * fill.quantity
+                realized_delta = (fill.fill_price - old_avg) * fill.quantity
+                realized += realized_delta
                 cash += fill.fill_price * fill.quantity - fill.fee
                 new_qty = old_qty - fill.quantity; new_avg = old_avg if new_qty else Decimal("0")
         else:
@@ -274,7 +340,8 @@ class Experiment1Engine:
                 new_avg = (abs(old_qty) * old_avg + abs(signed) * fill.fill_price) / abs(new_qty) if new_qty else Decimal("0")
             else:
                 close_qty = min(abs(old_qty), abs(signed)); direction = Decimal("1") if old_qty > 0 else Decimal("-1")
-                realized += (fill.fill_price - old_avg) * close_qty * direction; cash += (fill.fill_price - old_avg) * close_qty * direction
+                realized_delta = (fill.fill_price - old_avg) * close_qty * direction
+                realized += realized_delta; cash += (fill.fill_price - old_avg) * close_qty * direction
                 new_qty = old_qty + signed
                 new_avg = Decimal("0") if new_qty == 0 else (fill.fill_price if (old_qty > 0 > new_qty) or (old_qty < 0 < new_qty) else old_avg)
             cash -= fill.fee
@@ -283,8 +350,8 @@ class Experiment1Engine:
             ON CONFLICT(account,symbol) DO UPDATE SET quantity=excluded.quantity,average_price=excluded.average_price,leverage=excluded.leverage""",
             (fill.account.value, fill.symbol, str(new_qty), str(new_avg), str(fill.leverage)))
         conn.execute("UPDATE experiment1_accounts SET cash=?,realized_pnl=?,fees_paid=? WHERE account=?", (str(cash),str(realized),str(fees_paid),fill.account.value))
-        conn.execute("""INSERT INTO experiment1_fills(intent_id,account,action,symbol,quantity,reference_price,fill_price,fee,leverage,observed_at,source,source_reference)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", (fill.intent_id,fill.account.value,fill.action.value,fill.symbol,str(fill.quantity),str(fill.reference_price),str(fill.fill_price),str(fill.fee),str(fill.leverage),fill.observed_at.isoformat(),fill.source,fill.source_reference))
+        conn.execute("""INSERT INTO experiment1_fills(intent_id,account,action,symbol,quantity,reference_price,fill_price,fee,leverage,observed_at,source,source_reference,realized_pnl_delta)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""", (fill.intent_id,fill.account.value,fill.action.value,fill.symbol,str(fill.quantity),str(fill.reference_price),str(fill.fill_price),str(fill.fee),str(fill.leverage),fill.observed_at.isoformat(),fill.source,fill.source_reference,str(realized_delta)))
 
     def _update_equity(self, conn: sqlite3.Connection, fill: FillRecord, mark_price: Decimal) -> None:
         # Every open position must contribute to equity/exposure/drawdown -
@@ -372,6 +439,64 @@ class Experiment1Engine:
                 ContributionRecord(account, row["period"], Decimal(row["amount"]), datetime.fromisoformat(row["applied_at"]))
                 for row in rows
             )
+
+    def closed_trades(self, account: AccountKind) -> tuple[ClosedTrade, ...]:
+        """
+        Deterministically reconstruct every completed round-trip trade
+        (flat -> non-flat -> flat) per symbol from the immutable fills
+        log, ordered by fill application order (the fills table's own
+        autoincrement id - never observed_at, which is caller-supplied
+        and not guaranteed unique). realized_pnl/fees_paid are exact
+        sums of each fill's own persisted realized_pnl_delta/fee - the
+        authoritative values the engine computed at fill time, not a
+        re-derivation - so this can never drift from account_state().
+        A still-open position (never returned to flat) contributes no
+        entry here; positions() is the source for open state.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM experiment1_fills WHERE account=? ORDER BY id ASC",
+                (account.value,),
+            ).fetchall()
+
+        by_symbol: dict[str, list[sqlite3.Row]] = {}
+        for row in rows:
+            by_symbol.setdefault(row["symbol"], []).append(row)
+
+        trades: list[ClosedTrade] = []
+        for symbol, symbol_rows in by_symbol.items():
+            running_qty = Decimal("0")
+            leg: list[sqlite3.Row] = []
+            for fill_row in symbol_rows:
+                action = DecisionAction(fill_row["action"])
+                signed = (
+                    Decimal(fill_row["quantity"])
+                    if action in (DecisionAction.BUY, DecisionAction.LONG)
+                    else -Decimal(fill_row["quantity"])
+                )
+                leg.append(fill_row)
+                running_qty += signed
+                if running_qty == 0:
+                    trades.append(self._closed_trade_from_leg(account, symbol, leg))
+                    leg = []
+
+        trades.sort(key=lambda trade: trade.closed_at)
+        return tuple(trades)
+
+    def _closed_trade_from_leg(
+        self, account: AccountKind, symbol: str, leg: list[sqlite3.Row]
+    ) -> ClosedTrade:
+        realized = sum((Decimal(row["realized_pnl_delta"]) for row in leg), Decimal("0"))
+        fees = sum((Decimal(row["fee"]) for row in leg), Decimal("0"))
+        return ClosedTrade(
+            account=account,
+            symbol=symbol,
+            opened_at=datetime.fromisoformat(leg[0]["observed_at"]),
+            closed_at=datetime.fromisoformat(leg[-1]["observed_at"]),
+            realized_pnl=realized,
+            fees_paid=fees,
+            fill_count=len(leg),
+        )
 
     def _account_row(self, conn: sqlite3.Connection, account: AccountKind) -> sqlite3.Row:
         row = conn.execute("SELECT * FROM experiment1_accounts WHERE account=?", (account.value,)).fetchone()

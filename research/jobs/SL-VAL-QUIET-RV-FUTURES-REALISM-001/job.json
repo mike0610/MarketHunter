@@ -1,0 +1,7 @@
+{
+  "object_id": "SL-VAL-QUIET-RV-FUTURES-REALISM-001",
+  "status": "FROZEN",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "terminal_states": ["OUTCOME-COMPLETE", "EVIDENCE-FAIL", "PROVIDER-BLOCKED"]
+}

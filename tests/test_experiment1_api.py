@@ -153,6 +153,41 @@ class GilDecisionInboxEndpointTests(unittest.TestCase):
 
         self.assertEqual(post_body, get_body)
 
+    def test_post_accepts_a_structured_trigger_and_max_notional_sizing(self) -> None:
+        payload = self._payload(decision_id="gil-trigger-sizing")
+        del payload["quantity"]
+        payload["trigger"] = {
+            "trigger_type": "PRICE_IN_RANGE",
+            "trigger_price_low": "115",
+            "trigger_price_high": "120",
+        }
+        payload["sizing"] = {"mode": "MAX_NOTIONAL", "max_notional": "500"}
+
+        response = self.client.post("/experiment1/gil-decisions", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "PENDING_DRAIN")
+
+    def test_post_rejects_a_trigger_missing_its_required_price_as_malformed(self) -> None:
+        payload = self._payload(decision_id="gil-bad-trigger")
+        payload["trigger"] = {"trigger_type": "PRICE_AT_OR_ABOVE"}  # missing trigger_price
+
+        response = self.client.post("/experiment1/gil-decisions", json=payload)
+
+        self.assertEqual(response.status_code, 400)
+        status = self.client.get("/experiment1/gil-decisions/gil-bad-trigger").json()
+        self.assertEqual(status["status"], "MALFORMED")
+        self.assertIn("trigger_price", status["outcome_reason"])
+
+    def test_post_requires_exactly_one_of_quantity_or_sizing(self) -> None:
+        payload = self._payload(decision_id="gil-both-quantity-and-sizing")
+        payload["sizing"] = {"mode": "EXACT_QUANTITY", "exact_quantity": "1"}
+        # quantity is still set from _payload() too - both present is invalid.
+
+        response = self.client.post("/experiment1/gil-decisions", json=payload)
+
+        self.assertEqual(response.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

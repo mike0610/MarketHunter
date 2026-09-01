@@ -17,7 +17,17 @@ from experiment1.gil_decision import (
     to_order_intent,
 )
 from experiment1.lifecycle import run_protective_exit_cycle
-from experiment1.models import AccountKind, DecisionAction, GilDecision, IntentStatus, MarketQuote
+from experiment1.models import (
+    AccountKind,
+    DecisionAction,
+    ExecutionTrigger,
+    GilDecision,
+    IntentStatus,
+    MarketQuote,
+    SizingIntent,
+    SizingMode,
+    TriggerType,
+)
 from experiment1.mtm import MtmCompleteness, run_mtm_cycle
 from experiment1.runtime import run_market_cycle
 
@@ -325,7 +335,7 @@ def test_drain_processes_a_valid_long_decision_to_pending(engine):
     decision = _decision()
     _seed(engine, decision)
 
-    results = drain_gil_decision_inbox(engine)
+    results = asyncio.run(drain_gil_decision_inbox(engine, FakeSource({})))
 
     assert len(results) == 1
     assert results[0].outcome == "PENDING"
@@ -341,7 +351,7 @@ def test_drain_processes_a_wait_decision_to_no_action_never_executable(engine):
     decision = _decision(decision_id="gil-wait", action=DecisionAction.WAIT, quantity=Decimal("0"))
     _seed(engine, decision)
 
-    results = drain_gil_decision_inbox(engine)
+    results = asyncio.run(drain_gil_decision_inbox(engine, FakeSource({})))
 
     assert results[0].outcome == "NO_ACTION"
     assert engine.pending_intent_ids() == ()
@@ -353,7 +363,7 @@ def test_drain_marks_a_conditional_decision_waiting_evidence_without_submitting_
     decision = _decision(decision_id="gil-conditional", execution_condition="only if daily close confirms above 105")
     _seed(engine, decision)
 
-    results = drain_gil_decision_inbox(engine)
+    results = asyncio.run(drain_gil_decision_inbox(engine, FakeSource({})))
 
     assert results[0].outcome == "WAITING_EVIDENCE"
     assert "no evaluator" in results[0].detail.lower()
@@ -372,7 +382,7 @@ def test_drain_marks_a_risk_blocked_decision_blocked_with_reason(engine):
     decision = _decision(decision_id="gil-over-leverage", leverage=Decimal("10"))
     _seed(engine, decision)
 
-    results = drain_gil_decision_inbox(engine)
+    results = asyncio.run(drain_gil_decision_inbox(engine, FakeSource({})))
 
     assert results[0].outcome == "BLOCKED"
     assert "3x" in results[0].detail
@@ -387,11 +397,11 @@ def test_drain_marks_a_risk_blocked_decision_blocked_with_reason(engine):
 def test_drain_never_reprocesses_an_already_processed_decision(engine):
     decision = _decision()
     _seed(engine, decision)
-    drain_gil_decision_inbox(engine)
+    asyncio.run(drain_gil_decision_inbox(engine, FakeSource({})))
 
     # No new envelope arrived - a second drain cycle must find nothing
     # PENDING_DRAIN and must not resubmit/duplicate anything.
-    results = drain_gil_decision_inbox(engine)
+    results = asyncio.run(drain_gil_decision_inbox(engine, FakeSource({})))
 
     assert results == ()
     assert len(engine.pending_intent_ids()) == 1
@@ -402,7 +412,7 @@ def test_drain_is_restart_safe_across_a_fresh_engine_instance(tmp_path):
     first_engine = Experiment1Engine(db_path)
     decision = _decision()
     _seed(first_engine, decision)
-    drain_gil_decision_inbox(first_engine)
+    asyncio.run(drain_gil_decision_inbox(first_engine, FakeSource({})))
 
     second_engine = Experiment1Engine(db_path)
     record = second_engine.gil_decision_inbox_status(decision.decision_id)
@@ -411,6 +421,208 @@ def test_drain_is_restart_safe_across_a_fresh_engine_instance(tmp_path):
 
     # Nothing left to drain, and re-seeding the identical decision is
     # still idempotent on the restarted instance.
-    assert drain_gil_decision_inbox(second_engine) == ()
+    assert asyncio.run(drain_gil_decision_inbox(second_engine, FakeSource({}))) == ()
     second_engine.receive_gil_decision(decision.decision_id, decision_to_json(decision))
+    assert len(second_engine.pending_intent_ids()) == 1
+
+
+# --- structured ExecutionTrigger / SizingIntent model validation ------------
+
+def test_gil_decision_requires_exactly_one_of_quantity_or_sizing():
+    with pytest.raises(ValueError):
+        _decision(sizing=SizingIntent(mode=SizingMode.EXACT_QUANTITY, exact_quantity=Decimal("1")))
+    with pytest.raises(ValueError):
+        _decision(quantity=None)
+
+
+def test_risk_budget_from_stop_sizing_requires_stop_loss_on_the_decision():
+    with pytest.raises(ValueError):
+        _decision(
+            decision_id="gil-missing-stop",
+            quantity=None,
+            stop_loss=None,
+            sizing=SizingIntent(mode=SizingMode.RISK_BUDGET_FROM_STOP, risk_budget_amount=Decimal("10")),
+        )
+
+
+def test_execution_trigger_immediate_rejects_a_price():
+    with pytest.raises(ValueError):
+        ExecutionTrigger(trigger_type=TriggerType.IMMEDIATE, trigger_price=Decimal("100"))
+
+
+def test_execution_trigger_at_or_above_requires_a_positive_trigger_price():
+    with pytest.raises(ValueError):
+        ExecutionTrigger(trigger_type=TriggerType.PRICE_AT_OR_ABOVE)
+
+
+def test_execution_trigger_price_in_range_requires_low_less_than_high():
+    with pytest.raises(ValueError):
+        ExecutionTrigger(
+            trigger_type=TriggerType.PRICE_IN_RANGE,
+            trigger_price_low=Decimal("120"),
+            trigger_price_high=Decimal("115"),
+        )
+
+
+def test_sizing_intent_rejects_a_mismatched_field():
+    with pytest.raises(ValueError):
+        SizingIntent(mode=SizingMode.EXACT_QUANTITY, max_notional=Decimal("500"))
+
+
+# --- drain: structured trigger + sizing evaluation --------------------------
+
+class _ExplodingSource:
+    """A quote source that fails the test if it is ever consulted."""
+
+    async def quote_for(self, intent):
+        raise AssertionError("quote_source should never be called for an immediate, exact-quantity decision")
+
+
+def test_immediate_exact_quantity_decision_never_fetches_a_quote(engine):
+    # The dispatch's own required scenario: "immediate exact-quantity
+    # BUY/LONG -> existing canonical path unchanged" - proven
+    # structurally, not just behaviorally: no evidence is ever fetched.
+    decision = _decision()
+    _seed(engine, decision)
+
+    results = asyncio.run(drain_gil_decision_inbox(engine, _ExplodingSource()))
+
+    assert results[0].outcome == "PENDING"
+
+
+def test_threshold_unmet_produces_waiting_evidence_and_no_executable_intent(engine):
+    decision = _decision(
+        decision_id="gil-threshold",
+        trigger=ExecutionTrigger(trigger_type=TriggerType.PRICE_AT_OR_ABOVE, trigger_price=Decimal("65000")),
+    )
+    _seed(engine, decision)
+    source = FakeSource({"BTCUSDT": _quote("BTCUSDT", Decimal("60000"))})
+
+    results = asyncio.run(drain_gil_decision_inbox(engine, source))
+
+    assert results[0].outcome == "WAITING_EVIDENCE"
+    assert "not yet satisfied" in results[0].detail
+    assert engine.pending_intent_ids() == ()
+    assert engine.blocked_intent_ids() == ()
+    with pytest.raises(Experiment1Error):
+        engine.get_intent(intent_id_for("gil-threshold"))
+
+
+def test_missing_quote_produces_waiting_evidence_and_stays_watchable(engine):
+    decision = _decision(
+        decision_id="gil-missing-quote",
+        trigger=ExecutionTrigger(trigger_type=TriggerType.PRICE_AT_OR_ABOVE, trigger_price=Decimal("65000")),
+    )
+    _seed(engine, decision)
+    empty_source = FakeSource({})  # no quote at all for BTCUSDT
+
+    results = asyncio.run(drain_gil_decision_inbox(engine, empty_source))
+
+    assert results[0].outcome == "WAITING_EVIDENCE"
+    assert "no fresh quote" in results[0].detail
+    record = engine.gil_decision_inbox_status("gil-missing-quote")
+    assert record.status.value == "PENDING_DRAIN"  # still watchable, not terminal
+    assert engine.pending_intent_ids() == ()
+
+
+def test_price_range_and_max_notional_decision_remains_watchable_then_submits_exactly_once(engine):
+    # The dispatch's own canonical example: a CROX-style buy-zone plus a
+    # max-notional tranche.
+    decision = _decision(
+        decision_id="gil-buy-zone",
+        account=AccountKind.SPOT,
+        action=DecisionAction.BUY,
+        leverage=Decimal("1"),
+        quantity=None,
+        trigger=ExecutionTrigger(
+            trigger_type=TriggerType.PRICE_IN_RANGE,
+            trigger_price_low=Decimal("115"),
+            trigger_price_high=Decimal("120"),
+        ),
+        sizing=SizingIntent(mode=SizingMode.MAX_NOTIONAL, max_notional=Decimal("500")),
+    )
+    _seed(engine, decision)
+
+    # Cycle 1: price outside the range - stays watchable, no intent yet.
+    outside_source = FakeSource({"BTCUSDT": _quote("BTCUSDT", Decimal("108"))})
+    first = asyncio.run(drain_gil_decision_inbox(engine, outside_source))
+    assert first[0].outcome == "WAITING_EVIDENCE"
+    assert engine.gil_decision_inbox_status("gil-buy-zone").status.value == "PENDING_DRAIN"
+    assert engine.pending_intent_ids() == ()
+
+    # Cycle 2: price inside the range - derives quantity from evidence,
+    # submits exactly once.
+    inside_source = FakeSource({"BTCUSDT": _quote("BTCUSDT", Decimal("117"))})
+    second = asyncio.run(drain_gil_decision_inbox(engine, inside_source))
+    assert second[0].outcome == "PENDING"
+    intent = engine.get_intent(intent_id_for("gil-buy-zone"))
+    assert intent.quantity == Decimal("500") / Decimal("117")
+    assert engine.gil_decision_inbox_status("gil-buy-zone").status.value == "PROCESSED"
+
+    # Cycle 3: already resolved - must not resubmit or duplicate.
+    third = asyncio.run(drain_gil_decision_inbox(engine, inside_source))
+    assert third == ()
+    assert len(engine.pending_intent_ids()) == 1
+
+
+def test_risk_budget_from_stop_sizing_derives_quantity_from_evidence_and_stop_distance(engine):
+    # The dispatch's own canonical example: BTC Futures sized from a
+    # max planned loss and the decision's own stop distance.
+    decision = _decision(
+        decision_id="gil-risk-budget",
+        stop_loss=Decimal("95"),
+        quantity=None,
+        sizing=SizingIntent(mode=SizingMode.RISK_BUDGET_FROM_STOP, risk_budget_amount=Decimal("10")),
+    )
+    _seed(engine, decision)
+    source = FakeSource({"BTCUSDT": _quote("BTCUSDT", Decimal("100"))})
+
+    results = asyncio.run(drain_gil_decision_inbox(engine, source))
+
+    assert results[0].outcome == "PENDING"
+    intent = engine.get_intent(intent_id_for("gil-risk-budget"))
+    # distance = |100 - 95| = 5; quantity = risk_budget(10) / distance(5) = 2.
+    assert intent.quantity == Decimal("2")
+
+
+def test_risk_budget_from_stop_with_zero_distance_stays_watchable_never_guessed(engine):
+    decision = _decision(
+        decision_id="gil-zero-distance",
+        stop_loss=Decimal("100"),
+        quantity=None,
+        sizing=SizingIntent(mode=SizingMode.RISK_BUDGET_FROM_STOP, risk_budget_amount=Decimal("10")),
+    )
+    _seed(engine, decision)
+    source = FakeSource({"BTCUSDT": _quote("BTCUSDT", Decimal("100"))})  # price == stop_loss
+
+    results = asyncio.run(drain_gil_decision_inbox(engine, source))
+
+    assert results[0].outcome == "WAITING_EVIDENCE"
+    assert "zero stop distance" in results[0].detail
+    assert engine.gil_decision_inbox_status("gil-zero-distance").status.value == "PENDING_DRAIN"
+    assert engine.pending_intent_ids() == ()
+
+
+def test_trigger_and_sizing_decision_replay_restart_remains_idempotent(tmp_path):
+    db_path = tmp_path / "experiment1.db"
+    first_engine = Experiment1Engine(db_path)
+    decision = _decision(
+        decision_id="gil-replay-restart",
+        quantity=None,
+        trigger=ExecutionTrigger(trigger_type=TriggerType.PRICE_AT_OR_ABOVE, trigger_price=Decimal("100")),
+        sizing=SizingIntent(mode=SizingMode.MAX_NOTIONAL, max_notional=Decimal("300")),
+    )
+    _seed(first_engine, decision)
+    source = FakeSource({"BTCUSDT": _quote("BTCUSDT", Decimal("100"))})
+    asyncio.run(drain_gil_decision_inbox(first_engine, source))
+    state_before_restart = first_engine.account_state(AccountKind.FUTURES)
+
+    # Restart: a fresh Engine instance over the same db file.
+    second_engine = Experiment1Engine(db_path)
+    assert second_engine.account_state(AccountKind.FUTURES) == state_before_restart
+    assert len(second_engine.positions(AccountKind.FUTURES)) == 0  # PENDING, not yet filled
+
+    # Replay: resubmitting the identical decision again is a no-op.
+    second_engine.receive_gil_decision(decision.decision_id, decision_to_json(decision))
+    assert asyncio.run(drain_gil_decision_inbox(second_engine, source)) == ()
     assert len(second_engine.pending_intent_ids()) == 1

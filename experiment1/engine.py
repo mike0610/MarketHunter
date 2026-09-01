@@ -654,6 +654,20 @@ class Experiment1Engine:
                 ),
             )
 
+    def record_gil_decision_watch(self, decision_id: str, reason: str) -> None:
+        """
+        Record why a PENDING_DRAIN envelope did not resolve this cycle
+        (trigger unmet, no fresh quote, sizing not yet resolvable) -
+        deliberately leaves status/outcome/intent_id untouched, so the
+        row stays watchable and is re-evaluated on the next drain
+        cycle, rather than being marked PROCESSED/terminal.
+        """
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE experiment1_gil_decision_inbox SET outcome_reason=? WHERE decision_id=?",
+                (reason, decision_id),
+            )
+
     def gil_decision_inbox_status(self, decision_id: str) -> GilInboxRecord | None:
         with self._connect() as conn:
             row = conn.execute(

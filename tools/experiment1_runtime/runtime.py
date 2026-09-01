@@ -43,10 +43,15 @@ Fail-closed contract:
 - No decision is manufactured to prove GIL ingestion "works" - a
   cycle with zero pending GIL decisions is a normal, successful,
   no-action outcome, not a failure to work around.
-- A decision carrying an execution_condition is never guessed into an
-  executable order - drain_gil_decision_inbox fails it closed as
-  WAITING_EVIDENCE, since no evaluator exists that can objectively
-  verify an arbitrary condition against approved market evidence.
+- A decision carrying an execution_condition (a subjective condition
+  GIL could not structure) is never guessed into an executable order -
+  it fails closed as WAITING_EVIDENCE, since no evaluator exists that
+  can objectively verify an arbitrary condition against approved market
+  evidence.
+- A decision carrying a structured ExecutionTrigger not yet satisfied,
+  or a sizing mode that needs a fresh quote that is not currently
+  available, stays PENDING_DRAIN and is re-evaluated next cycle - it is
+  never submitted early and never guessed at.
 """
 
 from __future__ import annotations
@@ -151,7 +156,7 @@ async def run_experiment1_cycle(
     # PENDING intent before this same pass's market fill cycle runs,
     # rather than waiting for the next timer tick. An empty result
     # (nothing PENDING_DRAIN) is a normal, successful outcome.
-    gil_ingestion_results = drain_gil_decision_inbox(engine)
+    gil_ingestion_results = await drain_gil_decision_inbox(engine, quote_source)
 
     market_fill_results = await run_market_cycle(engine, quote_source)
 

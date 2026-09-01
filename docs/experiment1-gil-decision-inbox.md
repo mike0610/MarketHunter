@@ -10,7 +10,9 @@ This endpoint is a durable receipt only - it never submits an intent or executes
 
 `decision_id` is the idempotency key. Resubmitting the identical payload under the same `decision_id` is a no-op that returns the already-recorded state; resubmitting a different payload under the same `decision_id` is a `409` conflict.
 
-### Example request
+Exactly one of `quantity` (a fixed amount GIL already decided) or `sizing` (resolved from fresh evidence, see below) must be provided.
+
+### Example request - immediate, fixed quantity (unchanged from the original contract)
 
 ```json
 POST /experiment1/gil-decisions
@@ -27,6 +29,53 @@ POST /experiment1/gil-decisions
   "take_profit": "65000"
 }
 ```
+
+### Example request - price buy-zone plus a max-notional tranche
+
+No `quantity` up front - GIL specifies a price range and a notional cap; MarketHunter derives the exact quantity once a fresh quote lands inside the range.
+
+```json
+POST /experiment1/gil-decisions
+{
+  "decision_id": "gil-2026-09-01-croix-tranche-1",
+  "decided_at": "2026-09-01T12:00:00+00:00",
+  "account": "INVESTMENTS_GROWTH",
+  "action": "BUY",
+  "symbol": "CROXUSDT",
+  "thesis": "first Growth tranche in the CROX buy zone",
+  "trigger": {
+    "trigger_type": "PRICE_IN_RANGE",
+    "trigger_price_low": "115",
+    "trigger_price_high": "120"
+  },
+  "sizing": {
+    "mode": "MAX_NOTIONAL",
+    "max_notional": "500"
+  }
+}
+```
+
+### Example request - Futures sized from a stop-distance risk budget
+
+```json
+POST /experiment1/gil-decisions
+{
+  "decision_id": "gil-2026-09-01-btc-risk-budget",
+  "decided_at": "2026-09-01T12:00:00+00:00",
+  "account": "FUTURES",
+  "action": "LONG",
+  "symbol": "BTCUSDT",
+  "thesis": "BTC Futures long, sized to ~0.5% planned loss of the Futures ledger",
+  "leverage": "2",
+  "stop_loss": "58000",
+  "sizing": {
+    "mode": "RISK_BUDGET_FROM_STOP",
+    "risk_budget_amount": "10"
+  }
+}
+```
+
+`quantity = risk_budget_amount / abs(evidence_price - stop_loss)` - deterministic from GIL's own `stop_loss` plus fresh, approved market evidence only. If evidence price ever equals `stop_loss` exactly (zero stop distance), this cannot resolve and stays `WAITING_EVIDENCE`/watchable rather than dividing by zero or guessing.
 
 ### Example response (`200`, durable receipt only - not yet processed)
 
@@ -62,7 +111,7 @@ Once a drain cycle has run:
 }
 ```
 
-`status` is the inbox envelope's own lifecycle: `PENDING_DRAIN` (received, not yet processed), `PROCESSED` (a drain cycle ran it), or `MALFORMED` (had a `decision_id` but failed `GilDecision`'s own domain validation - e.g. a non-timezone-aware `decided_at` - and never reaches drain).
+`status` is the inbox envelope's own lifecycle: `PENDING_DRAIN` (received, not yet resolved - see "watchable decisions" below), `PROCESSED` (a drain cycle resolved it terminally), or `MALFORMED` (had a `decision_id` but failed `GilDecision`'s own domain validation - e.g. a non-timezone-aware `decided_at`, or a trigger/sizing shape missing its required field - and never reaches drain).
 
 `outcome`, once `PROCESSED`, is one of:
 
@@ -71,9 +120,27 @@ Once a drain cycle has run:
 | `PENDING` | accepted, submitted as a pending intent - existing risk validation passed, awaiting a paper fill through the existing market cycle |
 | `NO_ACTION` | a `WAIT`/`HOLD` decision - recorded, never executable |
 | `BLOCKED` | rejected by MarketHunter's existing account/leverage/margin policy (see `outcome_reason` for the exact reason) - no fill created |
-| `WAITING_EVIDENCE` | the decision carried an `execution_condition`; no evaluator exists anywhere in this codebase that can objectively verify an arbitrary condition against approved market evidence, so it is never guessed into an executable order - the condition is preserved in the stored envelope for a future evaluator, not discarded |
+| `WAITING_EVIDENCE` (terminal) | the decision carried an `execution_condition` - a subjective condition GIL could not structure (e.g. "confirmed reclaim with continuation evidence"). No evaluator exists anywhere in this codebase that can objectively verify arbitrary text against market evidence, so it is never guessed into an executable order - the condition is preserved in the stored envelope for a future evaluator, not discarded |
 
 `intent_id` is the deterministic mapping `gil-decision:{decision_id}` - the full audit provenance trail back to the originating GIL decision, recoverable in either direction without a separate lookup table (see `experiment1.gil_decision.intent_id_for` / `decision_id_from`).
+
+## Structured execution triggers and sizing
+
+`trigger` (optional `ExecutionTrigger`) is a closed, structured, objectively-evaluable-from-evidence gate - `trigger_type` is one of `IMMEDIATE` (default when omitted - existing behavior, submit as soon as risk-validated), `PRICE_AT_OR_ABOVE`, `PRICE_AT_OR_BELOW`, or `PRICE_IN_RANGE`. A `note` field carries any richer free-text context GIL wants attached for human readability - it is **never** evaluated, only the structured price field(s) gate execution.
+
+`sizing` (optional `SizingIntent`, mutually exclusive with `quantity`) is one of:
+
+| mode | resolves to |
+|---|---|
+| `EXACT_QUANTITY` | `exact_quantity` verbatim - no evidence needed |
+| `MAX_NOTIONAL` | `max_notional / evidence_price`, once a fresh quote exists |
+| `RISK_BUDGET_FROM_STOP` | `risk_budget_amount / abs(evidence_price - stop_loss)` - requires the decision's own `stop_loss` |
+
+### Watchable decisions
+
+A decision whose trigger is not yet satisfied, or whose sizing needs a fresh quote that isn't currently available, **stays `PENDING_DRAIN`** rather than becoming a terminal outcome - `outcome_reason` is updated each cycle to explain the current wait (e.g. `"trigger PRICE_IN_RANGE not yet satisfied at price 108"`), but `status`/`outcome`/`intent_id` are left alone. The next scheduled drain cycle re-checks it against fresh evidence automatically - no resubmission needed. Once the trigger is satisfied and (if applicable) a quantity is deterministically resolved, it is submitted exactly once, moving to `status: PROCESSED`.
+
+A stale, missing, or unsupported quote for the decision's symbol produces the same watchable `WAITING_EVIDENCE` result as an unmet trigger - never a fabricated mark, never a guess.
 
 ## What this closes, and what remains
 

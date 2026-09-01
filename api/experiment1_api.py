@@ -10,7 +10,18 @@ from pydantic import BaseModel, Field
 
 from experiment1.engine import Experiment1Engine, Experiment1Error
 from experiment1.gil_decision import decision_to_json
-from experiment1.models import AccountKind, DecisionAction, GilDecision, GilInboxRecord, MarketQuote, OrderIntent
+from experiment1.models import (
+    AccountKind,
+    DecisionAction,
+    ExecutionTrigger,
+    GilDecision,
+    GilInboxRecord,
+    MarketQuote,
+    OrderIntent,
+    SizingIntent,
+    SizingMode,
+    TriggerType,
+)
 
 
 router = APIRouter(prefix="/experiment1", tags=["experiment1"])
@@ -34,6 +45,25 @@ class IntentRequest(BaseModel):
     take_profit: Decimal | None = Field(default=None, gt=0)
 
 
+class ExecutionTriggerRequest(BaseModel):
+    """Mirrors experiment1.models.ExecutionTrigger - a structured, objectively-evaluable execution gate."""
+
+    trigger_type: TriggerType
+    trigger_price: Decimal | None = Field(default=None, gt=0)
+    trigger_price_low: Decimal | None = Field(default=None, gt=0)
+    trigger_price_high: Decimal | None = Field(default=None, gt=0)
+    note: str | None = Field(default=None, min_length=1)
+
+
+class SizingIntentRequest(BaseModel):
+    """Mirrors experiment1.models.SizingIntent - GIL's canonical sizing intent."""
+
+    mode: SizingMode
+    exact_quantity: Decimal | None = Field(default=None, gt=0)
+    max_notional: Decimal | None = Field(default=None, gt=0)
+    risk_budget_amount: Decimal | None = Field(default=None, gt=0)
+
+
 class GilDecisionRequest(BaseModel):
     """
     The canonical GIL Decision Inbox contract: POST /experiment1/gil-decisions.
@@ -42,6 +72,11 @@ class GilDecisionRequest(BaseModel):
     already-decided DecisionAction enum, so free-text research states
     (CANDIDATE, WATCH, ...) are rejected by FastAPI's own schema
     validation before ever reaching domain logic, never coerced.
+
+    Exactly one of `quantity` (a fixed amount GIL already decided) or
+    `sizing` (resolved from fresh evidence - see SizingIntentRequest)
+    must be provided. `trigger` is optional - omitted or IMMEDIATE means
+    submit as soon as risk-validated, matching the original behavior.
     """
 
     decision_id: str = Field(min_length=1)
@@ -50,11 +85,13 @@ class GilDecisionRequest(BaseModel):
     action: DecisionAction
     symbol: str = Field(min_length=1)
     thesis: str = Field(min_length=1)
-    quantity: Decimal = Field(ge=0)
+    quantity: Decimal | None = Field(default=None, ge=0)
     leverage: Decimal = Field(default=Decimal("1"), gt=0)
     stop_loss: Decimal | None = Field(default=None, gt=0)
     take_profit: Decimal | None = Field(default=None, gt=0)
     execution_condition: str | None = Field(default=None, min_length=1)
+    trigger: ExecutionTriggerRequest | None = None
+    sizing: SizingIntentRequest | None = None
 
 
 class QuoteRequest(BaseModel):
@@ -123,7 +160,21 @@ def submit_gil_decision(payload: GilDecisionRequest):
     """
     engine = _engine()
     try:
-        decision = GilDecision(**payload.model_dump())
+        decision = GilDecision(
+            decision_id=payload.decision_id,
+            decided_at=payload.decided_at,
+            account=payload.account,
+            action=payload.action,
+            symbol=payload.symbol,
+            thesis=payload.thesis,
+            quantity=payload.quantity,
+            leverage=payload.leverage,
+            stop_loss=payload.stop_loss,
+            take_profit=payload.take_profit,
+            execution_condition=payload.execution_condition,
+            trigger=None if payload.trigger is None else ExecutionTrigger(**payload.trigger.model_dump()),
+            sizing=None if payload.sizing is None else SizingIntent(**payload.sizing.model_dump()),
+        )
     except ValueError as exc:
         try:
             engine.record_malformed_gil_decision(payload.decision_id, payload.model_dump_json(), str(exc))

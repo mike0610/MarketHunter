@@ -36,7 +36,7 @@ def main(job_path,out_dir):
         try:r=urllib.request.urlopen(u,timeout=30).read()
         except:return None
         z=zipfile.ZipFile(io.BytesIO(r));d=pd.read_csv(z.open(z.namelist()[0]),header=None)
-        d=d.iloc[:,:5];d.columns=['open_time','open','high','low','close'];unit='us' if d.open_time.iloc[0]>10**14 else 'ms';d['time']=pd.to_datetime(d.open_time,unit=unit,utc=True)
+        d=d.iloc[:,:5];d.columns=['open_time','open','high','low','close'];d['open_time']=pd.to_numeric(d['open_time'],errors='coerce');d=d.dropna(subset=['open_time']);unit='us' if d.open_time.iloc[0]>10**14 else 'ms';d['time']=pd.to_datetime(d.open_time,unit=unit,utc=True)
         for c in ['open','high','low','close']:d[c]=pd.to_numeric(d[c],errors='coerce')
         return d[['time','open','high','low','close']]
     K=[]

@@ -1,0 +1,7 @@
+{
+  "object_id": "SL-VAL-MULTI-TIMEFRAME-ALIGNMENT-001",
+  "status": "FROZEN",
+  "executor": "vps",
+  "timeout_minutes": 15,
+  "terminal_states": ["OUTCOME-COMPLETE", "EVIDENCE-FAIL", "PROVIDER-BLOCKED"]
+}

@@ -1,1 +1,17 @@
-{"object_id":"SL-VAL-TREND-PULLBACK-UNIVERSE-001","hypothesis":"The frozen BTC trend-pullback mechanism remains economically positive across an untouched liquid legacy-alt universe without parameter changes.","parent_object":"SL-VAL-TREND-PULLBACK-001","symbols":["BNBUSDT","XRPUSDT","LTCUSDT","ADAUSDT","BCHUSDT"],"timeframe":"4h","warm_start":"2020-01-01","start":"2021-01-01","split":"2025-01-01","end":"2026-08-01","frozen_parameters":{"trend_bars":180,"pullback_bars":3,"rolling_bars":1080,"quantile":0.9,"hold_bars":12,"decluster_bars":18,"cost":0.001,"cost_stress":0.002},"decision_policy":{"minimum_total_oos_trades":100,"minimum_supported_assets":3,"supported_asset_rule":"OOS 10bps mean>0 and PF>1 and OOS 20bps mean>0","aggregate_rule":"pooled OOS 10bps mean>0 and PF>1 and pooled OOS 20bps mean>0","terminal_if_pass":"UNIVERSE-SUPPORTED","terminal_if_fail":"UNIVERSE-FAILED"},"parameter_tuning":false,"timeout_minutes":45}
+{
+  "object_id": "SL-VAL-TREND-PULLBACK-UNIVERSE-001",
+  "hypothesis": "The frozen BTC trend-pullback mechanism remains economically positive across an untouched liquid legacy-alt universe without parameter changes.",
+  "parent_object": "SL-VAL-TREND-PULLBACK-001",
+  "symbols": ["BNBUSDT", "XRPUSDT", "LTCUSDT", "ADAUSDT", "BCHUSDT"],
+  "timeframe": "4h",
+  "warm_start": "2020-01-01",
+  "start": "2021-01-01",
+  "split": "2025-01-01",
+  "end": "2026-08-01",
+  "frozen_parameters": {"trend_bars": 180, "pullback_bars": 3, "rolling_bars": 1080, "quantile": 0.9, "hold_bars": 12, "decluster_bars": 18, "cost": 0.001, "cost_stress": 0.002},
+  "decision_policy": {"minimum_total_oos_trades": 100, "minimum_supported_assets": 3, "supported_asset_rule": "OOS 10bps mean>0 and PF>1 and OOS 20bps mean>0", "aggregate_rule": "pooled OOS 10bps mean>0 and PF>1 and pooled OOS 20bps mean>0", "terminal_if_pass": "UNIVERSE-SUPPORTED", "terminal_if_fail": "UNIVERSE-FAILED"},
+  "parameter_tuning": false,
+  "executor": "vps",
+  "terminal_states": ["OUTCOME-COMPLETE", "PROVIDER-BLOCKED"],
+  "timeout_minutes": 20
+}

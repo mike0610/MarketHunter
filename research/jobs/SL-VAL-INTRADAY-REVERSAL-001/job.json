@@ -1,5 +1,6 @@
 {
   "object_id": "SL-VAL-INTRADAY-REVERSAL-001",
+  "status": "FROZEN",
   "executor": "vps",
   "timeout_minutes": 10,
   "terminal_states": ["OUTCOME-COMPLETE", "EVIDENCE-FAIL", "PROVIDER-BLOCKED"]

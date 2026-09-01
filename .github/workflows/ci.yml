@@ -90,6 +90,7 @@ jobs:
             tests/test_experiment1_cost_provenance.py \
             tests/test_experiment1_runtime.py \
             tests/test_experiment1_mtm.py \
+            tests/test_experiment1_gil_decision.py \
             tests/test_experiment1_lifecycle.py \
             tests/test_strategy_runtime_release_manifest.py \
             tests/test_strategy_execution_binding.py \

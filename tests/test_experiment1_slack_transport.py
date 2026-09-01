@@ -10,6 +10,7 @@ from experiment1.slack_transport import (
     CANONICAL_CHANNEL_ID,
     CANONICAL_GIL_USER_ID,
     CHATGPT_CONNECTOR_FOOTER,
+    CHATGPT_CONNECTOR_RENDERED_FOOTER,
     MARKER,
     SlackTransportConfig,
     parse_structured_envelope,
@@ -49,8 +50,8 @@ def _envelope(decision):
     return f"{MARKER}\n```json\n{decision_to_json(decision)}\n```"
 
 
-def _connector_envelope(decision):
-    return f"{MARKER}\n```{decision_to_json(decision)}```\n{CHATGPT_CONNECTOR_FOOTER}"
+def _connector_envelope(decision, footer=CHATGPT_CONNECTOR_FOOTER):
+    return f"{MARKER}\n```{decision_to_json(decision)}```\n{footer}"
 
 
 def _message(ts, text, **extra):
@@ -78,9 +79,15 @@ def test_parser_round_trips_exact_canonical_envelope():
     assert parse_structured_envelope(_envelope(decision)) == decision_to_json(decision)
 
 
-def test_parser_round_trips_actual_chatgpt_slack_connector_rendering():
-    decision = _wait_decision("connector-form")
+def test_parser_round_trips_raw_slack_api_connector_rendering():
+    decision = _wait_decision("connector-raw-form")
     assert parse_structured_envelope(_connector_envelope(decision)) == decision_to_json(decision)
+
+
+def test_parser_round_trips_enriched_connector_read_rendering():
+    decision = _wait_decision("connector-rendered-form")
+    text = _connector_envelope(decision, CHATGPT_CONNECTOR_RENDERED_FOOTER)
+    assert parse_structured_envelope(text) == decision_to_json(decision)
 
 
 def test_parser_rejects_connector_form_with_extra_prose():

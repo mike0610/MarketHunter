@@ -87,6 +87,7 @@ jobs:
             tests/test_experiment1_watcher.py \
             tests/test_experiment1_market_source.py \
             tests/test_experiment1_market_data_providers.py \
+            tests/test_experiment1_cost_provenance.py \
             tests/test_experiment1_runtime.py \
             tests/test_experiment1_lifecycle.py \
             tests/test_strategy_runtime_release_manifest.py \

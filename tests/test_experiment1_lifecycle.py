@@ -45,7 +45,7 @@ def _open_spot(engine, now):
     return entry
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_spot_take_profit_closes_position(tmp_path):
     engine = Experiment1Engine(tmp_path / "experiment1.db")
     now = datetime(2026, 9, 1, tzinfo=timezone.utc)
@@ -61,7 +61,7 @@ async def test_spot_take_profit_closes_position(tmp_path):
     assert engine.positions(AccountKind.SPOT) == ()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_no_trigger_keeps_position_active(tmp_path):
     engine = Experiment1Engine(tmp_path / "experiment1.db")
     now = datetime(2026, 9, 1, tzinfo=timezone.utc)
@@ -77,7 +77,7 @@ async def test_no_trigger_keeps_position_active(tmp_path):
     assert engine.positions(AccountKind.SPOT)[0].quantity == Decimal("0.01")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_futures_short_stop_loss_closes_position(tmp_path):
     engine = Experiment1Engine(tmp_path / "experiment1.db")
     now = datetime(2026, 9, 1, tzinfo=timezone.utc)

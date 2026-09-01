@@ -9,6 +9,7 @@ from experiment1.models import AccountKind, DecisionAction, GilDecision
 from experiment1.slack_transport import (
     CANONICAL_CHANNEL_ID,
     CANONICAL_GIL_USER_ID,
+    CHATGPT_CONNECTOR_FOOTER,
     MARKER,
     SlackTransportConfig,
     parse_structured_envelope,
@@ -48,6 +49,10 @@ def _envelope(decision):
     return f"{MARKER}\n```json\n{decision_to_json(decision)}\n```"
 
 
+def _connector_envelope(decision):
+    return f"{MARKER}\n```{decision_to_json(decision)}```\n{CHATGPT_CONNECTOR_FOOTER}"
+
+
 def _message(ts, text, **extra):
     result = {
         "ts": ts,
@@ -71,6 +76,28 @@ def test_parser_requires_entire_message_to_be_machine_envelope():
 def test_parser_round_trips_exact_canonical_envelope():
     decision = _wait_decision()
     assert parse_structured_envelope(_envelope(decision)) == decision_to_json(decision)
+
+
+def test_parser_round_trips_actual_chatgpt_slack_connector_rendering():
+    decision = _wait_decision("connector-form")
+    assert parse_structured_envelope(_connector_envelope(decision)) == decision_to_json(decision)
+
+
+def test_parser_rejects_connector_form_with_extra_prose():
+    decision = _wait_decision("connector-extra")
+    assert parse_structured_envelope(f"{_connector_envelope(decision)}\nextra prose") is None
+
+
+def test_parser_rejects_connector_form_with_lookalike_footer():
+    decision = _wait_decision("connector-fake-footer")
+    text = f"{MARKER}\n```{decision_to_json(decision)}```\n*Sent using* <@UOTHER|ChatGPT>"
+    assert parse_structured_envelope(text) is None
+
+
+def test_parser_rejects_malformed_connector_json():
+    text = f'{MARKER}\n```{{"decision_id":}}```\n{CHATGPT_CONNECTOR_FOOTER}'
+    with pytest.raises(Exception):
+        parse_structured_envelope(text)
 
 
 def test_first_poll_bootstraps_without_backfilling_historic_messages(tmp_path):
@@ -110,6 +137,24 @@ def test_exact_wait_envelope_is_forwarded_to_existing_durable_inbox(tmp_path):
     decision = _wait_decision("gil-new-wait")
     summary = poll_slack_gil_decisions(
         engine, FakeSlackClient([_message("101.000001", _envelope(decision))]), config=config
+    )
+
+    assert summary.accepted == 1
+    record = engine.gil_decision_inbox_status(decision.decision_id)
+    assert record is not None
+    assert record.status.value == "PENDING_DRAIN"
+
+
+def test_connector_wait_envelope_is_forwarded_to_existing_durable_inbox(tmp_path):
+    engine = Experiment1Engine(tmp_path / "experiment1.db")
+    config = SlackTransportConfig(checkpoint_path=tmp_path / "checkpoint.json")
+    poll_slack_gil_decisions(engine, FakeSlackClient([]), config=config)
+
+    decision = _wait_decision("gil-connector-wait")
+    summary = poll_slack_gil_decisions(
+        engine,
+        FakeSlackClient([_message("101.000001", _connector_envelope(decision))]),
+        config=config,
     )
 
     assert summary.accepted == 1

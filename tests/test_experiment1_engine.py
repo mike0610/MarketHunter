@@ -7,7 +7,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from experiment1.engine import Experiment1Engine, Experiment1Error
-from experiment1.models import AccountKind, DecisionAction, MarketQuote, OrderIntent
+from experiment1.models import AccountKind, DecisionAction, GilInboxStatus, MarketQuote, OrderIntent
 
 
 NOW = datetime(2026, 9, 1, 3, 0, tzinfo=timezone.utc)
@@ -804,6 +804,72 @@ class Experiment1RepriceTests(unittest.TestCase):
         state = self.engine.reprice_open_positions(AccountKind.FUTURES, {"BTCUSDT": Decimal("100")})
 
         self.assertEqual(state.last_equity, equity_from_fill)
+
+
+class Experiment1GilInboxTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.engine = Experiment1Engine(Path(self.tmp.name) / "experiment1.db")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_receive_gil_decision_persists_a_pending_drain_row(self) -> None:
+        record = self.engine.receive_gil_decision("gil-1", '{"a":1}', now=NOW)
+
+        self.assertEqual(record.decision_id, "gil-1")
+        self.assertEqual(record.status, GilInboxStatus.PENDING_DRAIN)
+        self.assertIsNone(record.outcome)
+        self.assertEqual(record.received_at, NOW)
+        self.assertEqual(self.engine.pending_gil_decision_inbox(), (("gil-1", '{"a":1}'),))
+
+    def test_receive_gil_decision_is_idempotent_on_identical_resubmission(self) -> None:
+        first = self.engine.receive_gil_decision("gil-1", '{"a":1}', now=NOW)
+        second = self.engine.receive_gil_decision("gil-1", '{"a":1}', now=NOW + timedelta(minutes=5))
+
+        self.assertEqual(first, second)
+        self.assertEqual(len(self.engine.pending_gil_decision_inbox()), 1)
+
+    def test_receive_gil_decision_rejects_a_decision_id_reused_with_different_content(self) -> None:
+        self.engine.receive_gil_decision("gil-1", '{"a":1}', now=NOW)
+        with self.assertRaises(Experiment1Error):
+            self.engine.receive_gil_decision("gil-1", '{"a":2}', now=NOW)
+
+    def test_record_malformed_gil_decision_persists_a_malformed_row_never_pending_drain(self) -> None:
+        record = self.engine.record_malformed_gil_decision(
+            "gil-bad", '{"decision_id":"gil-bad"}', "decided_at must be timezone-aware", now=NOW
+        )
+
+        self.assertEqual(record.status, GilInboxStatus.MALFORMED)
+        self.assertEqual(record.outcome_reason, "decided_at must be timezone-aware")
+        self.assertEqual(self.engine.pending_gil_decision_inbox(), ())
+
+    def test_mark_gil_decision_processed_updates_status_outcome_and_intent_id(self) -> None:
+        self.engine.receive_gil_decision("gil-1", '{"a":1}', now=NOW)
+        self.engine.mark_gil_decision_processed(
+            "gil-1", outcome="PENDING", outcome_reason=None, intent_id="gil-decision:gil-1", now=NOW + timedelta(minutes=1)
+        )
+
+        record = self.engine.gil_decision_inbox_status("gil-1")
+        self.assertEqual(record.status, GilInboxStatus.PROCESSED)
+        self.assertEqual(record.outcome, "PENDING")
+        self.assertEqual(record.intent_id, "gil-decision:gil-1")
+        self.assertEqual(record.processed_at, NOW + timedelta(minutes=1))
+        self.assertEqual(self.engine.pending_gil_decision_inbox(), ())
+
+    def test_gil_decision_inbox_status_returns_none_for_unknown_decision_id(self) -> None:
+        self.assertIsNone(self.engine.gil_decision_inbox_status("unknown"))
+
+    def test_gil_decision_inbox_survives_a_process_restart(self) -> None:
+        db_path = Path(self.tmp.name) / "restart.db"
+        first = Experiment1Engine(db_path)
+        first.receive_gil_decision("gil-1", '{"a":1}', now=NOW)
+        first.mark_gil_decision_processed("gil-1", outcome="PENDING", outcome_reason=None, intent_id="gil-decision:gil-1")
+
+        second = Experiment1Engine(db_path)
+        record = second.gil_decision_inbox_status("gil-1")
+        self.assertEqual(record.status, GilInboxStatus.PROCESSED)
+        self.assertEqual(record.outcome, "PENDING")
 
 
 class Experiment1RestartReplayTests(unittest.TestCase):

@@ -7,28 +7,34 @@ Module:
 The Experiment 1 recurring paper-runtime cycle - one bounded pass that
 a systemd timer invokes on a cadence (see deploy/systemd/). Each pass
 runs, in order:
-  1. market fill cycle (experiment1.runtime.run_market_cycle) - fresh
-     evidence for every PENDING intent, paper-fills what it can.
-  2. protective exit cycle (experiment1.lifecycle.run_protective_exit_cycle)
+  1. GIL-ingestion drain (experiment1.gil_decision.drain_gil_decision_inbox)
+     - automatically processes every envelope durably received via
+     POST /experiment1/gil-decisions since the last cycle, submitting
+     each as a PENDING intent (or NO_ACTION/BLOCKED/WAITING_EVIDENCE, as
+     applicable) before this same pass's fill step runs, so a freshly
+     ingested decision does not have to wait for the next cycle to be
+     eligible for a fill. No manual operator step: this is the "no
+     parallel execution path" automatic drain the GIL Decision Inbox
+     contract requires. A cycle that finds nothing PENDING_DRAIN is a
+     normal, successful, no-action outcome.
+  2. market fill cycle (experiment1.runtime.run_market_cycle) - fresh
+     evidence for every PENDING intent (including one just drained
+     above), paper-fills what it can.
+  3. protective exit cycle (experiment1.lifecycle.run_protective_exit_cycle)
      - re-checks every FILLED intent that carries a stop_loss/take_profit
      against fresh evidence.
-  3. multi-symbol MTM cycle (experiment1.mtm.run_mtm_cycle), once per
+  4. multi-symbol MTM cycle (experiment1.mtm.run_mtm_cycle), once per
      canonical account - recomputes NAV/equity/unrealized P&L/drawdown
      from fresh marks, fails closed to cost-basis fallback per symbol
      exactly as already built (never fabricates a mark).
-  4. GIL-ingestion cycle (experiment1.gil_decision.run_gil_ingestion_cycle)
-     - runs with an empty decision batch. No real GIL-decision transport
-     exists anywhere in this codebase yet (no API endpoint, no queue),
-     so there is nothing to ingest; this call exists only to prove the
-     wiring imports and runs safely every cycle, ready for a real
-     transport to be plugged in later without touching this script.
 
 This module adds no new trading/accounting/quote logic - every step
 above calls an already-merged, already-tested function unmodified.
 Idempotent and restart-safe by construction, inherited directly from
-each of those functions' own tested contracts (PRs #70, #74, #76, #77)
-- a duplicate or restarted invocation of this script cannot duplicate
-an intent, fill, exit, or MTM snapshot.
+each of those functions' own tested contracts (PRs #70, #74, #76, #77,
+plus the GIL Decision Inbox this module now drains) - a duplicate or
+restarted invocation of this script cannot duplicate an intent, fill,
+exit, MTM snapshot, or GIL-decision binding.
 
 Fail-closed contract:
 - A quote that is missing, stale, or for a symbol not recognized as a
@@ -37,6 +43,10 @@ Fail-closed contract:
 - No decision is manufactured to prove GIL ingestion "works" - a
   cycle with zero pending GIL decisions is a normal, successful,
   no-action outcome, not a failure to work around.
+- A decision carrying an execution_condition is never guessed into an
+  executable order - drain_gil_decision_inbox fails it closed as
+  WAITING_EVIDENCE, since no evaluator exists that can objectively
+  verify an arbitrary condition against approved market evidence.
 """
 
 from __future__ import annotations
@@ -51,7 +61,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from experiment1.engine import Experiment1Engine, Experiment1Error, STARTING_CASH
-from experiment1.gil_decision import GilIngestionResult, run_gil_ingestion_cycle
+from experiment1.gil_decision import GilIngestionResult, drain_gil_decision_inbox
 from experiment1.lifecycle import LifecycleResult, run_protective_exit_cycle
 from experiment1.market_data_providers import (
     AssetClass,
@@ -136,6 +146,13 @@ class Experiment1CycleSummary:
 async def run_experiment1_cycle(
     engine: Experiment1Engine, quote_source: AsyncQuoteSource
 ) -> Experiment1CycleSummary:
+    # Automatic drain of the durable GIL Decision Inbox FIRST - no
+    # manual operator step - so a freshly ingested decision becomes a
+    # PENDING intent before this same pass's market fill cycle runs,
+    # rather than waiting for the next timer tick. An empty result
+    # (nothing PENDING_DRAIN) is a normal, successful outcome.
+    gil_ingestion_results = drain_gil_decision_inbox(engine)
+
     market_fill_results = await run_market_cycle(engine, quote_source)
 
     protective_exit_results = await run_protective_exit_cycle(
@@ -152,10 +169,6 @@ async def run_experiment1_cycle(
             # not-yet-initialized account must never crash the whole
             # cycle for every other account.
             logger.warning("mtm cycle skipped for %s: %s", account.value, exc)
-
-    # No real GIL-decision transport exists yet (see module docstring) -
-    # an empty batch is a normal, successful outcome, never a failure.
-    gil_ingestion_results = run_gil_ingestion_cycle(engine, [])
 
     return Experiment1CycleSummary(
         market_fill_results, protective_exit_results, tuple(mtm_results), gil_ingestion_results

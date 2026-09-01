@@ -3,8 +3,9 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from experiment1.engine import Experiment1Engine
+from experiment1.gil_decision import decision_to_json
 from experiment1.market_data_providers import AssetClass, MultiAssetQuoteSource
-from experiment1.models import AccountKind, DecisionAction, MarketQuote, OrderIntent
+from experiment1.models import AccountKind, DecisionAction, GilDecision, MarketQuote, OrderIntent
 from experiment1.mtm import MtmCompleteness
 from tools.experiment1_runtime.runtime import (
     _classify,
@@ -111,15 +112,47 @@ def test_run_experiment1_cycle_fills_a_pending_crypto_intent_and_reprices_it(tmp
     assert futures_mtm.completeness is MtmCompleteness.FULLY_FRESH_EVIDENCE
 
 
-def test_run_experiment1_cycle_gil_ingestion_step_is_a_safe_no_op(tmp_path):
+def test_run_experiment1_cycle_gil_ingestion_step_is_a_safe_no_op_with_an_empty_inbox(tmp_path):
     engine = Experiment1Engine(tmp_path / "experiment1.db")
     source = FakeSource({})
 
     summary = asyncio.run(run_experiment1_cycle(engine, source))
 
-    # No real GIL-decision transport exists - an empty batch every cycle,
-    # never a manufactured decision to "prove" the step ran.
+    # Nothing was ever received via POST /experiment1/gil-decisions -
+    # an empty drain every cycle, never a manufactured decision to
+    # "prove" the step ran.
     assert summary.gil_ingestion_results == ()
+
+
+def test_run_experiment1_cycle_automatically_drains_a_durably_received_gil_decision(tmp_path):
+    engine = Experiment1Engine(tmp_path / "experiment1.db")
+    decision = GilDecision(
+        decision_id="gil-scheduler-1",
+        decided_at=NOW,
+        account=AccountKind.FUTURES,
+        action=DecisionAction.LONG,
+        symbol="BTCUSDT",
+        thesis="scheduler drain test",
+        quantity=Decimal("1"),
+        leverage=Decimal("2"),
+    )
+    # Durable receipt only - simulating what POST /experiment1/gil-decisions
+    # does, with no manual operator step to follow.
+    engine.receive_gil_decision(decision.decision_id, decision_to_json(decision))
+
+    source = FakeSource({"BTCUSDT": _quote("BTCUSDT", Decimal("100"), observed_at=NOW + timedelta(minutes=1))})
+    summary = asyncio.run(run_experiment1_cycle(engine, source))
+
+    assert summary.gil_ingestion_results[0].outcome == "PENDING"
+    assert summary.gil_ingestion_results[0].decision_id == "gil-scheduler-1"
+
+    record = engine.gil_decision_inbox_status("gil-scheduler-1")
+    assert record.status.value == "PROCESSED"
+
+    # The market fill cycle in the SAME pass already filled it - one
+    # cycle carries a decision all the way to a paper position, no
+    # manual step anywhere in between.
+    assert engine.positions(AccountKind.FUTURES)[0].symbol == "BTCUSDT"
 
 
 def test_run_experiment1_cycle_reprices_every_canonical_account(tmp_path):

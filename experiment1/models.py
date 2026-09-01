@@ -192,6 +192,15 @@ class GilDecision:
     not-yet-decided status (e.g. a research "CANDIDATE") can never be
     coerced into a trade action.
 
+    execution_condition is optional, opaque, caller-supplied text
+    describing a precondition GIL wants verified before execution (e.g.
+    "only if daily close confirms above X"). It is preserved as data
+    only - there is no evaluator anywhere in this codebase that can
+    objectively verify an arbitrary condition against market evidence,
+    so a decision carrying one is never guessed into an executable
+    order; see experiment1/gil_decision.py's drain_gil_decision_inbox,
+    which fails it closed as WAITING_EVIDENCE instead.
+
     See experiment1/gil_decision.py for the deterministic mapping into
     the canonical OrderIntent and the MarketHunter risk-validation step
     that follows.
@@ -207,9 +216,45 @@ class GilDecision:
     leverage: Decimal = Decimal("1")
     stop_loss: Decimal | None = None
     take_profit: Decimal | None = None
+    execution_condition: str | None = None
 
     def __post_init__(self) -> None:
         _nonblank(self.decision_id, "decision_id")
         _nonblank(self.symbol, "symbol")
         _nonblank(self.thesis, "thesis")
         _aware(self.decided_at, "decided_at")
+        if self.execution_condition is not None:
+            _nonblank(self.execution_condition, "execution_condition")
+
+
+class GilInboxStatus(str, Enum):
+    """
+    The durable GIL Decision Inbox's own lifecycle for one inbound
+    envelope - distinct from IntentStatus, which only exists once an
+    envelope has successfully become a GilDecision and been submitted.
+
+    PENDING_DRAIN: durably received, not yet processed by a drain cycle.
+    PROCESSED: a drain cycle has run it through ingest_gil_decision (or
+    resolved it as WAITING_EVIDENCE for an unverifiable
+    execution_condition) - see GilInboxRecord.outcome for the result.
+    MALFORMED: the envelope had a decision_id but failed GilDecision's
+    own domain validation (e.g. blank thesis, non-aware decided_at) -
+    never reaches drain, never becomes an OrderIntent.
+    """
+
+    PENDING_DRAIN = "PENDING_DRAIN"
+    PROCESSED = "PROCESSED"
+    MALFORMED = "MALFORMED"
+
+
+@dataclass(frozen=True, slots=True)
+class GilInboxRecord:
+    """One durable GIL Decision Inbox row, for status query/readback."""
+
+    decision_id: str
+    received_at: datetime
+    status: GilInboxStatus
+    outcome: str | None
+    outcome_reason: str | None
+    intent_id: str | None
+    processed_at: datetime | None

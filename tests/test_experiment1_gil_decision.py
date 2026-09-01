@@ -7,7 +7,10 @@ import pytest
 
 from experiment1.engine import Experiment1Engine, Experiment1Error
 from experiment1.gil_decision import (
+    decision_from_json,
     decision_id_from,
+    decision_to_json,
+    drain_gil_decision_inbox,
     ingest_gil_decision,
     intent_id_for,
     run_gil_ingestion_cycle,
@@ -291,3 +294,123 @@ def test_gil_originated_positions_preserve_independent_ledgers_and_mtm_completen
     # Each account's positions are its own - no cross-contamination.
     assert [p.symbol for p in engine.positions(AccountKind.FUTURES)] == ["BTCUSDT"]
     assert [p.symbol for p in engine.positions(AccountKind.SPOT)] == ["ETHUSDT"]
+
+
+# --- decision_to_json / decision_from_json round trip ------------------------
+
+def test_decision_to_json_round_trips_every_field():
+    decision = _decision(stop_loss=Decimal("90"), take_profit=Decimal("120"), execution_condition="daily close > 105")
+    restored = decision_from_json(decision_to_json(decision))
+    assert restored == decision
+
+
+def test_decision_to_json_round_trips_a_decision_with_no_optional_fields():
+    decision = _decision(decision_id="gil-minimal", stop_loss=None, take_profit=None, execution_condition=None)
+    restored = decision_from_json(decision_to_json(decision))
+    assert restored == decision
+
+
+def test_decision_to_json_is_deterministic_for_the_same_decision():
+    decision = _decision()
+    assert decision_to_json(decision) == decision_to_json(decision)
+
+
+# --- drain_gil_decision_inbox: the durable-inbox processing cycle -----------
+
+def _seed(engine, decision: GilDecision) -> None:
+    engine.receive_gil_decision(decision.decision_id, decision_to_json(decision))
+
+
+def test_drain_processes_a_valid_long_decision_to_pending(engine):
+    decision = _decision()
+    _seed(engine, decision)
+
+    results = drain_gil_decision_inbox(engine)
+
+    assert len(results) == 1
+    assert results[0].outcome == "PENDING"
+    intent_id = intent_id_for(decision.decision_id)
+    assert engine.pending_intent_ids() == (intent_id,)
+    record = engine.gil_decision_inbox_status(decision.decision_id)
+    assert record.status.value == "PROCESSED"
+    assert record.outcome == "PENDING"
+    assert record.intent_id == intent_id
+
+
+def test_drain_processes_a_wait_decision_to_no_action_never_executable(engine):
+    decision = _decision(decision_id="gil-wait", action=DecisionAction.WAIT, quantity=Decimal("0"))
+    _seed(engine, decision)
+
+    results = drain_gil_decision_inbox(engine)
+
+    assert results[0].outcome == "NO_ACTION"
+    assert engine.pending_intent_ids() == ()
+    with pytest.raises(Experiment1Error):
+        engine.execute_pending(intent_id_for(decision.decision_id), _quote("BTCUSDT", Decimal("100")))
+
+
+def test_drain_marks_a_conditional_decision_waiting_evidence_without_submitting_an_intent(engine):
+    decision = _decision(decision_id="gil-conditional", execution_condition="only if daily close confirms above 105")
+    _seed(engine, decision)
+
+    results = drain_gil_decision_inbox(engine)
+
+    assert results[0].outcome == "WAITING_EVIDENCE"
+    assert "no evaluator" in results[0].detail.lower()
+    # Never submitted - not pending, not blocked, no intent exists at all.
+    assert engine.pending_intent_ids() == ()
+    assert engine.blocked_intent_ids() == ()
+    with pytest.raises(Experiment1Error):
+        engine.get_intent(intent_id_for(decision.decision_id))
+
+    record = engine.gil_decision_inbox_status(decision.decision_id)
+    assert record.outcome == "WAITING_EVIDENCE"
+    assert record.status.value == "PROCESSED"
+
+
+def test_drain_marks_a_risk_blocked_decision_blocked_with_reason(engine):
+    decision = _decision(decision_id="gil-over-leverage", leverage=Decimal("10"))
+    _seed(engine, decision)
+
+    results = drain_gil_decision_inbox(engine)
+
+    assert results[0].outcome == "BLOCKED"
+    assert "3x" in results[0].detail
+    record = engine.gil_decision_inbox_status(decision.decision_id)
+    assert record.outcome == "BLOCKED"
+    assert "3x" in record.outcome_reason
+    intent_id = intent_id_for(decision.decision_id)
+    assert intent_id in engine.blocked_intent_ids()
+    assert engine.positions(AccountKind.FUTURES) == ()
+
+
+def test_drain_never_reprocesses_an_already_processed_decision(engine):
+    decision = _decision()
+    _seed(engine, decision)
+    drain_gil_decision_inbox(engine)
+
+    # No new envelope arrived - a second drain cycle must find nothing
+    # PENDING_DRAIN and must not resubmit/duplicate anything.
+    results = drain_gil_decision_inbox(engine)
+
+    assert results == ()
+    assert len(engine.pending_intent_ids()) == 1
+
+
+def test_drain_is_restart_safe_across_a_fresh_engine_instance(tmp_path):
+    db_path = tmp_path / "experiment1.db"
+    first_engine = Experiment1Engine(db_path)
+    decision = _decision()
+    _seed(first_engine, decision)
+    drain_gil_decision_inbox(first_engine)
+
+    second_engine = Experiment1Engine(db_path)
+    record = second_engine.gil_decision_inbox_status(decision.decision_id)
+    assert record.status.value == "PROCESSED"
+    assert record.outcome == "PENDING"
+
+    # Nothing left to drain, and re-seeding the identical decision is
+    # still idempotent on the restarted instance.
+    assert drain_gil_decision_inbox(second_engine) == ()
+    second_engine.receive_gil_decision(decision.decision_id, decision_to_json(decision))
+    assert len(second_engine.pending_intent_ids()) == 1

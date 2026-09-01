@@ -388,27 +388,74 @@ class Experiment1Engine:
         ).fetchall()
         return sum((Decimal(row["margin"]) for row in rows), Decimal("0"))
 
-    def _update_equity(self, conn: sqlite3.Connection, fill: FillRecord, mark_price: Decimal) -> None:
-        # Every open position must contribute to equity/exposure/drawdown -
-        # never silently drop a symbol just because it wasn't the one that
-        # triggered this fill. Only the fill's own symbol has a fresh
-        # mark_price here (execute_pending receives one quote, for the
-        # traded symbol only); every other open position is valued at its
-        # own recorded average_price (cost basis) instead - a conservative,
-        # non-fabricated stand-in, not a live re-quote. True continuous
-        # mark-to-market across all held symbols requires a scheduled quote
-        # poll per symbol, which this bounded fix does not add.
-        row = self._account_row(conn, fill.account); equity = Decimal(row["cash"])
-        positions = conn.execute("SELECT * FROM experiment1_positions WHERE account=?", (fill.account.value,)).fetchall()
+    def _recompute_equity(
+        self, conn: sqlite3.Connection, account: AccountKind, marks: dict[str, Decimal]
+    ) -> tuple[Decimal, Decimal]:
+        """
+        Deterministically recompute equity/unrealized P&L for `account`
+        from its cash plus every open position, valued at marks[symbol]
+        where a fresh mark was supplied this cycle, or at the position's
+        own recorded average_price (cost basis) otherwise - a
+        conservative, non-fabricated stand-in, never a synthetic price.
+        Persists peak_equity/last_equity/max_drawdown; returns
+        (equity, unrealized_pnl). Pure function of current position
+        state + marks, so calling it repeatedly with the same marks is
+        idempotent: peak_equity is a monotonic max, last_equity/
+        max_drawdown are plain overwrites of the same recomputed values.
+        """
+        row = self._account_row(conn, account)
+        equity = Decimal(row["cash"])
+        unrealized = Decimal("0")
+        positions = conn.execute("SELECT * FROM experiment1_positions WHERE account=?", (account.value,)).fetchall()
         for position in positions:
             qty = Decimal(position["quantity"])
-            if qty == 0: continue
+            if qty == 0:
+                continue
             avg = Decimal(position["average_price"])
-            mark = mark_price if position["symbol"] == fill.symbol else avg
-            equity += qty * mark if fill.account in NO_LEVERAGE_ACCOUNTS else (mark - avg) * qty
-        peak = max(Decimal(row["peak_equity"]), equity); drawdown = Decimal("0") if peak == 0 else (peak - equity) / peak
-        conn.execute("UPDATE experiment1_accounts SET peak_equity=?,last_equity=?,max_drawdown=? WHERE account=?",
-                     (str(peak),str(equity),str(max(Decimal(row["max_drawdown"]),drawdown)),fill.account.value))
+            mark = marks.get(position["symbol"], avg)
+            equity += qty * mark if account in NO_LEVERAGE_ACCOUNTS else (mark - avg) * qty
+            unrealized += qty * (mark - avg)
+        peak = max(Decimal(row["peak_equity"]), equity)
+        drawdown = Decimal("0") if peak == 0 else (peak - equity) / peak
+        conn.execute(
+            "UPDATE experiment1_accounts SET peak_equity=?,last_equity=?,max_drawdown=? WHERE account=?",
+            (str(peak), str(equity), str(max(Decimal(row["max_drawdown"]), drawdown)), account.value),
+        )
+        return equity, unrealized
+
+    def _update_equity(self, conn: sqlite3.Connection, fill: FillRecord, mark_price: Decimal) -> None:
+        # Only the fill's own symbol has a fresh mark_price here
+        # (execute_pending receives one quote, for the traded symbol
+        # only) - every other open position falls back to cost basis via
+        # _recompute_equity's own marks.get() default. Continuous
+        # mark-to-market across every held symbol, independent of which
+        # one just traded, is reprice_open_positions() below.
+        self._recompute_equity(conn, fill.account, {fill.symbol: mark_price})
+
+    def reprice_open_positions(self, account: AccountKind, marks: dict[str, Decimal]) -> AccountState:
+        """
+        Continuous multi-symbol mark-to-market: recompute NAV/equity/
+        drawdown for every currently open position in `account` from a
+        fresh-evidence mark per symbol, for as many open symbols as the
+        caller could gather quote evidence for this cycle - see
+        experiment1/mtm.py for the runtime cycle that gathers `marks`
+        from a live quote source and reports per-symbol evidence status.
+        A symbol with no entry in `marks` keeps its existing cost-basis
+        valuation, the same non-fabrication guarantee _update_equity
+        already applies to every symbol besides the one that just
+        traded - this method never invents a mark for missing evidence.
+
+        This never creates a fill, never changes cash/realized_pnl/
+        fees_paid/position quantities - it is a pure NAV snapshot, so
+        repeated calls with the same marks are idempotent by
+        construction, and restart-safe since all state lives in the db,
+        never in a caller-held object.
+        """
+        if any(price <= 0 for price in marks.values()):
+            raise Experiment1Error("mark price must be positive")
+        with self._connect() as conn:
+            self._recompute_equity(conn, account, marks)
+        return self.account_state(account)
 
     def account_state(self, account: AccountKind) -> AccountState:
         with self._connect() as conn:

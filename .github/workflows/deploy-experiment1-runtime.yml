@@ -6,6 +6,11 @@ on:
     branches: [master]
     paths:
       - ".github/workflows/deploy-experiment1-runtime.yml"
+      - "experiment1/slack_transport.py"
+      - "tools/experiment1_runtime/runtime.py"
+      - "deploy/systemd/experiment1-runtime.service"
+      - "deploy/systemd/experiment1-runtime.timer"
+      - "deploy/systemd/experiment1-runtime.env.example"
 
 permissions:
   contents: read
@@ -79,10 +84,20 @@ jobs:
           sudo systemctl is-active --quiet markethunter-api
           sudo systemctl enable --now experiment1-runtime.timer
 
+          echo '=== GIL SLACK TRANSPORT CONFIG ==='
+          ENV_FILE="$REPO/deploy/systemd/experiment1-runtime.env"
+          if [ -f "$ENV_FILE" ] && \
+             grep -q '^GIL_SLACK_TRANSPORT_ENABLED=1$' "$ENV_FILE" && \
+             grep -Eq '^GIL_SLACK_BOT_TOKEN=.+$' "$ENV_FILE"; then
+            echo 'gil_slack_transport_credentials=CONFIGURED'
+          else
+            echo 'gil_slack_transport_credentials=MISSING_OR_DISABLED'
+          fi
+
           echo '=== FIRST BOUNDED CYCLE ==='
           sudo systemctl start experiment1-runtime.service
           sudo systemctl is-failed experiment1-runtime.service >/dev/null && exit 4 || true
-          journalctl -u experiment1-runtime.service -n 80 --no-pager
+          journalctl -u experiment1-runtime.service -n 100 --no-pager
 
           echo '=== TIMER STATE ==='
           systemctl is-enabled experiment1-runtime.timer
@@ -126,7 +141,7 @@ jobs:
           sudo systemctl is-active --quiet experiment1-runtime.timer
           sudo systemctl start experiment1-runtime.service
           sudo systemctl is-failed experiment1-runtime.service >/dev/null && exit 8 || true
-          journalctl -u experiment1-runtime.service -n 120 --no-pager
+          journalctl -u experiment1-runtime.service -n 140 --no-pager
 
           echo '=== READ-ONLY EXPERIMENT1 DB AUDIT ==='
           "$REPO/.venv/bin/python" - <<'PY'

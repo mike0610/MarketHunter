@@ -65,8 +65,7 @@ def test_parser_ignores_ordinary_gil_research_text():
 
 def test_parser_requires_entire_message_to_be_machine_envelope():
     decision = _wait_decision()
-    with pytest.raises(Exception):
-        parse_structured_envelope(f"preface\n{_envelope(decision)}")
+    assert parse_structured_envelope(f"preface\n{_envelope(decision)}") is None
 
 
 def test_parser_round_trips_exact_canonical_envelope():
@@ -177,9 +176,6 @@ def test_replay_after_checkpoint_loss_is_idempotent_by_decision_id(tmp_path):
     first = poll_slack_gil_decisions(engine, FakeSlackClient([message]), config=config)
     assert first.accepted == 1
 
-    # Simulate checkpoint loss/reinitialization behind the durable inbox. The
-    # transport must not create a second inbox record when the same decision_id
-    # is delivered again after restart/replay.
     checkpoint.unlink()
     poll_slack_gil_decisions(engine, FakeSlackClient([]), config=config)
     second = poll_slack_gil_decisions(engine, FakeSlackClient([message]), config=config)

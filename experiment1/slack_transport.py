@@ -20,7 +20,11 @@ MARKER = "GIL DECISION ENVELOPE v1"
 CANONICAL_CHANNEL_ID = "C0BNACTF4E4"
 CANONICAL_GIL_USER_ID = "U0BMKMQ4U04"
 CHATGPT_SLACK_APP_USER_ID = "U0BME2V91TQ"
-CHATGPT_CONNECTOR_FOOTER = f"*Sent using* <@{CHATGPT_SLACK_APP_USER_ID}|ChatGPT>"
+# Slack Web API stores mentions in raw <@USER_ID> form. Some connector/read
+# surfaces enrich that same mention as <@USER_ID|DisplayName>. Accept exactly
+# these two deterministic provenance renderings and no arbitrary footer.
+CHATGPT_CONNECTOR_FOOTER = f"*Sent using* <@{CHATGPT_SLACK_APP_USER_ID}>"
+CHATGPT_CONNECTOR_RENDERED_FOOTER = f"*Sent using* <@{CHATGPT_SLACK_APP_USER_ID}|ChatGPT>"
 
 ENV_ENABLED = "GIL_SLACK_TRANSPORT_ENABLED"
 ENV_TOKEN = "GIL_SLACK_BOT_TOKEN"
@@ -38,12 +42,14 @@ _CANONICAL_ENVELOPE_RE = re.compile(
 )
 
 # ChatGPT's Slack connector deterministically serializes a code block as
-# ```{...}``` (no language tag/newlines) and appends one exact provenance
-# footer. Accept ONLY that observed closed form; arbitrary trailing prose or a
-# look-alike footer is still rejected. The compact canonical JSON emitted by
-# decision_to_json is one line, so deliberately do not allow newlines here.
+# ```{...}``` (no language tag/newlines) and appends one provenance footer.
+# Accept ONLY the raw Slack API mention form or the read-surface enriched form;
+# arbitrary trailing prose or a look-alike footer remains rejected. Compact
+# canonical JSON emitted by decision_to_json is one line, so newlines inside
+# the payload are deliberately disallowed here.
+_CONNECTOR_FOOTER_RE = rf"(?:{re.escape(CHATGPT_CONNECTOR_FOOTER)}|{re.escape(CHATGPT_CONNECTOR_RENDERED_FOOTER)})"
 _CONNECTOR_ENVELOPE_RE = re.compile(
-    rf"\A\s*GIL DECISION ENVELOPE v1\s*\n```(?P<payload>\{{[^\r\n]*\}})```\s*\n{re.escape(CHATGPT_CONNECTOR_FOOTER)}\s*\Z"
+    rf"\A\s*GIL DECISION ENVELOPE v1\s*\n```(?P<payload>\{{[^\r\n]*\}})```\s*\n{_CONNECTOR_FOOTER_RE}\s*\Z"
 )
 
 _TOP_LEVEL_KEYS = {

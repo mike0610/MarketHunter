@@ -58,5 +58,136 @@ class Experiment1StateEndpointTests(unittest.TestCase):
         self.assertEqual(by_account["FUTURES"]["cash"], "2000")
 
 
+class GilDecisionInboxEndpointTests(unittest.TestCase):
+    """
+    POST /experiment1/gil-decisions -> durable inbox only. This
+    endpoint never calls submit_intent/execute_pending itself - see
+    experiment1.gil_decision.drain_gil_decision_inbox (run by the
+    tools/experiment1_runtime scheduler) for the actual processing.
+    """
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.db_path = Path(self.temp_dir.name) / "experiment1.db"
+        self.env_patch = mock.patch.dict(
+            "os.environ", {"EXPERIMENT1_DB_PATH": str(self.db_path)}
+        )
+        self.env_patch.start()
+        self.addCleanup(self.env_patch.stop)
+        self.client = TestClient(app)
+
+    def _payload(self, **overrides) -> dict:
+        data = {
+            "decision_id": "gil-001",
+            "decided_at": "2026-09-01T03:00:00+00:00",
+            "account": "FUTURES",
+            "action": "LONG",
+            "symbol": "BTCUSDT",
+            "thesis": "breakout confirmed above resistance",
+            "quantity": "1",
+            "leverage": "2",
+        }
+        data.update(overrides)
+        return data
+
+    def test_post_accepts_a_valid_decision_as_pending_drain(self) -> None:
+        response = self.client.post("/experiment1/gil-decisions", json=self._payload())
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["decision_id"], "gil-001")
+        self.assertEqual(body["status"], "PENDING_DRAIN")
+        self.assertIsNone(body["outcome"])
+
+        # Nothing executable exists yet - only the drain cycle processes it.
+        state = self.client.get("/experiment1/state").json()
+        futures = next(a for a in state["accounts"] if a["account"] == "FUTURES")
+        self.assertEqual(futures["positions"], [])
+
+    def test_post_rejects_a_non_action_research_state_at_the_schema_level(self) -> None:
+        response = self.client.post(
+            "/experiment1/gil-decisions", json=self._payload(action="CANDIDATE")
+        )
+        # FastAPI/Pydantic schema validation rejects it before any
+        # domain logic runs - never coerced into a trade action.
+        self.assertEqual(response.status_code, 422)
+
+    def test_post_rejects_a_naive_decided_at_as_malformed_and_persists_it(self) -> None:
+        response = self.client.post(
+            "/experiment1/gil-decisions",
+            json=self._payload(decision_id="gil-naive", decided_at="2026-09-01T03:00:00"),
+        )
+        self.assertEqual(response.status_code, 400)
+
+        status = self.client.get("/experiment1/gil-decisions/gil-naive").json()
+        self.assertEqual(status["status"], "MALFORMED")
+        self.assertIn("timezone-aware", status["outcome_reason"])
+
+    def test_post_identical_resubmission_is_idempotent(self) -> None:
+        payload = self._payload(decision_id="gil-dup")
+        first = self.client.post("/experiment1/gil-decisions", json=payload)
+        second = self.client.post("/experiment1/gil-decisions", json=payload)
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.json(), second.json())
+
+    def test_post_same_decision_id_different_content_is_a_conflict(self) -> None:
+        self.client.post("/experiment1/gil-decisions", json=self._payload(decision_id="gil-conflict"))
+        response = self.client.post(
+            "/experiment1/gil-decisions",
+            json=self._payload(decision_id="gil-conflict", quantity="5"),
+        )
+        self.assertEqual(response.status_code, 409)
+
+    def test_get_readback_returns_404_for_unknown_decision(self) -> None:
+        response = self.client.get("/experiment1/gil-decisions/never-submitted")
+        self.assertEqual(response.status_code, 404)
+
+    def test_get_readback_matches_the_post_response_before_drain(self) -> None:
+        post_body = self.client.post(
+            "/experiment1/gil-decisions", json=self._payload(decision_id="gil-readback")
+        ).json()
+        get_body = self.client.get("/experiment1/gil-decisions/gil-readback").json()
+
+        self.assertEqual(post_body, get_body)
+
+    def test_post_accepts_a_structured_trigger_and_max_notional_sizing(self) -> None:
+        payload = self._payload(decision_id="gil-trigger-sizing")
+        del payload["quantity"]
+        payload["trigger"] = {
+            "trigger_type": "PRICE_IN_RANGE",
+            "trigger_price_low": "115",
+            "trigger_price_high": "120",
+        }
+        payload["sizing"] = {"mode": "MAX_NOTIONAL", "max_notional": "500"}
+
+        response = self.client.post("/experiment1/gil-decisions", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "PENDING_DRAIN")
+
+    def test_post_rejects_a_trigger_missing_its_required_price_as_malformed(self) -> None:
+        payload = self._payload(decision_id="gil-bad-trigger")
+        payload["trigger"] = {"trigger_type": "PRICE_AT_OR_ABOVE"}  # missing trigger_price
+
+        response = self.client.post("/experiment1/gil-decisions", json=payload)
+
+        self.assertEqual(response.status_code, 400)
+        status = self.client.get("/experiment1/gil-decisions/gil-bad-trigger").json()
+        self.assertEqual(status["status"], "MALFORMED")
+        self.assertIn("trigger_price", status["outcome_reason"])
+
+    def test_post_requires_exactly_one_of_quantity_or_sizing(self) -> None:
+        payload = self._payload(decision_id="gil-both-quantity-and-sizing")
+        payload["sizing"] = {"mode": "EXACT_QUANTITY", "exact_quantity": "1"}
+        # quantity is still set from _payload() too - both present is invalid.
+
+        response = self.client.post("/experiment1/gil-decisions", json=payload)
+
+        self.assertEqual(response.status_code, 400)
+
+
 if __name__ == "__main__":
     unittest.main()

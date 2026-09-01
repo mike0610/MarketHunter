@@ -12,6 +12,8 @@ from experiment1.models import (
     ContributionRecord,
     DecisionAction,
     FillRecord,
+    GilInboxRecord,
+    GilInboxStatus,
     IntentStatus,
     MarketQuote,
     OrderIntent,
@@ -134,6 +136,16 @@ class Experiment1Engine:
                     amount TEXT NOT NULL,
                     applied_at TEXT NOT NULL,
                     PRIMARY KEY(account, period)
+                );
+                CREATE TABLE IF NOT EXISTS experiment1_gil_decision_inbox (
+                    decision_id TEXT PRIMARY KEY,
+                    received_at TEXT NOT NULL,
+                    raw_payload TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    outcome TEXT,
+                    outcome_reason TEXT,
+                    intent_id TEXT,
+                    processed_at TEXT
                 );
                 """
             )
@@ -544,6 +556,135 @@ class Experiment1Engine:
                 ContributionRecord(account, row["period"], Decimal(row["amount"]), datetime.fromisoformat(row["applied_at"]))
                 for row in rows
             )
+
+    def receive_gil_decision(
+        self, decision_id: str, raw_payload: str, *, now: datetime | None = None
+    ) -> GilInboxRecord:
+        """
+        Durably persist an inbound GIL decision envelope BEFORE any
+        processing - the GIL Decision Inbox itself. Idempotent on
+        decision_id: an identical resubmission (same raw_payload)
+        returns the already-recorded row unchanged, without
+        re-inserting or reprocessing; a decision_id reused with
+        different content raises, the same fail-closed collision
+        contract submit_intent already uses for intent_id. Processing
+        (mapping to OrderIntent, risk validation) happens later, in a
+        drain cycle - see experiment1/gil_decision.py.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM experiment1_gil_decision_inbox WHERE decision_id=?", (decision_id,)
+            ).fetchone()
+            if row is not None:
+                if row["raw_payload"] == raw_payload:
+                    return self._gil_inbox_record_from_row(row)
+                raise Experiment1Error("decision_id already exists with different content")
+            received_at = (now or datetime.now(timezone.utc)).isoformat()
+            conn.execute(
+                """INSERT INTO experiment1_gil_decision_inbox
+                   (decision_id, received_at, raw_payload, status, outcome, outcome_reason, intent_id, processed_at)
+                   VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL)""",
+                (decision_id, received_at, raw_payload, GilInboxStatus.PENDING_DRAIN.value),
+            )
+            row = conn.execute(
+                "SELECT * FROM experiment1_gil_decision_inbox WHERE decision_id=?", (decision_id,)
+            ).fetchone()
+            return self._gil_inbox_record_from_row(row)
+
+    def record_malformed_gil_decision(
+        self, decision_id: str, raw_payload: str, reason: str, *, now: datetime | None = None
+    ) -> GilInboxRecord:
+        """
+        Durably persist an envelope that had a decision_id but failed
+        GilDecision's own domain validation - never reaches drain,
+        never becomes an OrderIntent. Same idempotent-collision
+        contract as receive_gil_decision.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM experiment1_gil_decision_inbox WHERE decision_id=?", (decision_id,)
+            ).fetchone()
+            if row is not None:
+                if row["raw_payload"] == raw_payload:
+                    return self._gil_inbox_record_from_row(row)
+                raise Experiment1Error("decision_id already exists with different content")
+            moment = (now or datetime.now(timezone.utc)).isoformat()
+            conn.execute(
+                """INSERT INTO experiment1_gil_decision_inbox
+                   (decision_id, received_at, raw_payload, status, outcome, outcome_reason, intent_id, processed_at)
+                   VALUES (?, ?, ?, ?, NULL, ?, NULL, ?)""",
+                (decision_id, moment, raw_payload, GilInboxStatus.MALFORMED.value, reason, moment),
+            )
+            row = conn.execute(
+                "SELECT * FROM experiment1_gil_decision_inbox WHERE decision_id=?", (decision_id,)
+            ).fetchone()
+            return self._gil_inbox_record_from_row(row)
+
+    def pending_gil_decision_inbox(self) -> tuple[tuple[str, str], ...]:
+        """(decision_id, raw_payload) for every envelope still PENDING_DRAIN, oldest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT decision_id, raw_payload FROM experiment1_gil_decision_inbox "
+                "WHERE status=? ORDER BY received_at, decision_id",
+                (GilInboxStatus.PENDING_DRAIN.value,),
+            ).fetchall()
+            return tuple((row["decision_id"], row["raw_payload"]) for row in rows)
+
+    def mark_gil_decision_processed(
+        self,
+        decision_id: str,
+        outcome: str,
+        outcome_reason: str | None,
+        intent_id: str | None,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE experiment1_gil_decision_inbox
+                   SET status=?, outcome=?, outcome_reason=?, intent_id=?, processed_at=?
+                   WHERE decision_id=?""",
+                (
+                    GilInboxStatus.PROCESSED.value,
+                    outcome,
+                    outcome_reason,
+                    intent_id,
+                    (now or datetime.now(timezone.utc)).isoformat(),
+                    decision_id,
+                ),
+            )
+
+    def record_gil_decision_watch(self, decision_id: str, reason: str) -> None:
+        """
+        Record why a PENDING_DRAIN envelope did not resolve this cycle
+        (trigger unmet, no fresh quote, sizing not yet resolvable) -
+        deliberately leaves status/outcome/intent_id untouched, so the
+        row stays watchable and is re-evaluated on the next drain
+        cycle, rather than being marked PROCESSED/terminal.
+        """
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE experiment1_gil_decision_inbox SET outcome_reason=? WHERE decision_id=?",
+                (reason, decision_id),
+            )
+
+    def gil_decision_inbox_status(self, decision_id: str) -> GilInboxRecord | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM experiment1_gil_decision_inbox WHERE decision_id=?", (decision_id,)
+            ).fetchone()
+            return None if row is None else self._gil_inbox_record_from_row(row)
+
+    def _gil_inbox_record_from_row(self, row: sqlite3.Row) -> GilInboxRecord:
+        return GilInboxRecord(
+            decision_id=row["decision_id"],
+            received_at=datetime.fromisoformat(row["received_at"]),
+            status=GilInboxStatus(row["status"]),
+            outcome=row["outcome"],
+            outcome_reason=row["outcome_reason"],
+            intent_id=row["intent_id"],
+            processed_at=None if row["processed_at"] is None else datetime.fromisoformat(row["processed_at"]),
+        )
 
     def closed_trades(self, account: AccountKind) -> tuple[ClosedTrade, ...]:
         """

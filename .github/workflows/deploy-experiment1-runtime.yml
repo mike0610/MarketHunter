@@ -28,6 +28,7 @@ jobs:
       VPS_USER: ubuntu
       VPS_REPO: /home/ubuntu/MarketHunter
       SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+      GIL_SLACK_BOT_TOKEN: ${{ secrets.GIL_SLACK_BOT_TOKEN }}
       EXPECTED_SHA: ${{ github.sha }}
 
     steps:
@@ -50,6 +51,25 @@ jobs:
           ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
+      - name: Stage optional GIL Slack transport secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${GIL_SLACK_BOT_TOKEN}" ]; then
+            umask 077
+            {
+              printf '%s\n' 'GIL_SLACK_TRANSPORT_ENABLED=1'
+              printf 'GIL_SLACK_BOT_TOKEN=%s\n' "${GIL_SLACK_BOT_TOKEN}"
+              printf '%s\n' 'GIL_SLACK_CHANNEL_ID=C0BNACTF4E4'
+              printf '%s\n' 'GIL_SLACK_ALLOWED_USER_ID=U0BMKMQ4U04'
+              printf '%s\n' 'GIL_SLACK_CHECKPOINT_PATH=/home/ubuntu/MarketHunter/data/experiment1_gil_slack_checkpoint.json'
+            } > /tmp/experiment1-gil-slack.env
+            scp -i "$HOME/.ssh/markethunter_vps_ed25519" \
+              /tmp/experiment1-gil-slack.env \
+              "${VPS_USER}@${VPS_HOST}:/tmp/experiment1-gil-slack.env.github-actions"
+            rm -f /tmp/experiment1-gil-slack.env
+          fi
+
       - name: Deploy runtime and run first cycle
         shell: bash
         run: |
@@ -59,6 +79,8 @@ jobs:
             "${VPS_USER}@${VPS_HOST}" "EXPECTED_SHA='${EXPECTED_SHA}' bash -s" <<'REMOTE'
           set -euo pipefail
           REPO=/home/ubuntu/MarketHunter
+          ENV_FILE="$REPO/deploy/systemd/experiment1-runtime.env"
+          STAGED_GIL_ENV=/tmp/experiment1-gil-slack.env.github-actions
           cd "$REPO"
 
           echo '=== PRE-DEPLOY RUNTIME ==='
@@ -76,6 +98,15 @@ jobs:
             exit 3
           fi
 
+          if [ -f "$STAGED_GIL_ENV" ]; then
+            touch "$ENV_FILE"
+            chmod 600 "$ENV_FILE"
+            sed -i '/^GIL_SLACK_/d' "$ENV_FILE"
+            cat "$STAGED_GIL_ENV" >> "$ENV_FILE"
+            rm -f "$STAGED_GIL_ENV"
+            chown ubuntu:ubuntu "$ENV_FILE"
+          fi
+
           sudo cp deploy/systemd/experiment1-runtime.service \
                   deploy/systemd/experiment1-runtime.timer \
                   /etc/systemd/system/
@@ -85,7 +116,6 @@ jobs:
           sudo systemctl enable --now experiment1-runtime.timer
 
           echo '=== GIL SLACK TRANSPORT CONFIG ==='
-          ENV_FILE="$REPO/deploy/systemd/experiment1-runtime.env"
           if [ -f "$ENV_FILE" ] && \
              grep -q '^GIL_SLACK_TRANSPORT_ENABLED=1$' "$ENV_FILE" && \
              grep -Eq '^GIL_SLACK_BOT_TOKEN=.+$' "$ENV_FILE"; then

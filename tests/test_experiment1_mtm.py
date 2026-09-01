@@ -11,7 +11,7 @@ from experiment1.market_data_providers import (
     UnavailableQuoteProvider,
 )
 from experiment1.models import AccountKind, DecisionAction, MarketQuote, OrderIntent
-from experiment1.mtm import run_mtm_cycle
+from experiment1.mtm import MtmCompleteness, run_mtm_cycle
 
 
 NOW = datetime(2026, 9, 1, 3, 0, tzinfo=timezone.utc)
@@ -85,6 +85,7 @@ def test_run_mtm_cycle_reprices_every_open_symbol_from_fresh_quotes(tmp_path):
     # unrealized = (110-100)*1 + (40-50)*1 = 0
     assert result.unrealized_pnl == Decimal("0")
     assert result.equity == Decimal("2000")
+    assert result.completeness is MtmCompleteness.FULLY_FRESH_EVIDENCE
 
 
 # --- partial quote availability -------------------------------------------
@@ -104,6 +105,9 @@ def test_run_mtm_cycle_reports_waiting_evidence_for_a_symbol_with_no_quote(tmp_p
     # ETHUSDT falls back to cost basis (50) - contributes 0 unrealized.
     # unrealized = (120-100)*1 + 0 = 20.
     assert result.unrealized_pnl == Decimal("20")
+    # One symbol used cost-basis fallback - this cycle's equity/unrealized_pnl
+    # must be unmistakably marked incomplete, never a fully fresh MTM state.
+    assert result.completeness is MtmCompleteness.PARTIAL_EVIDENCE_FALLBACK
 
 
 # --- stale evidence (via the existing freshness guard) --------------------
@@ -120,6 +124,9 @@ def test_run_mtm_cycle_reports_waiting_evidence_for_stale_quote(tmp_path):
     assert result.symbol_results[0].outcome == "WAITING_EVIDENCE"
     # Falls back to cost basis - no phantom mark from the stale quote.
     assert result.unrealized_pnl == Decimal("0")
+    # Stale evidence is exactly the case GIL flagged: it must never be
+    # reported as a complete fresh-evidence MTM state.
+    assert result.completeness is MtmCompleteness.PARTIAL_EVIDENCE_FALLBACK
 
 
 # --- non-crypto BLOCKED-EVIDENCE semantics preserved -----------------------
@@ -141,6 +148,9 @@ def test_run_mtm_cycle_preserves_non_crypto_blocked_evidence_semantics(tmp_path)
 
     outcomes = {r.symbol: r.outcome for r in result.symbol_results}
     assert outcomes == {"BTCUSDT": "FRESH_EVIDENCE", "AAPL": "WAITING_EVIDENCE"}
+    # A BLOCKED-EVIDENCE non-crypto symbol makes the whole account-level
+    # result partial, even though the crypto symbol is fully evidenced.
+    assert result.completeness is MtmCompleteness.PARTIAL_EVIDENCE_FALLBACK
 
 
 # --- monitoring only: never a decision, never a fill ------------------------
@@ -251,3 +261,44 @@ def test_run_mtm_cycle_with_a_single_open_symbol_matches_prior_single_symbol_beh
     # unrealized = (115-100)*1 = 15; equity = 2000 + 15 = 2015.
     assert result.unrealized_pnl == Decimal("15")
     assert result.equity == Decimal("2015")
+    assert result.completeness is MtmCompleteness.FULLY_FRESH_EVIDENCE
+
+
+# --- explicit account/cycle freshness-completeness contract ----------------
+
+def test_mtm_cycle_with_zero_open_positions_is_trivially_fully_fresh(tmp_path):
+    engine = Experiment1Engine(tmp_path / "experiment1.db")
+
+    result = asyncio.run(run_mtm_cycle(engine, FakeSource({}), AccountKind.FUTURES, now=NOW))
+
+    assert result.symbol_results == ()
+    assert result.completeness is MtmCompleteness.FULLY_FRESH_EVIDENCE
+
+
+def test_mtm_cycle_completeness_does_not_leak_across_independent_ledgers(tmp_path):
+    engine = Experiment1Engine(tmp_path / "experiment1.db")
+    _open(engine, "futures-1", "BTCUSDT", Decimal("100"), account=AccountKind.FUTURES)
+
+    engine.submit_intent(
+        OrderIntent(
+            intent_id="spot-1",
+            created_at=NOW,
+            account=AccountKind.SPOT,
+            action=DecisionAction.BUY,
+            symbol="ETHUSDT",
+            quantity=Decimal("1"),
+            reason="mtm independent-ledger test",
+        )
+    )
+    engine.execute_pending("spot-1", _quote("ETHUSDT", Decimal("50"), observed_at=NOW + timedelta(minutes=1), ref="open-spot"))
+
+    # FUTURES' only symbol has no quote this cycle - partial. SPOT's only
+    # symbol does - fully fresh. Each account's completeness must reflect
+    # only its own positions, never the other account's evidence gap.
+    source = FakeSource({"ETHUSDT": _quote("ETHUSDT", Decimal("55"))})
+
+    futures_result = asyncio.run(run_mtm_cycle(engine, source, AccountKind.FUTURES, now=NOW + timedelta(minutes=5)))
+    spot_result = asyncio.run(run_mtm_cycle(engine, source, AccountKind.SPOT, now=NOW + timedelta(minutes=5)))
+
+    assert futures_result.completeness is MtmCompleteness.PARTIAL_EVIDENCE_FALLBACK
+    assert spot_result.completeness is MtmCompleteness.FULLY_FRESH_EVIDENCE

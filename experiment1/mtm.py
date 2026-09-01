@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from enum import Enum
 
 from experiment1.engine import Experiment1Engine
 from experiment1.models import AccountKind, DecisionAction, OrderIntent
@@ -19,12 +20,42 @@ class SymbolMarkResult:
     detail: str | None = None
 
 
+class MtmCompleteness(str, Enum):
+    """
+    The account/cycle freshness-completeness contract: whether this
+    cycle's equity/unrealized_pnl are backed by a fresh evidence-based
+    mark for EVERY currently open symbol, or whether at least one
+    symbol fell back to its own cost basis because its evidence was
+    missing, stale, or unsupported this cycle.
+
+    FULLY_FRESH_EVIDENCE: every open symbol had a fresh, valid quote
+    this cycle - equity/unrealized_pnl are a complete, fully
+    evidence-backed MTM snapshot. An account with zero open positions
+    is trivially FULLY_FRESH_EVIDENCE - there is no missing evidence to
+    have.
+
+    PARTIAL_EVIDENCE_FALLBACK: at least one open symbol used its cost
+    basis instead of a fresh mark (see SymbolMarkResult.outcome ==
+    "WAITING_EVIDENCE" for which one). The cost-basis fallback is only
+    a non-fabrication safety calculation - real, recorded, never a
+    synthetic price - it must never be read as a complete or
+    readiness-grade MTM state. Any downstream consumer (audit,
+    statistics, a future readiness verdict) MUST check this field
+    before treating equity/unrealized_pnl as fully fresh-evidence-
+    backed.
+    """
+
+    FULLY_FRESH_EVIDENCE = "FULLY_FRESH_EVIDENCE"
+    PARTIAL_EVIDENCE_FALLBACK = "PARTIAL_EVIDENCE_FALLBACK"
+
+
 @dataclass(frozen=True, slots=True)
 class MtmCycleResult:
     account: AccountKind
     symbol_results: tuple[SymbolMarkResult, ...]
     equity: Decimal
     unrealized_pnl: Decimal
+    completeness: MtmCompleteness
 
 
 def _observation_intent(account: AccountKind, symbol: str, now: datetime) -> OrderIntent:
@@ -66,7 +97,13 @@ async def run_mtm_cycle(
     non-crypto BLOCKED-EVIDENCE path) keeps its existing cost-basis
     valuation - reprice_open_positions' own non-fabrication guarantee -
     and is reported here as WAITING_EVIDENCE per symbol, never silently
-    hidden inside one account-wide result.
+    hidden inside one account-wide result. The returned `completeness`
+    makes this unmistakable at the account/cycle level too: it is
+    PARTIAL_EVIDENCE_FALLBACK whenever any open symbol used cost-basis
+    fallback this cycle, never silently reported as a complete
+    fresh-evidence MTM state. Independent ledgers stay independent -
+    each call is scoped to exactly one `account`, so one account's
+    partial evidence never taints another's completeness.
 
     Restart-safe and idempotent by construction: all state this cycle
     reads and writes lives in the engine's own database, never in a
@@ -111,4 +148,10 @@ async def run_mtm_cycle(
         start=Decimal("0"),
     )
 
-    return MtmCycleResult(account, tuple(symbol_results), state.last_equity, unrealized_pnl)
+    completeness = (
+        MtmCompleteness.PARTIAL_EVIDENCE_FALLBACK
+        if any(result.outcome == "WAITING_EVIDENCE" for result in symbol_results)
+        else MtmCompleteness.FULLY_FRESH_EVIDENCE
+    )
+
+    return MtmCycleResult(account, tuple(symbol_results), state.last_equity, unrealized_pnl, completeness)

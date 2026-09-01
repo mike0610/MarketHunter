@@ -454,6 +454,244 @@ class Experiment1ClosedTradesTests(unittest.TestCase):
         self.assertEqual(trades[0].realized_pnl, Decimal("10"))
 
 
+class Experiment1FuturesMarginTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.engine = Experiment1Engine(Path(self.tmp.name) / "experiment1.db")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def intent(self, **overrides) -> OrderIntent:
+        data = dict(
+            intent_id="intent-1",
+            created_at=NOW,
+            account=AccountKind.FUTURES,
+            action=DecisionAction.LONG,
+            symbol="BTCUSDT",
+            quantity=Decimal("10"),
+            reason="verified setup",
+            leverage=Decimal("2"),
+        )
+        data.update(overrides)
+        return OrderIntent(**data)
+
+    def quote(self, **overrides) -> MarketQuote:
+        data = dict(
+            symbol="BTCUSDT",
+            price=Decimal("100"),
+            observed_at=NOW + timedelta(minutes=1),
+            source="test-feed",
+            source_reference="quote-1",
+            fee_bps=Decimal("0"),
+            slippage_bps=Decimal("0"),
+        )
+        data.update(overrides)
+        return MarketQuote(**data)
+
+    def test_leverage_gives_margin_less_than_full_notional(self) -> None:
+        self.engine.submit_intent(self.intent())
+        self.engine.execute_pending("intent-1", self.quote())
+        position = self.engine.positions(AccountKind.FUTURES)[0]
+        # notional = 10 * 100 = 1000; margin = notional / leverage(2) = 500.
+        self.assertEqual(position.notional, Decimal("1000"))
+        self.assertEqual(position.margin, Decimal("500"))
+        self.assertLess(position.margin, position.notional)
+
+    def test_margin_reserved_reduces_available_cash_not_cash(self) -> None:
+        self.engine.submit_intent(self.intent())
+        self.engine.execute_pending("intent-1", self.quote())
+        state = self.engine.account_state(AccountKind.FUTURES)
+        self.assertEqual(state.used_margin, Decimal("500"))
+        self.assertEqual(state.cash, Decimal("2000"))  # wallet balance untouched by margin
+        self.assertEqual(state.available_cash, Decimal("1500"))
+
+    def test_insufficient_margin_rejects_and_leaves_state_untouched(self) -> None:
+        self.engine.submit_intent(self.intent(quantity=Decimal("100")))
+        with self.assertRaises(Experiment1Error) as ctx:
+            self.engine.execute_pending("intent-1", self.quote())
+        self.assertIn("insufficient margin", str(ctx.exception))
+        self.assertEqual(self.engine.positions(AccountKind.FUTURES), ())
+        state = self.engine.account_state(AccountKind.FUTURES)
+        self.assertEqual(state.cash, Decimal("2000"))
+        self.assertEqual(state.used_margin, Decimal("0"))
+
+    def test_pyramiding_recomputes_and_gates_increased_margin(self) -> None:
+        self.engine.submit_intent(self.intent())
+        self.engine.execute_pending("intent-1", self.quote())
+        self.engine.submit_intent(
+            self.intent(intent_id="intent-2", quantity=Decimal("5"), created_at=NOW + timedelta(minutes=2))
+        )
+        self.engine.execute_pending(
+            "intent-2",
+            self.quote(observed_at=NOW + timedelta(minutes=3), source_reference="quote-2"),
+        )
+        position = self.engine.positions(AccountKind.FUTURES)[0]
+        # 15 @ 100, leverage 2x -> margin 750.
+        self.assertEqual(position.quantity, Decimal("15"))
+        self.assertEqual(position.margin, Decimal("750"))
+        state = self.engine.account_state(AccountKind.FUTURES)
+        self.assertEqual(state.used_margin, Decimal("750"))
+        self.assertEqual(state.available_cash, Decimal("1250"))
+
+    def test_partial_close_releases_margin_without_triggering_check(self) -> None:
+        self.engine.submit_intent(self.intent(quantity=Decimal("15")))
+        self.engine.execute_pending("intent-1", self.quote())
+        self.engine.submit_intent(
+            self.intent(
+                intent_id="intent-2",
+                action=DecisionAction.SHORT,
+                quantity=Decimal("5"),
+                created_at=NOW + timedelta(minutes=2),
+            )
+        )
+        self.engine.execute_pending(
+            "intent-2",
+            self.quote(price=Decimal("110"), observed_at=NOW + timedelta(minutes=3), source_reference="quote-2"),
+        )
+        position = self.engine.positions(AccountKind.FUTURES)[0]
+        self.assertEqual(position.quantity, Decimal("10"))
+        # 10 @ 100 (avg unchanged on a partial close), leverage 2x -> margin 500.
+        self.assertEqual(position.margin, Decimal("500"))
+        state = self.engine.account_state(AccountKind.FUTURES)
+        self.assertEqual(state.used_margin, Decimal("500"))
+        # cash gains the realized P&L from the partial close: 2000 + (110-100)*5 = 2050.
+        self.assertEqual(state.cash, Decimal("2050"))
+        self.assertEqual(state.available_cash, Decimal("1550"))
+
+    def test_full_close_returns_margin_and_used_margin_to_zero(self) -> None:
+        self.engine.submit_intent(self.intent())
+        self.engine.execute_pending("intent-1", self.quote())
+        self.engine.submit_intent(
+            self.intent(
+                intent_id="intent-2",
+                action=DecisionAction.SHORT,
+                quantity=Decimal("10"),
+                created_at=NOW + timedelta(minutes=2),
+            )
+        )
+        self.engine.execute_pending(
+            "intent-2",
+            self.quote(price=Decimal("105"), observed_at=NOW + timedelta(minutes=3), source_reference="quote-2"),
+        )
+        self.assertEqual(self.engine.positions(AccountKind.FUTURES), ())
+        state = self.engine.account_state(AccountKind.FUTURES)
+        self.assertEqual(state.used_margin, Decimal("0"))
+        self.assertEqual(state.available_cash, state.cash)
+
+    def test_reversal_through_flat_checks_margin_of_leftover_leg_only(self) -> None:
+        self.engine.submit_intent(self.intent())  # LONG 10 @ 100, lev 2 -> margin 500
+        self.engine.execute_pending("intent-1", self.quote())
+        self.engine.submit_intent(
+            self.intent(
+                intent_id="intent-2",
+                action=DecisionAction.SHORT,
+                quantity=Decimal("30"),
+                created_at=NOW + timedelta(minutes=2),
+            )
+        )
+        self.engine.execute_pending(
+            "intent-2",
+            self.quote(observed_at=NOW + timedelta(minutes=3), source_reference="quote-2"),
+        )
+        position = self.engine.positions(AccountKind.FUTURES)[0]
+        # Reversal: 10 closed, leftover -20 @ fill price 100, lev 2 -> margin 1000.
+        self.assertEqual(position.quantity, Decimal("-20"))
+        self.assertEqual(position.margin, Decimal("1000"))
+        state = self.engine.account_state(AccountKind.FUTURES)
+        self.assertEqual(state.used_margin, Decimal("1000"))
+
+    def test_reversal_leftover_leg_rejected_when_margin_insufficient(self) -> None:
+        self.engine.submit_intent(self.intent())  # LONG 10 @ 100, lev 2 -> margin 500
+        self.engine.execute_pending("intent-1", self.quote())
+        self.engine.submit_intent(
+            self.intent(
+                intent_id="intent-2",
+                action=DecisionAction.SHORT,
+                quantity=Decimal("100"),
+                leverage=Decimal("1"),
+                created_at=NOW + timedelta(minutes=2),
+            )
+        )
+        with self.assertRaises(Experiment1Error) as ctx:
+            self.engine.execute_pending(
+                "intent-2",
+                self.quote(observed_at=NOW + timedelta(minutes=3), source_reference="quote-2"),
+            )
+        self.assertIn("insufficient margin", str(ctx.exception))
+        # Rejected atomically - the original long position is untouched.
+        position = self.engine.positions(AccountKind.FUTURES)[0]
+        self.assertEqual(position.quantity, Decimal("10"))
+        self.assertEqual(position.margin, Decimal("500"))
+
+    def test_two_simultaneous_positions_sum_into_used_margin(self) -> None:
+        self.engine.submit_intent(self.intent())  # BTCUSDT LONG 10 @ 100, lev 2 -> margin 500
+        self.engine.execute_pending("intent-1", self.quote())
+        self.engine.submit_intent(
+            self.intent(
+                intent_id="intent-2",
+                symbol="ETHUSDT",
+                quantity=Decimal("10"),
+                created_at=NOW + timedelta(minutes=2),
+            )
+        )
+        self.engine.execute_pending(
+            "intent-2",
+            self.quote(
+                symbol="ETHUSDT",
+                price=Decimal("50"),
+                observed_at=NOW + timedelta(minutes=3),
+                source_reference="quote-2",
+            ),
+        )
+        positions = self.engine.positions(AccountKind.FUTURES)
+        self.assertEqual(len(positions), 2)
+        state = self.engine.account_state(AccountKind.FUTURES)
+        # 500 (BTC) + 250 (ETH: 10 * 50 / 2) = 750.
+        self.assertEqual(state.used_margin, Decimal("750"))
+        self.assertEqual(state.available_cash, Decimal("1250"))
+
+    def test_leverage_cap_rejection_leaves_margin_untouched(self) -> None:
+        with self.assertRaises(Experiment1Error):
+            self.engine.submit_intent(self.intent(leverage=Decimal("4")))
+        self.assertEqual(self.engine.positions(AccountKind.FUTURES), ())
+        state = self.engine.account_state(AccountKind.FUTURES)
+        self.assertEqual(state.used_margin, Decimal("0"))
+        self.assertEqual(state.available_cash, state.cash)
+
+    def test_no_leverage_accounts_never_reserve_margin(self) -> None:
+        self.engine.submit_intent(
+            OrderIntent(
+                intent_id="spot-1",
+                created_at=NOW,
+                account=AccountKind.SPOT,
+                action=DecisionAction.BUY,
+                symbol="BTCUSDT",
+                quantity=Decimal("0.01"),
+                reason="verified setup",
+            )
+        )
+        self.engine.execute_pending(
+            "spot-1",
+            MarketQuote(
+                symbol="BTCUSDT",
+                price=Decimal("10000"),
+                observed_at=NOW + timedelta(minutes=1),
+                source="test-feed",
+                source_reference="quote-1",
+                fee_bps=Decimal("0"),
+                slippage_bps=Decimal("0"),
+            ),
+        )
+        spot_state = self.engine.account_state(AccountKind.SPOT)
+        self.assertEqual(spot_state.used_margin, Decimal("0"))
+        self.assertEqual(spot_state.available_cash, spot_state.cash)
+
+        ledger_state = self.engine.account_state(AccountKind.INVESTMENTS_DEFENSIVE)
+        self.assertEqual(ledger_state.used_margin, Decimal("0"))
+        self.assertEqual(ledger_state.available_cash, ledger_state.cash)
+
+
 class Experiment1RestartReplayTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -509,6 +747,45 @@ class Experiment1RestartReplayTests(unittest.TestCase):
         self.assertEqual(second.account_state(AccountKind.SPOT), state_before)
         self.assertEqual(len(second.positions(AccountKind.SPOT)), 1)
         self.assertEqual(second.positions(AccountKind.SPOT)[0].quantity, Decimal("0.01"))
+
+    def test_reopening_engine_preserves_futures_margin_state(self) -> None:
+        first = Experiment1Engine(self.db_path)
+        intent = OrderIntent(
+            intent_id="intent-1",
+            created_at=NOW,
+            account=AccountKind.FUTURES,
+            action=DecisionAction.LONG,
+            symbol="BTCUSDT",
+            quantity=Decimal("10"),
+            reason="verified setup",
+            leverage=Decimal("2"),
+        )
+        first.submit_intent(intent)
+        first.execute_pending(
+            "intent-1",
+            MarketQuote(
+                symbol="BTCUSDT",
+                price=Decimal("100"),
+                observed_at=NOW + timedelta(minutes=1),
+                source="test-feed",
+                source_reference="quote-1",
+                fee_bps=Decimal("0"),
+                slippage_bps=Decimal("0"),
+            ),
+        )
+        state_before = first.account_state(AccountKind.FUTURES)
+        position_before = first.positions(AccountKind.FUTURES)[0]
+        self.assertEqual(position_before.margin, Decimal("500"))
+        self.assertEqual(state_before.used_margin, Decimal("500"))
+
+        # Simulate a process restart: a fresh Engine instance over the same
+        # db file must recompute (not fabricate or lose) the exact same
+        # margin/used_margin/available_cash state.
+        second = Experiment1Engine(self.db_path)
+        state_after = second.account_state(AccountKind.FUTURES)
+        position_after = second.positions(AccountKind.FUTURES)[0]
+        self.assertEqual(state_after, state_before)
+        self.assertEqual(position_after, position_before)
 
     def test_reopening_engine_over_pre_existing_db_adds_missing_column(self) -> None:
         # Simulate a database created before realized_pnl_delta existed:

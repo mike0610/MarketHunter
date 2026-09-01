@@ -692,6 +692,107 @@ class Experiment1FuturesMarginTests(unittest.TestCase):
         self.assertEqual(ledger_state.available_cash, ledger_state.cash)
 
 
+class Experiment1RepriceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.engine = Experiment1Engine(Path(self.tmp.name) / "experiment1.db")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _open(self, intent_id: str, symbol: str, price: Decimal, quantity: Decimal = Decimal("1")) -> None:
+        self.engine.submit_intent(
+            OrderIntent(
+                intent_id=intent_id,
+                created_at=NOW,
+                account=AccountKind.FUTURES,
+                action=DecisionAction.LONG,
+                symbol=symbol,
+                quantity=quantity,
+                reason="reprice test",
+                leverage=Decimal("2"),
+            )
+        )
+        self.engine.execute_pending(
+            intent_id,
+            MarketQuote(
+                symbol=symbol,
+                price=price,
+                observed_at=NOW + timedelta(minutes=1),
+                source="test-feed",
+                source_reference=f"open-{symbol}",
+                fee_bps=Decimal("0"),
+                slippage_bps=Decimal("0"),
+            ),
+        )
+
+    def test_reprice_updates_equity_from_fresh_marks_for_multiple_symbols(self) -> None:
+        self._open("intent-1", "BTCUSDT", Decimal("100"))
+        self._open("intent-2", "ETHUSDT", Decimal("50"))
+
+        state = self.engine.reprice_open_positions(
+            AccountKind.FUTURES, {"BTCUSDT": Decimal("110"), "ETHUSDT": Decimal("40")}
+        )
+
+        # cash 2000 + BTC unrealized (110-100)*1=10 + ETH unrealized (40-50)*1=-10 = 2000.
+        self.assertEqual(state.last_equity, Decimal("2000"))
+
+    def test_reprice_falls_back_to_cost_basis_for_symbols_without_a_fresh_mark(self) -> None:
+        self._open("intent-1", "BTCUSDT", Decimal("100"))
+        self._open("intent-2", "ETHUSDT", Decimal("50"))
+
+        # Only BTCUSDT has fresh evidence this cycle - ETHUSDT must fall
+        # back to its own recorded average_price, never a fabricated mark.
+        state = self.engine.reprice_open_positions(AccountKind.FUTURES, {"BTCUSDT": Decimal("110")})
+
+        # cash 2000 + BTC unrealized (110-100)*1=10 + ETH unrealized (50-50)*1=0 = 2010.
+        self.assertEqual(state.last_equity, Decimal("2010"))
+
+    def test_reprice_never_creates_a_fill_or_changes_cash_or_positions(self) -> None:
+        self._open("intent-1", "BTCUSDT", Decimal("100"))
+        cash_before = self.engine.account_state(AccountKind.FUTURES).cash
+        positions_before = self.engine.positions(AccountKind.FUTURES)
+        pending_before = self.engine.pending_intent_ids()
+
+        self.engine.reprice_open_positions(AccountKind.FUTURES, {"BTCUSDT": Decimal("999")})
+
+        self.assertEqual(self.engine.account_state(AccountKind.FUTURES).cash, cash_before)
+        self.assertEqual(self.engine.positions(AccountKind.FUTURES), positions_before)
+        self.assertEqual(self.engine.pending_intent_ids(), pending_before)
+        self.assertEqual(self.engine.closed_trades(AccountKind.FUTURES), ())
+
+    def test_reprice_is_idempotent_across_repeated_calls(self) -> None:
+        self._open("intent-1", "BTCUSDT", Decimal("100"))
+
+        marks = {"BTCUSDT": Decimal("120")}
+        first = self.engine.reprice_open_positions(AccountKind.FUTURES, marks)
+        second = self.engine.reprice_open_positions(AccountKind.FUTURES, marks)
+
+        self.assertEqual(first, second)
+
+    def test_reprice_rejects_non_positive_mark_price_and_leaves_state_untouched(self) -> None:
+        self._open("intent-1", "BTCUSDT", Decimal("100"))
+        state_before = self.engine.account_state(AccountKind.FUTURES)
+
+        with self.assertRaises(Experiment1Error):
+            self.engine.reprice_open_positions(AccountKind.FUTURES, {"BTCUSDT": Decimal("0")})
+
+        self.assertEqual(self.engine.account_state(AccountKind.FUTURES), state_before)
+
+    def test_reprice_matches_fill_triggered_equity_given_the_same_single_mark(self) -> None:
+        # Cross-check that the refactor kept the fill-triggered path
+        # (_update_equity) and the standalone multi-symbol path
+        # (reprice_open_positions) mathematically consistent: repricing
+        # with only the traded symbol's mark must reproduce exactly what
+        # the fill itself already computed.
+        self._open("intent-1", "BTCUSDT", Decimal("100"))
+        equity_from_fill = self.engine.account_state(AccountKind.FUTURES).last_equity
+
+        state = self.engine.reprice_open_positions(AccountKind.FUTURES, {"BTCUSDT": Decimal("100")})
+
+        self.assertEqual(state.last_equity, equity_from_fill)
+
+
 class Experiment1RestartReplayTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()

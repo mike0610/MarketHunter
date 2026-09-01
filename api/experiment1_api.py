@@ -98,12 +98,16 @@ def state():
                 "last_equity": str(snapshot.last_equity),
                 "peak_equity": str(snapshot.peak_equity),
                 "max_drawdown": str(snapshot.max_drawdown),
+                "used_margin": str(snapshot.used_margin),
+                "available_cash": str(snapshot.available_cash),
                 "positions": [
                     {
                         "symbol": position.symbol,
                         "quantity": str(position.quantity),
                         "average_price": str(position.average_price),
                         "leverage": str(position.leverage),
+                        "margin": str(position.margin),
+                        "notional": str(position.notional),
                     }
                     for position in engine.positions(account)
                 ],

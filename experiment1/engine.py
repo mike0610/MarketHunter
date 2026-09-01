@@ -109,6 +109,7 @@ class Experiment1Engine:
                     quantity TEXT NOT NULL,
                     average_price TEXT NOT NULL,
                     leverage TEXT NOT NULL,
+                    margin TEXT NOT NULL DEFAULT '0',
                     PRIMARY KEY(account, symbol)
                 );
                 CREATE TABLE IF NOT EXISTS experiment1_fills (
@@ -136,16 +137,25 @@ class Experiment1Engine:
                 );
                 """
             )
-            # Migration guard for a database created before realized_pnl_delta
-            # existed - CREATE TABLE IF NOT EXISTS above is a no-op against an
-            # already-existing table, so an old file needs the column added
-            # explicitly. Never touches any existing row's other columns.
-            existing_columns = {
+            # Migration guards for a database created before these columns
+            # existed - CREATE TABLE IF NOT EXISTS above is a no-op against
+            # an already-existing table, so an old file needs each column
+            # added explicitly. Never touches any existing row's other
+            # columns. A pre-migration position's margin defaults to '0'
+            # (not fabricated - see _used_margin()'s note on this).
+            fills_columns = {
                 row["name"] for row in conn.execute("PRAGMA table_info(experiment1_fills)").fetchall()
             }
-            if "realized_pnl_delta" not in existing_columns:
+            if "realized_pnl_delta" not in fills_columns:
                 conn.execute(
                     "ALTER TABLE experiment1_fills ADD COLUMN realized_pnl_delta TEXT NOT NULL DEFAULT '0'"
+                )
+            positions_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(experiment1_positions)").fetchall()
+            }
+            if "margin" not in positions_columns:
+                conn.execute(
+                    "ALTER TABLE experiment1_positions ADD COLUMN margin TEXT NOT NULL DEFAULT '0'"
                 )
 
     def _ensure_accounts(self) -> None:
@@ -318,6 +328,7 @@ class Experiment1Engine:
         cash = Decimal(account["cash"]); realized = Decimal(account["realized_pnl"]); fees_paid = Decimal(account["fees_paid"])
         row = conn.execute("SELECT * FROM experiment1_positions WHERE account=? AND symbol=?", (fill.account.value, fill.symbol)).fetchone()
         old_qty = Decimal(row["quantity"]) if row else Decimal("0"); old_avg = Decimal(row["average_price"]) if row else Decimal("0")
+        old_margin = Decimal(row["margin"]) if row else Decimal("0")
         realized_delta = Decimal("0")
         if fill.account in NO_LEVERAGE_ACCOUNTS:
             if fill.action is DecisionAction.BUY:
@@ -332,6 +343,10 @@ class Experiment1Engine:
                 realized += realized_delta
                 cash += fill.fill_price * fill.quantity - fill.fee
                 new_qty = old_qty - fill.quantity; new_avg = old_avg if new_qty else Decimal("0")
+            # leverage is always 1x here (enforced by _validate_intent_policy) -
+            # margin equals full notional, informational only; spot's own
+            # cash check above already gates entry, so this is never enforced.
+            new_margin = abs(new_qty) * new_avg
         else:
             signed = fill.quantity if fill.action is DecisionAction.LONG else -fill.quantity
             same_direction = old_qty == 0 or (old_qty > 0 and signed > 0) or (old_qty < 0 and signed < 0)
@@ -345,13 +360,33 @@ class Experiment1Engine:
                 new_qty = old_qty + signed
                 new_avg = Decimal("0") if new_qty == 0 else (fill.fill_price if (old_qty > 0 > new_qty) or (old_qty < 0 < new_qty) else old_avg)
             cash -= fill.fee
+            # Initial margin = notional / leverage - the textbook definition
+            # of leverage itself (not a venue-specific mechanic). Reserved
+            # margin only ever needs a fresh check when it INCREASES for
+            # this position - covers a plain entry, pyramiding, and the
+            # leftover leg of a reversal that flips through flat; a partial
+            # or full close only ever releases margin, never needs one.
+            new_margin = abs(new_qty) * new_avg / fill.leverage if new_qty else Decimal("0")
+            if new_margin > old_margin:
+                used_margin_others = self._used_margin(conn, fill.account) - old_margin
+                if cash < used_margin_others + new_margin:
+                    raise Experiment1Error(
+                        "insufficient margin for futures position "
+                        f"(required {used_margin_others + new_margin}, available {cash})"
+                    )
         fees_paid += fill.fee
-        conn.execute("""INSERT INTO experiment1_positions(account,symbol,quantity,average_price,leverage) VALUES (?,?,?,?,?)
-            ON CONFLICT(account,symbol) DO UPDATE SET quantity=excluded.quantity,average_price=excluded.average_price,leverage=excluded.leverage""",
-            (fill.account.value, fill.symbol, str(new_qty), str(new_avg), str(fill.leverage)))
+        conn.execute("""INSERT INTO experiment1_positions(account,symbol,quantity,average_price,leverage,margin) VALUES (?,?,?,?,?,?)
+            ON CONFLICT(account,symbol) DO UPDATE SET quantity=excluded.quantity,average_price=excluded.average_price,leverage=excluded.leverage,margin=excluded.margin""",
+            (fill.account.value, fill.symbol, str(new_qty), str(new_avg), str(fill.leverage), str(new_margin)))
         conn.execute("UPDATE experiment1_accounts SET cash=?,realized_pnl=?,fees_paid=? WHERE account=?", (str(cash),str(realized),str(fees_paid),fill.account.value))
         conn.execute("""INSERT INTO experiment1_fills(intent_id,account,action,symbol,quantity,reference_price,fill_price,fee,leverage,observed_at,source,source_reference,realized_pnl_delta)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""", (fill.intent_id,fill.account.value,fill.action.value,fill.symbol,str(fill.quantity),str(fill.reference_price),str(fill.fill_price),str(fill.fee),str(fill.leverage),fill.observed_at.isoformat(),fill.source,fill.source_reference,str(realized_delta)))
+
+    def _used_margin(self, conn: sqlite3.Connection, account: AccountKind) -> Decimal:
+        rows = conn.execute(
+            "SELECT margin FROM experiment1_positions WHERE account=?", (account.value,)
+        ).fetchall()
+        return sum((Decimal(row["margin"]) for row in rows), Decimal("0"))
 
     def _update_equity(self, conn: sqlite3.Connection, fill: FillRecord, mark_price: Decimal) -> None:
         # Every open position must contribute to equity/exposure/drawdown -
@@ -378,13 +413,21 @@ class Experiment1Engine:
     def account_state(self, account: AccountKind) -> AccountState:
         with self._connect() as conn:
             row = self._account_row(conn, account)
-            return AccountState(account, Decimal(row["starting_cash"]), Decimal(row["cash"]), Decimal(row["realized_pnl"]),
-                                Decimal(row["fees_paid"]), Decimal(row["peak_equity"]), Decimal(row["last_equity"]), Decimal(row["max_drawdown"]))
+            cash = Decimal(row["cash"])
+            # No-leverage accounts pay full cost out of cash at fill time -
+            # there is no separate reservation to release, so their
+            # position "margin" (== notional, see _apply_fill) is purely
+            # informational and must never be subtracted again here; doing
+            # so would double-count the same value against available_cash.
+            used_margin = self._used_margin(conn, account) if account not in NO_LEVERAGE_ACCOUNTS else Decimal("0")
+            return AccountState(account, Decimal(row["starting_cash"]), cash, Decimal(row["realized_pnl"]),
+                                Decimal(row["fees_paid"]), Decimal(row["peak_equity"]), Decimal(row["last_equity"]), Decimal(row["max_drawdown"]),
+                                used_margin, cash - used_margin)
 
     def positions(self, account: AccountKind) -> tuple[PositionState, ...]:
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM experiment1_positions WHERE account=? ORDER BY symbol", (account.value,)).fetchall()
-            return tuple(PositionState(account, row["symbol"], Decimal(row["quantity"]), Decimal(row["average_price"]), Decimal(row["leverage"]))
+            return tuple(PositionState(account, row["symbol"], Decimal(row["quantity"]), Decimal(row["average_price"]), Decimal(row["leverage"]), Decimal(row["margin"]))
                          for row in rows if Decimal(row["quantity"]) != 0)
 
     def contribute(self, account: AccountKind, period: str, now: datetime | None = None) -> bool:

@@ -120,6 +120,16 @@ class AccountState:
     peak_equity: Decimal
     last_equity: Decimal
     max_drawdown: Decimal
+    # cash is the wallet balance - unaffected by margin reservation, only
+    # by realized P&L and fees (same semantics for every account kind).
+    # used_margin is the sum of initial margin currently reserved across
+    # all open Futures-style positions - always 0 for no-leverage accounts,
+    # since those pay full cost out of cash at fill time rather than
+    # reserving margin separately (see Experiment1Engine.account_state).
+    # available_cash = cash - used_margin is what actually gates opening
+    # or adding to a Futures position - never cash alone.
+    used_margin: Decimal
+    available_cash: Decimal
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +139,14 @@ class PositionState:
     quantity: Decimal
     average_price: Decimal
     leverage: Decimal
+    # Initial margin currently reserved for this exact position:
+    # abs(quantity) * average_price / leverage. For no-leverage accounts
+    # (leverage always 1x) this equals the position's full notional value.
+    margin: Decimal
+
+    @property
+    def notional(self) -> Decimal:
+        return abs(self.quantity) * self.average_price
 
 
 @dataclass(frozen=True, slots=True)

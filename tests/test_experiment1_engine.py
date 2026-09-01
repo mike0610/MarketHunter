@@ -55,11 +55,11 @@ class Experiment1EngineTests(unittest.TestCase):
         )
         self.assertEqual(
             self.engine.account_state(AccountKind.SPOT).cash,
-            Decimal("5000"),
+            Decimal("2000"),
         )
         self.assertEqual(
             self.engine.account_state(AccountKind.FUTURES).cash,
-            Decimal("5000"),
+            Decimal("2000"),
         )
 
     def test_wait_is_recorded_without_fill(self) -> None:
@@ -98,7 +98,7 @@ class Experiment1EngineTests(unittest.TestCase):
         self.assertEqual(fill.fill_price, Decimal("10005.0000"))
         self.assertEqual(fill.fee, Decimal("0.100050000"))
         state = self.engine.account_state(AccountKind.SPOT)
-        self.assertEqual(state.cash, Decimal("4899.849950000"))
+        self.assertEqual(state.cash, Decimal("1899.849950000"))
         positions = self.engine.positions(AccountKind.SPOT)
         self.assertEqual(len(positions), 1)
         self.assertEqual(positions[0].quantity, Decimal("0.01"))
@@ -125,6 +125,40 @@ class Experiment1EngineTests(unittest.TestCase):
         )
         with self.assertRaises(Experiment1Error):
             self.engine.execute_pending("sell-1", self.quote())
+
+    def test_equity_includes_untraded_open_positions_at_cost_basis(self) -> None:
+        # Regression: a fill in one symbol must not silently drop every
+        # other open position from equity/drawdown - the untraded position
+        # (BTCUSDT here) must still contribute, valued at its own recorded
+        # average_price since no fresh quote for it is available in this
+        # fill's context.
+        self.engine.submit_intent(self.intent())
+        self.engine.execute_pending("intent-1", self.quote())
+
+        self.engine.submit_intent(
+            self.intent(
+                intent_id="intent-2",
+                symbol="ETHUSDT",
+                quantity=Decimal("0.1"),
+                created_at=NOW + timedelta(minutes=1),
+            )
+        )
+        self.engine.execute_pending(
+            "intent-2",
+            self.quote(
+                symbol="ETHUSDT",
+                price=Decimal("2000"),
+                observed_at=NOW + timedelta(minutes=2),
+                source_reference="quote-eth",
+                fee_bps=Decimal("0"),
+                slippage_bps=Decimal("0"),
+            ),
+        )
+
+        state = self.engine.account_state(AccountKind.SPOT)
+        # cash (1699.84995) + BTC 0.01 @ its own avg cost 10005.0000
+        # (100.05) + ETH 0.1 @ fresh mark 2000 (200) = 1999.89995.
+        self.assertEqual(state.last_equity, Decimal("1999.89995"))
 
     def test_futures_long_then_short_realizes_pnl(self) -> None:
         self.engine.submit_intent(

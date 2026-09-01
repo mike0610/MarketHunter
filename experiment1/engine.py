@@ -18,8 +18,8 @@ from experiment1.models import (
 
 STARTING_CASH = {
     AccountKind.INVESTMENTS: Decimal("5000"),
-    AccountKind.SPOT: Decimal("5000"),
-    AccountKind.FUTURES: Decimal("5000"),
+    AccountKind.SPOT: Decimal("2000"),
+    AccountKind.FUTURES: Decimal("2000"),
 }
 MAX_FUTURES_LEVERAGE = Decimal("3")
 
@@ -248,12 +248,23 @@ class Experiment1Engine:
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", (fill.intent_id,fill.account.value,fill.action.value,fill.symbol,str(fill.quantity),str(fill.reference_price),str(fill.fill_price),str(fill.fee),str(fill.leverage),fill.observed_at.isoformat(),fill.source,fill.source_reference))
 
     def _update_equity(self, conn: sqlite3.Connection, fill: FillRecord, mark_price: Decimal) -> None:
+        # Every open position must contribute to equity/exposure/drawdown -
+        # never silently drop a symbol just because it wasn't the one that
+        # triggered this fill. Only the fill's own symbol has a fresh
+        # mark_price here (execute_pending receives one quote, for the
+        # traded symbol only); every other open position is valued at its
+        # own recorded average_price (cost basis) instead - a conservative,
+        # non-fabricated stand-in, not a live re-quote. True continuous
+        # mark-to-market across all held symbols requires a scheduled quote
+        # poll per symbol, which this bounded fix does not add.
         row = self._account_row(conn, fill.account); equity = Decimal(row["cash"])
         positions = conn.execute("SELECT * FROM experiment1_positions WHERE account=?", (fill.account.value,)).fetchall()
         for position in positions:
-            if position["symbol"] != fill.symbol: continue
-            qty = Decimal(position["quantity"]); avg = Decimal(position["average_price"])
-            equity += qty * mark_price if fill.account in (AccountKind.INVESTMENTS, AccountKind.SPOT) else (mark_price - avg) * qty
+            qty = Decimal(position["quantity"])
+            if qty == 0: continue
+            avg = Decimal(position["average_price"])
+            mark = mark_price if position["symbol"] == fill.symbol else avg
+            equity += qty * mark if fill.account in (AccountKind.INVESTMENTS, AccountKind.SPOT) else (mark - avg) * qty
         peak = max(Decimal(row["peak_equity"]), equity); drawdown = Decimal("0") if peak == 0 else (peak - equity) / peak
         conn.execute("UPDATE experiment1_accounts SET peak_equity=?,last_equity=?,max_drawdown=? WHERE account=?",
                      (str(peak),str(equity),str(max(Decimal(row["max_drawdown"]),drawdown)),fill.account.value))

@@ -1,5 +1,5 @@
 {
-  "captured_at_utc": "2026-09-01T10:55:39.550452+00:00",
+  "captured_at_utc": "2026-09-01T11:43:28.505893+00:00",
   "source": "/research/trades",
   "source_revision": "409afc0c980121ce07a846a71d0998a77f166787",
   "total": 224,
@@ -15,14 +15,14 @@
       "id": "c9edd8a2-15a8-4a6e-aed5-adb055ce6248",
       "is_experimental": false,
       "is_profitable_expired": false,
-      "last_processed_candle_at": null,
+      "last_processed_candle_at": "2026-09-01T10:59:59.999000Z",
       "market": "futures",
       "max_active_candles": 30,
       "max_drawdown_percent": 0.0,
-      "max_profit_percent": 0.0,
+      "max_profit_percent": 4.2870381562512545,
       "mtf": null,
       "notional": 100.0,
-      "opened_at": null,
+      "opened_at": "2026-09-01T10:59:59.999000Z",
       "outcome_group": "neutral",
       "outcome_locked": false,
       "outcome_note": null,
@@ -40,7 +40,7 @@
       "rr": 0.0,
       "score": 90.0,
       "signal_id": null,
-      "status": "waiting_entry",
+      "status": "active",
       "stop_loss": 0.022372714285714284,
       "strategy": "Breaker",
       "symbol": "SKRUSDT",
@@ -48,7 +48,7 @@
       "timeframe": "1h"
     },
     {
-      "active_candles": 12,
+      "active_candles": 13,
       "close_reason": "LIVE_ENTRY_FILLED",
       "closed_at": null,
       "created_at": "2026-08-31T22:03:32.782241Z",
@@ -58,7 +58,7 @@
       "id": "9e0eb644-f81d-40f0-a1e6-20b1211fc4f3",
       "is_experimental": false,
       "is_profitable_expired": false,
-      "last_processed_candle_at": "2026-09-01T09:59:59.999000Z",
+      "last_processed_candle_at": "2026-09-01T10:59:59.999000Z",
       "market": "futures",
       "max_active_candles": 30,
       "max_drawdown_percent": -2.7689882723818697,
@@ -93,7 +93,7 @@
       "timeframe": "1h"
     },
     {
-      "active_candles": 12,
+      "active_candles": 13,
       "close_reason": "LIVE_ENTRY_FILLED",
       "closed_at": null,
       "created_at": "2026-08-31T21:03:32.943788Z",
@@ -103,7 +103,7 @@
       "id": "8e721293-73da-42fe-a29d-e33e601214da",
       "is_experimental": false,
       "is_profitable_expired": false,
-      "last_processed_candle_at": "2026-09-01T09:59:59.999000Z",
+      "last_processed_candle_at": "2026-09-01T10:59:59.999000Z",
       "market": "futures",
       "max_active_candles": 30,
       "max_drawdown_percent": -2.184826746866694,
@@ -138,7 +138,7 @@
       "timeframe": "1h"
     },
     {
-      "active_candles": 19,
+      "active_candles": 20,
       "close_reason": "LIVE_ENTRY_FILLED",
       "closed_at": null,
       "created_at": "2026-08-31T15:03:32.451646Z",
@@ -148,7 +148,7 @@
       "id": "a80fae78-0587-4734-a32b-93826989f7be",
       "is_experimental": false,
       "is_profitable_expired": false,
-      "last_processed_candle_at": "2026-09-01T09:59:59.999000Z",
+      "last_processed_candle_at": "2026-09-01T10:59:59.999000Z",
       "market": "futures",
       "max_active_candles": 30,
       "max_drawdown_percent": -0.32529819000750426,
@@ -181,7 +181,7 @@
       "timeframe": "1h"
     },
     {
-      "active_candles": 26,
+      "active_candles": 27,
       "close_reason": "LIVE_ENTRY_FILLED",
       "closed_at": null,
       "created_at": "2026-08-31T08:03:31.729505Z",
@@ -191,7 +191,7 @@
       "id": "e127f3a4-bd3f-44da-972d-bbd7b36b65d3",
       "is_experimental": false,
       "is_profitable_expired": false,
-      "last_processed_candle_at": "2026-09-01T09:59:59.999000Z",
+      "last_processed_candle_at": "2026-09-01T10:59:59.999000Z",
       "market": "futures",
       "max_active_candles": 30,
       "max_drawdown_percent": -1.6589973359166823,
@@ -226,7 +226,7 @@
       "timeframe": "1h"
     },
     {
-      "active_candles": 28,
+      "active_candles": 29,
       "close_reason": "LIVE_ENTRY_FILLED",
       "closed_at": null,
       "created_at": "2026-08-31T06:03:34.052924Z",
@@ -236,7 +236,7 @@
       "id": "a144866e-4591-4876-9228-f5006ad4ae17",
       "is_experimental": true,
       "is_profitable_expired": false,
-      "last_processed_candle_at": "2026-09-01T09:59:59.999000Z",
+      "last_processed_candle_at": "2026-09-01T10:59:59.999000Z",
       "market": "spot",
       "max_active_candles": 30,
       "max_drawdown_percent": -5.219780219780218,

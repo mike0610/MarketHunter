@@ -15,27 +15,27 @@ import MetricCard from "../components/layout/MetricCard";
 const STARTING_CAPITAL = 5000;
 const MONTHLY_CONTRIBUTION = 2000;
 
-const PORTFOLIOS = [
+const PORTFOLIO_PROFILES = [
     {
         name: "Defensive",
         risk: "Низький ризик",
         horizon: "1–3 роки",
-        purpose: "Збереження капіталу та нижча волатильність.",
-        status: "Очікує складу від GIL",
+        purpose: "Профіль для рішень із пріоритетом збереження капіталу та нижчої волатильності.",
+        status: "Очікує рішень GIL",
     },
     {
         name: "Balanced",
         risk: "Середній ризик",
         horizon: "5–10 років",
-        purpose: "Баланс росту капіталу та захисних активів.",
-        status: "Очікує складу від GIL",
+        purpose: "Профіль для балансу росту капіталу та захисних активів.",
+        status: "Очікує рішень GIL",
     },
     {
         name: "Growth",
         risk: "Високий ризик",
         horizon: "10+ років",
-        purpose: "Довгострокове зростання з вищою допустимою просадкою.",
-        status: "Очікує складу від GIL",
+        purpose: "Профіль для довгострокового зростання з вищою допустимою просадкою.",
+        status: "Очікує рішень GIL",
     },
 ];
 
@@ -57,14 +57,14 @@ export default function Investments() {
         <Box sx={{ width: "100%", minWidth: 0 }}>
             <PageHeader
                 title="Investments"
-                subtitle="Тестовий інвестиційний контур MarketHunter. Paper/sandbox only, без реальних брокерських операцій."
+                subtitle="Experiment 1: один окремий інвестиційний sandbox-рахунок. Без реальних брокерських операцій."
             />
 
             <Alert
                 severity="info"
                 sx={{ mb: 3, borderRadius: 3 }}
             >
-                Стартуємо з поточного дня. Ринкові ціни, комісії, FX та податки не вигадуються: вони зʼявляться тільки з перевіреного джерела даних.
+                Старт експерименту не означає BUY. Рішення BUY / SELL / WAIT / HOLD приймаються окремо, а непроінвестований капітал може залишатися cash. Ринкові ціни, комісії, FX та податки не вигадуються.
             </Alert>
 
             <Box
@@ -80,24 +80,24 @@ export default function Investments() {
                 }}
             >
                 <MetricCard
-                    label="Стартовий капітал"
+                    label="Investments account"
                     value={formatUsd(STARTING_CAPITAL)}
-                    caption="Початковий внесок у кожен тестовий сценарій"
+                    caption="Один незалежний рахунок Experiment 1"
                 />
                 <MetricCard
                     label="Щомісячний внесок"
                     value={formatUsd(MONTHLY_CONTRIBUTION)}
-                    caption="Плановий регулярний cash flow"
+                    caption="Може накопичуватися як cash"
                 />
                 <MetricCard
                     label="Режим"
-                    value="Sandbox"
+                    value="Simulation"
                     caption="Жодних реальних ордерів"
                 />
                 <MetricCard
-                    label="Портфелі"
-                    value="3"
-                    caption="Defensive / Balanced / Growth"
+                    label="Поточна дія"
+                    value="WAIT"
+                    caption="До появи перевіреного рішення"
                 />
             </Box>
 
@@ -105,8 +105,12 @@ export default function Investments() {
                 variant="h5"
                 sx={{ mb: 2, fontWeight: 700 }}
             >
-                Гіпотетичні портфелі
+                Профілі рішень
             </Typography>
+
+            <Alert severity="warning" sx={{ mb: 2, borderRadius: 3 }}>
+                Defensive / Balanced / Growth не є трьома окремими рахунками по $5,000. Це лише профілі для порівняння рішень усередині одного Investments account.
+            </Alert>
 
             <Box
                 sx={{
@@ -118,9 +122,9 @@ export default function Investments() {
                     gap: 2,
                 }}
             >
-                {PORTFOLIOS.map((portfolio) => (
+                {PORTFOLIO_PROFILES.map((profile) => (
                     <Paper
-                        key={portfolio.name}
+                        key={profile.name}
                         variant="outlined"
                         sx={{
                             p: 2.5,
@@ -142,18 +146,18 @@ export default function Investments() {
                                     variant="h6"
                                     sx={{ fontWeight: 700 }}
                                 >
-                                    {portfolio.name}
+                                    {profile.name}
                                 </Typography>
                                 <Typography
                                     variant="body2"
                                     color="text.secondary"
                                 >
-                                    {portfolio.horizon}
+                                    {profile.horizon}
                                 </Typography>
                             </Box>
 
                             <Chip
-                                label={portfolio.risk}
+                                label={profile.risk}
                                 size="small"
                                 variant="outlined"
                             />
@@ -163,54 +167,28 @@ export default function Investments() {
                             variant="body2"
                             sx={{ mb: 2 }}
                         >
-                            {portfolio.purpose}
+                            {profile.purpose}
                         </Typography>
 
-                        <Stack spacing={1.5}>
-                            <Box>
-                                <Typography
-                                    variant="caption"
-                                    color="text.secondary"
-                                >
-                                    Початковий NAV
-                                </Typography>
-                                <Typography sx={{ fontWeight: 600 }}>
-                                    {formatUsd(STARTING_CAPITAL)}
-                                </Typography>
-                            </Box>
-
-                            <Box>
-                                <Typography
-                                    variant="caption"
-                                    color="text.secondary"
-                                >
-                                    Наступний внесок
-                                </Typography>
-                                <Typography sx={{ fontWeight: 600 }}>
-                                    {formatUsd(MONTHLY_CONTRIBUTION)} / місяць
-                                </Typography>
-                            </Box>
-
-                            <Box>
-                                <Typography
-                                    variant="caption"
-                                    color="text.secondary"
-                                >
-                                    Готовність
-                                </Typography>
-                                <LinearProgress
-                                    variant="determinate"
-                                    value={25}
-                                    sx={{ mt: 0.75, mb: 0.75, borderRadius: 999 }}
-                                />
-                                <Typography
-                                    variant="caption"
-                                    color="text.secondary"
-                                >
-                                    {portfolio.status}
-                                </Typography>
-                            </Box>
-                        </Stack>
+                        <Box>
+                            <Typography
+                                variant="caption"
+                                color="text.secondary"
+                            >
+                                Готовність
+                            </Typography>
+                            <LinearProgress
+                                variant="determinate"
+                                value={25}
+                                sx={{ mt: 0.75, mb: 0.75, borderRadius: 999 }}
+                            />
+                            <Typography
+                                variant="caption"
+                                color="text.secondary"
+                            >
+                                {profile.status}
+                            </Typography>
+                        </Box>
                     </Paper>
                 ))}
             </Box>

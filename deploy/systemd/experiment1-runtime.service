@@ -1,0 +1,29 @@
+# MarketHunter - Experiment 1 recurring paper-runtime cycle.
+# Triggered by experiment1-runtime.timer - not enabled directly.
+#
+# Paths/user below match the production layout reported via the
+# successor bridge for the existing Outcome Intelligence units (User=
+# ubuntu, repo at /home/ubuntu/MarketHunter) - reused here for
+# consistency. This has NOT been independently verified by the
+# implementing agent (no VPS access) - confirm against the real host
+# before installing. See deploy/systemd/README.md.
+
+[Unit]
+Description=MarketHunter Experiment 1 - market fill / protective exit / MTM / GIL-ingestion cycle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/MarketHunter
+EnvironmentFile=-/home/ubuntu/MarketHunter/deploy/systemd/experiment1-runtime.env
+ExecStart=/home/ubuntu/MarketHunter/.venv/bin/python -m tools.experiment1_runtime.runtime
+
+# Hardening - safe defaults for a short-lived, read-only-market-data,
+# filesystem-writing (only the Experiment1 sqlite db under
+# EXPERIMENT1_DB_PATH, default data/experiment1.db) oneshot job.
+# Adjust if the real deployment layout differs.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full

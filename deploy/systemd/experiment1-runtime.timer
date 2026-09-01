@@ -1,0 +1,17 @@
+# MarketHunter - runs experiment1-runtime.service every 5 minutes.
+# 5 minutes matches build_quote_source()'s own default freshness
+# window (DEFAULT_FRESHNESS_MAX_AGE in tools/experiment1_runtime/runtime.py)
+# - a longer interval would mean this timer's own cadence, not a stale
+# quote, becomes the reason evidence goes WAITING_EVIDENCE. Adjust both
+# together if changed.
+
+[Unit]
+Description=Run MarketHunter Experiment 1 paper-runtime cycle every 5 minutes
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+RandomizedDelaySec=15
+
+[Install]
+WantedBy=timers.target

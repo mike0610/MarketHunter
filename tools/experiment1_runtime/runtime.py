@@ -1,0 +1,226 @@
+"""
+MarketHunter
+
+tools/experiment1_runtime/runtime.py
+
+Module:
+The Experiment 1 recurring paper-runtime cycle - one bounded pass that
+a systemd timer invokes on a cadence (see deploy/systemd/). Each pass
+runs, in order:
+  1. market fill cycle (experiment1.runtime.run_market_cycle) - fresh
+     evidence for every PENDING intent, paper-fills what it can.
+  2. protective exit cycle (experiment1.lifecycle.run_protective_exit_cycle)
+     - re-checks every FILLED intent that carries a stop_loss/take_profit
+     against fresh evidence.
+  3. multi-symbol MTM cycle (experiment1.mtm.run_mtm_cycle), once per
+     canonical account - recomputes NAV/equity/unrealized P&L/drawdown
+     from fresh marks, fails closed to cost-basis fallback per symbol
+     exactly as already built (never fabricates a mark).
+  4. GIL-ingestion cycle (experiment1.gil_decision.run_gil_ingestion_cycle)
+     - runs with an empty decision batch. No real GIL-decision transport
+     exists anywhere in this codebase yet (no API endpoint, no queue),
+     so there is nothing to ingest; this call exists only to prove the
+     wiring imports and runs safely every cycle, ready for a real
+     transport to be plugged in later without touching this script.
+
+This module adds no new trading/accounting/quote logic - every step
+above calls an already-merged, already-tested function unmodified.
+Idempotent and restart-safe by construction, inherited directly from
+each of those functions' own tested contracts (PRs #70, #74, #76, #77)
+- a duplicate or restarted invocation of this script cannot duplicate
+an intent, fill, exit, or MTM snapshot.
+
+Fail-closed contract:
+- A quote that is missing, stale, or for a symbol not recognized as a
+  verified Binance crypto pair never reaches a fill or a fresh mark -
+  see build_quote_source() and experiment1/market_data_providers.py.
+- No decision is manufactured to prove GIL ingestion "works" - a
+  cycle with zero pending GIL decisions is a normal, successful,
+  no-action outcome, not a failure to work around.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+import os
+import sys
+from dataclasses import dataclass
+from datetime import timedelta
+from pathlib import Path
+
+from experiment1.engine import Experiment1Engine, Experiment1Error, STARTING_CASH
+from experiment1.gil_decision import GilIngestionResult, run_gil_ingestion_cycle
+from experiment1.lifecycle import LifecycleResult, run_protective_exit_cycle
+from experiment1.market_data_providers import (
+    AssetClass,
+    FreshnessGuardedQuoteSource,
+    MultiAssetQuoteSource,
+)
+from experiment1.market_source import BinanceExperiment1QuoteSource
+from experiment1.models import OrderIntent
+from experiment1.mtm import MtmCycleResult, run_mtm_cycle
+from experiment1.runtime import AsyncQuoteSource, CycleResult, run_market_cycle
+
+# Matches api/experiment1_api.py's own EXPERIMENT1_DB_PATH convention
+# exactly - one canonical env var name for the db path across every
+# Experiment 1 entry point, never a second/duplicate name invented here.
+ENV_DB_PATH = "EXPERIMENT1_DB_PATH"
+DEFAULT_DB_PATH = Path("data/experiment1.db")
+
+DEFAULT_FRESHNESS_MAX_AGE = timedelta(minutes=5)
+
+logger = logging.getLogger("experiment1_runtime.runtime")
+
+EXIT_OK = 0
+EXIT_FAILURE = 1
+
+
+def _resolve_db_path() -> Path:
+    raw = os.environ.get(ENV_DB_PATH)
+    return Path(raw) if raw else DEFAULT_DB_PATH
+
+
+def _classify(intent: OrderIntent) -> AssetClass | None:
+    """
+    The only asset-class classification this repo has real evidence
+    for: a Binance USDT-quoted pair is CRYPTO. Everything else returns
+    None - MultiAssetQuoteSource already fails that closed to
+    WAITING_EVIDENCE (see experiment1/market_data_providers.py) rather
+    than guessing which non-crypto class an unrecognized symbol might
+    belong to.
+    """
+    return AssetClass.CRYPTO if intent.symbol.endswith("USDT") else None
+
+
+def build_quote_source(*, freshness_max_age: timedelta = DEFAULT_FRESHNESS_MAX_AGE) -> AsyncQuoteSource:
+    """
+    The exact same verified crypto path (BinanceExperiment1QuoteSource)
+    used throughout Experiment 1's tests, wrapped in the existing
+    freshness guard and multi-asset router from PR #74 - no new
+    freshness or routing logic. Only CRYPTO has a registered provider;
+    every other asset class stays BLOCKED-EVIDENCE by omission, not by
+    a fabricated always-unavailable entry for classes this script
+    cannot tell apart anyway.
+    """
+    crypto_source = FreshnessGuardedQuoteSource(
+        BinanceExperiment1QuoteSource(), max_age=freshness_max_age
+    )
+    return MultiAssetQuoteSource(providers={AssetClass.CRYPTO: crypto_source}, classify=_classify)
+
+
+def _protective_exit_candidates(engine: Experiment1Engine) -> tuple[str, ...]:
+    """
+    Every currently FILLED intent carrying a stop_loss or take_profit -
+    run_protective_exit_cycle itself already safely no-ops
+    (NO_PROTECTIVE_RULE / ALREADY_CLOSED) on anything else, but there is
+    no reason to even ask it about an entry with neither rule set.
+    """
+    candidates = []
+    for intent_id in engine.filled_intent_ids():
+        intent = engine.get_intent(intent_id)
+        if intent.stop_loss is not None or intent.take_profit is not None:
+            candidates.append(intent_id)
+    return tuple(candidates)
+
+
+@dataclass(frozen=True, slots=True)
+class Experiment1CycleSummary:
+    market_fill_results: tuple[CycleResult, ...]
+    protective_exit_results: tuple[LifecycleResult, ...]
+    mtm_results: tuple[MtmCycleResult, ...]
+    gil_ingestion_results: tuple[GilIngestionResult, ...]
+
+
+async def run_experiment1_cycle(
+    engine: Experiment1Engine, quote_source: AsyncQuoteSource
+) -> Experiment1CycleSummary:
+    market_fill_results = await run_market_cycle(engine, quote_source)
+
+    protective_exit_results = await run_protective_exit_cycle(
+        engine, quote_source, _protective_exit_candidates(engine)
+    )
+
+    mtm_results: list[MtmCycleResult] = []
+    for account in STARTING_CASH:
+        try:
+            mtm_results.append(await run_mtm_cycle(engine, quote_source, account))
+        except Experiment1Error as exc:
+            # Every STARTING_CASH account is created by Experiment1Engine's
+            # own __init__ - this should never actually happen, but a
+            # not-yet-initialized account must never crash the whole
+            # cycle for every other account.
+            logger.warning("mtm cycle skipped for %s: %s", account.value, exc)
+
+    # No real GIL-decision transport exists yet (see module docstring) -
+    # an empty batch is a normal, successful outcome, never a failure.
+    gil_ingestion_results = run_gil_ingestion_cycle(engine, [])
+
+    return Experiment1CycleSummary(
+        market_fill_results, protective_exit_results, tuple(mtm_results), gil_ingestion_results
+    )
+
+
+def _count(results, outcome: str) -> int:
+    return sum(1 for r in results if r.outcome == outcome)
+
+
+def _log_summary(summary: Experiment1CycleSummary) -> None:
+    logger.info(
+        "market fill: %d intent(s) - filled=%d waiting=%d skipped=%d source_error=%d",
+        len(summary.market_fill_results),
+        _count(summary.market_fill_results, "PAPER_FILLED"),
+        _count(summary.market_fill_results, "WAITING_EVIDENCE"),
+        _count(summary.market_fill_results, "SKIPPED"),
+        _count(summary.market_fill_results, "SOURCE_ERROR"),
+    )
+    logger.info(
+        "protective exit: %d entr(y/ies) checked - triggered=%d active=%d already_closed=%d waiting=%d",
+        len(summary.protective_exit_results),
+        _count(summary.protective_exit_results, "STOP_LOSS") + _count(summary.protective_exit_results, "TAKE_PROFIT"),
+        _count(summary.protective_exit_results, "ACTIVE"),
+        _count(summary.protective_exit_results, "ALREADY_CLOSED"),
+        _count(summary.protective_exit_results, "WAITING_EVIDENCE"),
+    )
+    partial = sum(1 for r in summary.mtm_results if r.completeness.value == "PARTIAL_EVIDENCE_FALLBACK")
+    logger.info(
+        "mtm: %d account(s) repriced - partial_evidence_fallback=%d",
+        len(summary.mtm_results),
+        partial,
+    )
+    logger.info(
+        "gil ingestion: %d decision(s) - blocked=%d",
+        len(summary.gil_ingestion_results),
+        _count(summary.gil_ingestion_results, "BLOCKED"),
+    )
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="experiment1-runtime")
+    parser.parse_args(argv)  # no subcommands - one bounded cycle per invocation
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    db_path = _resolve_db_path()
+    logger.info("experiment1 runtime cycle starting - db=%s", db_path)
+
+    engine = Experiment1Engine(db_path)
+    quote_source = build_quote_source()
+
+    try:
+        summary = asyncio.run(run_experiment1_cycle(engine, quote_source))
+    except Exception:
+        logger.exception("experiment1 runtime cycle failed")
+        sys.exit(EXIT_FAILURE)
+
+    _log_summary(summary)
+    logger.info("experiment1 runtime cycle complete")
+    sys.exit(EXIT_OK)
+
+
+if __name__ == "__main__":
+    main()

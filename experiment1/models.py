@@ -174,3 +174,42 @@ class ClosedTrade:
     realized_pnl: Decimal
     fees_paid: Decimal
     fill_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class GilDecision:
+    """
+    GIL's own decision, exactly as GIL submits it. GIL owns thesis, the
+    action (BUY/WAIT/HOLD/SELL or LONG/SHORT), sizing (quantity),
+    invalidation (stop_loss/take_profit), and risk parameters
+    (leverage) - MarketHunter never manufactures or reinterprets any of
+    these fields. account is the ledger GIL is directing this decision
+    into; MarketHunter does not choose it on GIL's behalf.
+
+    This is a structured-input-only contract: action must already be a
+    decided DecisionAction (BUY/WAIT/HOLD/SELL/LONG/SHORT) - there is no
+    free-text parsing anywhere in the ingestion path, so an ambiguous or
+    not-yet-decided status (e.g. a research "CANDIDATE") can never be
+    coerced into a trade action.
+
+    See experiment1/gil_decision.py for the deterministic mapping into
+    the canonical OrderIntent and the MarketHunter risk-validation step
+    that follows.
+    """
+
+    decision_id: str
+    decided_at: datetime
+    account: AccountKind
+    action: DecisionAction
+    symbol: str
+    thesis: str
+    quantity: Decimal
+    leverage: Decimal = Decimal("1")
+    stop_loss: Decimal | None = None
+    take_profit: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        _nonblank(self.decision_id, "decision_id")
+        _nonblank(self.symbol, "symbol")
+        _nonblank(self.thesis, "thesis")
+        _aware(self.decided_at, "decided_at")

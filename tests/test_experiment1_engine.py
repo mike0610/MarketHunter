@@ -266,6 +266,19 @@ class Experiment1EngineTests(unittest.TestCase):
         self.assertGreater(state.realized_pnl, Decimal("0"))
         self.assertEqual(self.engine.positions(AccountKind.FUTURES), ())
 
+    def test_filled_intent_ids_lists_only_filled_not_pending_or_blocked(self) -> None:
+        self.engine.submit_intent(self.intent(intent_id="pending-1"))
+        with self.assertRaises(Experiment1Error):
+            self.engine.submit_intent(self.intent(intent_id="blocked-1", leverage=Decimal("2")))
+        self.engine.submit_intent(self.intent(intent_id="filled-1", created_at=NOW + timedelta(minutes=1)))
+        self.engine.execute_pending(
+            "filled-1", self.quote(observed_at=NOW + timedelta(minutes=2), source_reference="q-filled")
+        )
+
+        self.assertEqual(self.engine.filled_intent_ids(), ("filled-1",))
+        self.assertIn("pending-1", self.engine.pending_intent_ids())
+        self.assertIn("blocked-1", self.engine.blocked_intent_ids())
+
 
 class Experiment1ContributionTests(unittest.TestCase):
     def setUp(self) -> None:

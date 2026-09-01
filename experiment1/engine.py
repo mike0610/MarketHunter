@@ -274,6 +274,21 @@ class Experiment1Engine:
             ).fetchall()
             return tuple(row["intent_id"] for row in rows)
 
+    def filled_intent_ids(self) -> tuple[str, ...]:
+        """
+        Every intent_id currently FILLED - the discovery source a
+        protective-exit cycle needs to know which entry intents to
+        re-check (see run_protective_exit_cycle, which itself already
+        no-ops safely on an entry with no stop_loss/take_profit or one
+        whose position already closed).
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT intent_id FROM experiment1_intents WHERE status=? ORDER BY created_at, intent_id",
+                (IntentStatus.FILLED.value,),
+            ).fetchall()
+            return tuple(row["intent_id"] for row in rows)
+
     def get_intent(self, intent_id: str) -> OrderIntent:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM experiment1_intents WHERE intent_id=?", (intent_id,)).fetchone()

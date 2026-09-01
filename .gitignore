@@ -8,6 +8,9 @@ data/outcome_intelligence/
 # Outcome Intelligence env secrets (never commit a filled-in copy)
 deploy/systemd/outcome-intelligence.env
 
+# Experiment 1 runtime env overrides (never commit a filled-in copy)
+deploy/systemd/experiment1-runtime.env
+
 # Python cache
 __pycache__/
 *.py[cod]

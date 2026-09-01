@@ -45,13 +45,13 @@ jobs:
           ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Deploy and prove persistent Experiment1 runtime
+      - name: Deploy runtime and run first cycle
         shell: bash
         run: |
           set -euo pipefail
           KEY="$HOME/.ssh/markethunter_vps_ed25519"
-
-          ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "EXPECTED_SHA='${EXPECTED_SHA}' bash -s" <<'REMOTE'
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -i "$KEY" \
+            "${VPS_USER}@${VPS_HOST}" "EXPECTED_SHA='${EXPECTED_SHA}' bash -s" <<'REMOTE'
           set -euo pipefail
           REPO=/home/ubuntu/MarketHunter
           cd "$REPO"
@@ -75,12 +75,8 @@ jobs:
                   deploy/systemd/experiment1-runtime.timer \
                   /etc/systemd/system/
           sudo systemctl daemon-reload
-
-          # API must load the merged GIL Decision Inbox route from the same
-          # deployed commit. This is the only existing service restarted.
           sudo systemctl restart markethunter-api
           sudo systemctl is-active --quiet markethunter-api
-
           sudo systemctl enable --now experiment1-runtime.timer
 
           echo '=== FIRST BOUNDED CYCLE ==='
@@ -92,16 +88,44 @@ jobs:
           systemctl is-enabled experiment1-runtime.timer
           systemctl is-active experiment1-runtime.timer
           systemctl list-timers 'experiment1-runtime.timer' --no-pager
+          REMOTE
 
-          echo '=== WAIT FOR SCHEDULED CYCLE ==='
-          sleep 330
+      - name: Wait for scheduled timer cycle
+        shell: bash
+        run: sleep 330
+
+      - name: Verify scheduled cycle, restart and recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEY="$HOME/.ssh/markethunter_vps_ed25519"
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -i "$KEY" \
+            "${VPS_USER}@${VPS_HOST}" "EXPECTED_SHA='${EXPECTED_SHA}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          REPO=/home/ubuntu/MarketHunter
+          cd "$REPO"
+
+          DEPLOYED_SHA=$(git rev-parse HEAD)
+          echo "DEPLOYED_SHA=$DEPLOYED_SHA"
+          if [ "$DEPLOYED_SHA" != "$EXPECTED_SHA" ]; then
+            echo "DEPLOY SHA MISMATCH AFTER WAIT: expected $EXPECTED_SHA"
+            exit 6
+          fi
+
+          echo '=== SCHEDULED CYCLE JOURNAL ==='
           journalctl -u experiment1-runtime.service --since '-7 minutes' --no-pager
+          SCHEDULED_COUNT=$(journalctl -u experiment1-runtime.service --since '-7 minutes' --no-pager | grep -c 'experiment1 runtime cycle complete' || true)
+          echo "completed_cycles_last_7m=$SCHEDULED_COUNT"
+          if [ "$SCHEDULED_COUNT" -lt 2 ]; then
+            echo 'RUNTIME PROOF FAILED: expected initial + scheduled cycle in last 7 minutes'
+            exit 7
+          fi
 
           echo '=== CONTROLLED TIMER RESTART + RECOVERY CYCLE ==='
           sudo systemctl restart experiment1-runtime.timer
           sudo systemctl is-active --quiet experiment1-runtime.timer
           sudo systemctl start experiment1-runtime.service
-          sudo systemctl is-failed experiment1-runtime.service >/dev/null && exit 5 || true
+          sudo systemctl is-failed experiment1-runtime.service >/dev/null && exit 8 || true
           journalctl -u experiment1-runtime.service -n 120 --no-pager
 
           echo '=== READ-ONLY EXPERIMENT1 DB AUDIT ==='

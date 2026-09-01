@@ -80,7 +80,14 @@ def state():
     engine = _engine()
     accounts = []
     for account in AccountKind:
-        snapshot = engine.account_state(account)
+        try:
+            snapshot = engine.account_state(account)
+        except Experiment1Error:
+            # AccountKind.INVESTMENTS (legacy) is never (re)created for a
+            # fresh deployment - only report accounts that actually exist,
+            # never fabricate a zero-state for one that was never
+            # initialized.
+            continue
         accounts.append(
             {
                 "account": account.value,

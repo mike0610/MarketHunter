@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
 from experiment1.models import (
     AccountKind,
     AccountState,
+    ContributionRecord,
     DecisionAction,
     FillRecord,
     IntentStatus,
@@ -16,11 +17,42 @@ from experiment1.models import (
     PositionState,
 )
 
+# The legacy single AccountKind.INVESTMENTS is intentionally absent here -
+# it is never (re)created for a fresh deployment. Any pre-existing row
+# under that key is left untouched (see AccountKind's own docstring);
+# going forward the canonical Investments model is these three
+# independent ledgers.
 STARTING_CASH = {
-    AccountKind.INVESTMENTS: Decimal("5000"),
+    AccountKind.INVESTMENTS_DEFENSIVE: Decimal("5000"),
+    AccountKind.INVESTMENTS_BALANCED: Decimal("5000"),
+    AccountKind.INVESTMENTS_GROWTH: Decimal("5000"),
     AccountKind.SPOT: Decimal("2000"),
     AccountKind.FUTURES: Decimal("2000"),
 }
+
+# Canonical monthly contribution per ledger. Applied only via the
+# on-demand contribute() method below - this engine schedules nothing
+# itself; an external caller (operator or a future scheduled job,
+# analogous to the Outcome Intelligence systemd timers) decides when to
+# call it for a given period.
+MONTHLY_CONTRIBUTION = {
+    AccountKind.INVESTMENTS_DEFENSIVE: Decimal("2000"),
+    AccountKind.INVESTMENTS_BALANCED: Decimal("2000"),
+    AccountKind.INVESTMENTS_GROWTH: Decimal("2000"),
+}
+
+# Accounts that trade with BUY/SELL semantics, no leverage, and are
+# valued as qty * mark (as opposed to FUTURES' LONG/SHORT, leveraged,
+# (mark - avg) * qty valuation). AccountKind.INVESTMENTS (legacy) is
+# included only so any pre-existing row keeps its original behavior.
+NO_LEVERAGE_ACCOUNTS = (
+    AccountKind.INVESTMENTS,
+    AccountKind.INVESTMENTS_DEFENSIVE,
+    AccountKind.INVESTMENTS_BALANCED,
+    AccountKind.INVESTMENTS_GROWTH,
+    AccountKind.SPOT,
+)
+
 MAX_FUTURES_LEVERAGE = Decimal("3")
 
 
@@ -92,6 +124,13 @@ class Experiment1Engine:
                     observed_at TEXT NOT NULL,
                     source TEXT NOT NULL,
                     source_reference TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS experiment1_contributions (
+                    account TEXT NOT NULL,
+                    period TEXT NOT NULL,
+                    amount TEXT NOT NULL,
+                    applied_at TEXT NOT NULL,
+                    PRIMARY KEY(account, period)
                 );
                 """
             )
@@ -190,7 +229,7 @@ class Experiment1Engine:
             return fill
 
     def _validate_intent_policy(self, intent: OrderIntent) -> None:
-        if intent.account in (AccountKind.INVESTMENTS, AccountKind.SPOT):
+        if intent.account in NO_LEVERAGE_ACCOUNTS:
             if intent.action not in (DecisionAction.BUY, DecisionAction.SELL, DecisionAction.WAIT, DecisionAction.HOLD):
                 raise Experiment1Error("Investments/Spot only allow BUY/SELL/WAIT/HOLD")
             if intent.leverage != Decimal("1"):
@@ -215,7 +254,7 @@ class Experiment1Engine:
         cash = Decimal(account["cash"]); realized = Decimal(account["realized_pnl"]); fees_paid = Decimal(account["fees_paid"])
         row = conn.execute("SELECT * FROM experiment1_positions WHERE account=? AND symbol=?", (fill.account.value, fill.symbol)).fetchone()
         old_qty = Decimal(row["quantity"]) if row else Decimal("0"); old_avg = Decimal(row["average_price"]) if row else Decimal("0")
-        if fill.account in (AccountKind.INVESTMENTS, AccountKind.SPOT):
+        if fill.account in NO_LEVERAGE_ACCOUNTS:
             if fill.action is DecisionAction.BUY:
                 cost = fill.fill_price * fill.quantity + fill.fee
                 if cost > cash: raise Experiment1Error("insufficient paper cash")
@@ -264,7 +303,7 @@ class Experiment1Engine:
             if qty == 0: continue
             avg = Decimal(position["average_price"])
             mark = mark_price if position["symbol"] == fill.symbol else avg
-            equity += qty * mark if fill.account in (AccountKind.INVESTMENTS, AccountKind.SPOT) else (mark - avg) * qty
+            equity += qty * mark if fill.account in NO_LEVERAGE_ACCOUNTS else (mark - avg) * qty
         peak = max(Decimal(row["peak_equity"]), equity); drawdown = Decimal("0") if peak == 0 else (peak - equity) / peak
         conn.execute("UPDATE experiment1_accounts SET peak_equity=?,last_equity=?,max_drawdown=? WHERE account=?",
                      (str(peak),str(equity),str(max(Decimal(row["max_drawdown"]),drawdown)),fill.account.value))
@@ -280,6 +319,59 @@ class Experiment1Engine:
             rows = conn.execute("SELECT * FROM experiment1_positions WHERE account=? ORDER BY symbol", (account.value,)).fetchall()
             return tuple(PositionState(account, row["symbol"], Decimal(row["quantity"]), Decimal(row["average_price"]), Decimal(row["leverage"]))
                          for row in rows if Decimal(row["quantity"]) != 0)
+
+    def contribute(self, account: AccountKind, period: str, now: datetime | None = None) -> bool:
+        """
+        Credit `account`'s cash by its canonical MONTHLY_CONTRIBUTION for
+        `period` - an opaque idempotency key such as "2026-09". Returns
+        True if applied, False if this exact (account, period) pair was
+        already applied - safe to call repeatedly, e.g. from an external
+        caller that fires more than once for the same period. This
+        method schedules nothing itself; nothing in this engine calls it
+        automatically - an operator or a future scheduled job decides
+        when to invoke it for a given period.
+        """
+        if account not in MONTHLY_CONTRIBUTION:
+            raise Experiment1Error(f"{account.value} has no configured monthly contribution")
+        if not period or not period.strip():
+            raise Experiment1Error("period must be non-blank")
+        amount = MONTHLY_CONTRIBUTION[account]
+        applied_at = (now or datetime.now(timezone.utc)).isoformat()
+        with self._connect() as conn:
+            row = self._account_row(conn, account)
+            existing = conn.execute(
+                "SELECT 1 FROM experiment1_contributions WHERE account=? AND period=?",
+                (account.value, period),
+            ).fetchone()
+            if existing is not None:
+                return False
+            conn.execute(
+                "INSERT INTO experiment1_contributions(account,period,amount,applied_at) VALUES (?,?,?,?)",
+                (account.value, period, str(amount), applied_at),
+            )
+            new_cash = Decimal(row["cash"]) + amount
+            new_equity = Decimal(row["last_equity"]) + amount
+            peak = max(Decimal(row["peak_equity"]), new_equity)
+            drawdown = Decimal("0") if peak == 0 else (peak - new_equity) / peak
+            conn.execute(
+                """UPDATE experiment1_accounts
+                   SET cash=?, peak_equity=?, last_equity=?, max_drawdown=?
+                   WHERE account=?""",
+                (str(new_cash), str(peak), str(new_equity),
+                 str(max(Decimal(row["max_drawdown"]), drawdown)), account.value),
+            )
+        return True
+
+    def contributions(self, account: AccountKind) -> tuple[ContributionRecord, ...]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM experiment1_contributions WHERE account=? ORDER BY period",
+                (account.value,),
+            ).fetchall()
+            return tuple(
+                ContributionRecord(account, row["period"], Decimal(row["amount"]), datetime.fromisoformat(row["applied_at"]))
+                for row in rows
+            )
 
     def _account_row(self, conn: sqlite3.Connection, account: AccountKind) -> sqlite3.Row:
         row = conn.execute("SELECT * FROM experiment1_accounts WHERE account=?", (account.value,)).fetchone()

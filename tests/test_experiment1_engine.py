@@ -49,10 +49,13 @@ class Experiment1EngineTests(unittest.TestCase):
         return MarketQuote(**data)
 
     def test_accounts_start_independently(self) -> None:
-        self.assertEqual(
-            self.engine.account_state(AccountKind.INVESTMENTS).cash,
-            Decimal("5000"),
-        )
+        for ledger in (
+            AccountKind.INVESTMENTS_DEFENSIVE,
+            AccountKind.INVESTMENTS_BALANCED,
+            AccountKind.INVESTMENTS_GROWTH,
+        ):
+            with self.subTest(ledger=ledger):
+                self.assertEqual(self.engine.account_state(ledger).cash, Decimal("5000"))
         self.assertEqual(
             self.engine.account_state(AccountKind.SPOT).cash,
             Decimal("2000"),
@@ -61,6 +64,39 @@ class Experiment1EngineTests(unittest.TestCase):
             self.engine.account_state(AccountKind.FUTURES).cash,
             Decimal("2000"),
         )
+
+    def test_investments_ledgers_are_independent(self) -> None:
+        # A fill in one ledger must not affect the cash/positions of the
+        # other two, or of Spot/Futures.
+        self.engine.submit_intent(
+            self.intent(account=AccountKind.INVESTMENTS_DEFENSIVE, symbol="BTCUSDT")
+        )
+        self.engine.execute_pending("intent-1", self.quote())
+
+        self.assertLess(
+            self.engine.account_state(AccountKind.INVESTMENTS_DEFENSIVE).cash,
+            Decimal("5000"),
+        )
+        self.assertEqual(
+            self.engine.account_state(AccountKind.INVESTMENTS_BALANCED).cash,
+            Decimal("5000"),
+        )
+        self.assertEqual(
+            self.engine.account_state(AccountKind.INVESTMENTS_GROWTH).cash,
+            Decimal("5000"),
+        )
+        self.assertEqual(self.engine.account_state(AccountKind.SPOT).cash, Decimal("2000"))
+        self.assertEqual(
+            self.engine.positions(AccountKind.INVESTMENTS_BALANCED), ()
+        )
+
+    def test_legacy_investments_kind_is_not_auto_created(self) -> None:
+        # Preserved in the enum (never removed) so a pre-existing
+        # production row would remain reachable, but a fresh deployment
+        # must not silently create it - the canonical model is the three
+        # ledgers, not the legacy single account.
+        with self.assertRaises(Experiment1Error):
+            self.engine.account_state(AccountKind.INVESTMENTS)
 
     def test_wait_is_recorded_without_fill(self) -> None:
         status = self.engine.submit_intent(
@@ -192,6 +228,60 @@ class Experiment1EngineTests(unittest.TestCase):
         state = self.engine.account_state(AccountKind.FUTURES)
         self.assertGreater(state.realized_pnl, Decimal("0"))
         self.assertEqual(self.engine.positions(AccountKind.FUTURES), ())
+
+
+class Experiment1ContributionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.engine = Experiment1Engine(Path(self.tmp.name) / "experiment1.db")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_contribute_credits_cash_and_equity(self) -> None:
+        applied = self.engine.contribute(
+            AccountKind.INVESTMENTS_DEFENSIVE, "2026-09", now=NOW
+        )
+        self.assertTrue(applied)
+        state = self.engine.account_state(AccountKind.INVESTMENTS_DEFENSIVE)
+        self.assertEqual(state.cash, Decimal("7000"))
+        self.assertEqual(state.last_equity, Decimal("7000"))
+        self.assertEqual(state.peak_equity, Decimal("7000"))
+
+    def test_contribute_same_period_twice_is_idempotent(self) -> None:
+        first = self.engine.contribute(AccountKind.INVESTMENTS_BALANCED, "2026-09", now=NOW)
+        second = self.engine.contribute(AccountKind.INVESTMENTS_BALANCED, "2026-09", now=NOW)
+        self.assertTrue(first)
+        self.assertFalse(second)
+        state = self.engine.account_state(AccountKind.INVESTMENTS_BALANCED)
+        self.assertEqual(state.cash, Decimal("7000"))
+
+    def test_contribute_different_periods_both_apply(self) -> None:
+        self.engine.contribute(AccountKind.INVESTMENTS_GROWTH, "2026-09", now=NOW)
+        self.engine.contribute(
+            AccountKind.INVESTMENTS_GROWTH, "2026-10", now=NOW + timedelta(days=30)
+        )
+        state = self.engine.account_state(AccountKind.INVESTMENTS_GROWTH)
+        self.assertEqual(state.cash, Decimal("9000"))
+
+    def test_contribute_rejects_account_with_no_configured_amount(self) -> None:
+        with self.assertRaises(Experiment1Error):
+            self.engine.contribute(AccountKind.SPOT, "2026-09", now=NOW)
+
+    def test_contributions_lists_applied_history(self) -> None:
+        self.engine.contribute(AccountKind.INVESTMENTS_DEFENSIVE, "2026-09", now=NOW)
+        records = self.engine.contributions(AccountKind.INVESTMENTS_DEFENSIVE)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].period, "2026-09")
+        self.assertEqual(records[0].amount, Decimal("2000"))
+
+    def test_contribute_never_auto_disables_or_schedules(self) -> None:
+        # Structural guarantee: contribute() is purely on-demand - no
+        # attribute/method on the engine represents a scheduling action.
+        engine_attrs = {name for name in dir(self.engine) if not name.startswith("_")}
+        for forbidden in ("schedule", "cron", "auto_contribute"):
+            for name in engine_attrs:
+                self.assertNotIn(forbidden, name.lower())
 
 
 if __name__ == "__main__":

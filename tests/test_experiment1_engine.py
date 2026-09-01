@@ -49,9 +49,18 @@ class Experiment1EngineTests(unittest.TestCase):
         return MarketQuote(**data)
 
     def test_accounts_start_independently(self) -> None:
-        self.assertEqual(self.engine.account_state(AccountKind.INVESTMENTS).cash, Decimal("5000"))
-        self.assertEqual(self.engine.account_state(AccountKind.SPOT).cash, Decimal("2000"))
-        self.assertEqual(self.engine.account_state(AccountKind.FUTURES).cash, Decimal("2000"))
+        self.assertEqual(
+            self.engine.account_state(AccountKind.INVESTMENTS).cash,
+            Decimal("5000"),
+        )
+        self.assertEqual(
+            self.engine.account_state(AccountKind.SPOT).cash,
+            Decimal("5000"),
+        )
+        self.assertEqual(
+            self.engine.account_state(AccountKind.FUTURES).cash,
+            Decimal("5000"),
+        )
 
     def test_wait_is_recorded_without_fill(self) -> None:
         status = self.engine.submit_intent(
@@ -79,7 +88,8 @@ class Experiment1EngineTests(unittest.TestCase):
         self.engine.submit_intent(self.intent())
         with self.assertRaises(Experiment1Error):
             self.engine.execute_pending(
-                "intent-1", self.quote(observed_at=NOW - timedelta(seconds=1))
+                "intent-1",
+                self.quote(observed_at=NOW - timedelta(seconds=1)),
             )
 
     def test_spot_buy_applies_adverse_slippage_and_fee(self) -> None:
@@ -88,7 +98,7 @@ class Experiment1EngineTests(unittest.TestCase):
         self.assertEqual(fill.fill_price, Decimal("10005.0000"))
         self.assertEqual(fill.fee, Decimal("0.100050000"))
         state = self.engine.account_state(AccountKind.SPOT)
-        self.assertEqual(state.cash, Decimal("1899.849950000"))
+        self.assertEqual(state.cash, Decimal("4899.849950000"))
         positions = self.engine.positions(AccountKind.SPOT)
         self.assertEqual(len(positions), 1)
         self.assertEqual(positions[0].quantity, Decimal("0.01"))
@@ -98,7 +108,10 @@ class Experiment1EngineTests(unittest.TestCase):
         self.engine.submit_intent(intent)
         first = self.engine.execute_pending(intent.intent_id, self.quote())
         self.assertEqual(self.engine.submit_intent(intent).value, "FILLED")
-        second = self.engine.execute_pending(intent.intent_id, self.quote(source_reference="quote-2"))
+        second = self.engine.execute_pending(
+            intent.intent_id,
+            self.quote(source_reference="quote-2"),
+        )
         self.assertEqual(first, second)
 
     def test_duplicate_intent_id_with_changed_content_fails_closed(self) -> None:

@@ -1,0 +1,4 @@
+GIL DECISION ENVELOPE v1
+```json
+{"account":"SPOT","action":"WAIT","decided_at":"2026-09-01T12:00:00+00:00","decision_id":"gil-transport-proof-example","execution_condition":null,"leverage":"1","quantity":"0","sizing":null,"stop_loss":null,"symbol":"BTCUSDT","take_profit":null,"thesis":"synthetic transport proof only","trigger":null}
+```

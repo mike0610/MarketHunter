@@ -16,13 +16,11 @@ from experiment1.models import (
     PositionState,
 )
 
-
 STARTING_CASH = {
     AccountKind.INVESTMENTS: Decimal("5000"),
-    AccountKind.SPOT: Decimal("2000"),
-    AccountKind.FUTURES: Decimal("2000"),
+    AccountKind.SPOT: Decimal("5000"),
+    AccountKind.FUTURES: Decimal("5000"),
 }
-
 MAX_FUTURES_LEVERAGE = Decimal("3")
 
 
@@ -31,12 +29,7 @@ class Experiment1Error(Exception):
 
 
 class Experiment1Engine:
-    """Persistent, paper-only Experiment 1 execution core.
-
-    The engine never fetches market data and never sends real orders. A fill can
-    only occur from a caller-supplied MarketQuote carrying explicit provenance,
-    fee and slippage assumptions.
-    """
+    """Persistent paper-only engine for GIL Experiment 1."""
 
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
@@ -106,15 +99,38 @@ class Experiment1Engine:
     def _ensure_accounts(self) -> None:
         with self._connect() as conn:
             for account, cash in STARTING_CASH.items():
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO experiment1_accounts
-                    (account, starting_cash, cash, realized_pnl, fees_paid,
-                     peak_equity, last_equity, max_drawdown)
-                    VALUES (?, ?, ?, '0', '0', ?, ?, '0')
-                    """,
-                    (account.value, str(cash), str(cash), str(cash), str(cash)),
+                row = conn.execute(
+                    "SELECT starting_cash, cash, realized_pnl, fees_paid FROM experiment1_accounts WHERE account=?",
+                    (account.value,),
+                ).fetchone()
+                if row is None:
+                    conn.execute(
+                        """
+                        INSERT INTO experiment1_accounts
+                        (account, starting_cash, cash, realized_pnl, fees_paid,
+                         peak_equity, last_equity, max_drawdown)
+                        VALUES (?, ?, ?, '0', '0', ?, ?, '0')
+                        """,
+                        (account.value, str(cash), str(cash), str(cash), str(cash)),
+                    )
+                    continue
+                untouched = (
+                    Decimal(row["realized_pnl"]) == 0
+                    and Decimal(row["fees_paid"]) == 0
+                    and not conn.execute(
+                        "SELECT 1 FROM experiment1_positions WHERE account=? LIMIT 1",
+                        (account.value,),
+                    ).fetchone()
                 )
+                if untouched and Decimal(row["starting_cash"]) != cash:
+                    conn.execute(
+                        """
+                        UPDATE experiment1_accounts
+                        SET starting_cash=?, cash=?, peak_equity=?, last_equity=?, max_drawdown='0'
+                        WHERE account=?
+                        """,
+                        (str(cash), str(cash), str(cash), str(cash), account.value),
+                    )
 
     def submit_intent(self, intent: OrderIntent) -> IntentStatus:
         self._validate_intent_policy(intent)
@@ -124,13 +140,13 @@ class Experiment1Engine:
             else IntentStatus.PENDING
         )
         with self._connect() as conn:
-            existing = conn.execute(
-                "SELECT * FROM experiment1_intents WHERE intent_id = ?",
+            row = conn.execute(
+                "SELECT * FROM experiment1_intents WHERE intent_id=?",
                 (intent.intent_id,),
             ).fetchone()
-            if existing is not None:
-                if self._row_matches_intent(existing, intent):
-                    return IntentStatus(existing["status"])
+            if row is not None:
+                if self._intent_from_row(row) == intent:
+                    return IntentStatus(row["status"])
                 raise Experiment1Error("intent_id already exists with different content")
             conn.execute(
                 """
@@ -158,7 +174,7 @@ class Experiment1Engine:
     def execute_pending(self, intent_id: str, quote: MarketQuote) -> FillRecord:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM experiment1_intents WHERE intent_id = ?",
+                "SELECT * FROM experiment1_intents WHERE intent_id=?",
                 (intent_id,),
             ).fetchone()
             if row is None:
@@ -178,10 +194,10 @@ class Experiment1Engine:
             fill = self._build_fill(intent, quote)
             self._apply_fill(conn, fill)
             conn.execute(
-                "UPDATE experiment1_intents SET status = ? WHERE intent_id = ?",
+                "UPDATE experiment1_intents SET status=? WHERE intent_id=?",
                 (IntentStatus.FILLED.value, intent_id),
             )
-            self._update_equity_after_fill(conn, fill, quote.price)
+            self._update_equity(conn, fill, quote.price)
             return fill
 
     def _validate_intent_policy(self, intent: OrderIntent) -> None:
@@ -195,23 +211,24 @@ class Experiment1Engine:
                 raise Experiment1Error("Investments/Spot only allow BUY/SELL/WAIT/HOLD")
             if intent.leverage != Decimal("1"):
                 raise Experiment1Error("Investments/Spot leverage must be 1x")
-        else:
-            if intent.action not in (
-                DecisionAction.LONG,
-                DecisionAction.SHORT,
-                DecisionAction.WAIT,
-                DecisionAction.HOLD,
-            ):
-                raise Experiment1Error("Futures only allow LONG/SHORT/WAIT/HOLD")
-            if intent.leverage > MAX_FUTURES_LEVERAGE:
-                raise Experiment1Error("Futures leverage exceeds conservative 3x cap")
+            return
+        if intent.action not in (
+            DecisionAction.LONG,
+            DecisionAction.SHORT,
+            DecisionAction.WAIT,
+            DecisionAction.HOLD,
+        ):
+            raise Experiment1Error("Futures only allow LONG/SHORT/WAIT/HOLD")
+        if intent.leverage > MAX_FUTURES_LEVERAGE:
+            raise Experiment1Error("Futures leverage exceeds conservative 3x cap")
 
     def _build_fill(self, intent: OrderIntent, quote: MarketQuote) -> FillRecord:
         buy_like = intent.action in (DecisionAction.BUY, DecisionAction.LONG)
         slip = quote.slippage_bps / Decimal("10000")
-        fill_price = quote.price * (Decimal("1") + slip if buy_like else Decimal("1") - slip)
-        notional = fill_price * intent.quantity
-        fee = notional * quote.fee_bps / Decimal("10000")
+        fill_price = quote.price * (
+            Decimal("1") + slip if buy_like else Decimal("1") - slip
+        )
+        fee = fill_price * intent.quantity * quote.fee_bps / Decimal("10000")
         return FillRecord(
             intent_id=intent.intent_id,
             account=intent.account,
@@ -232,12 +249,12 @@ class Experiment1Engine:
         cash = Decimal(account["cash"])
         realized = Decimal(account["realized_pnl"])
         fees_paid = Decimal(account["fees_paid"])
-        position = conn.execute(
-            "SELECT * FROM experiment1_positions WHERE account = ? AND symbol = ?",
+        row = conn.execute(
+            "SELECT * FROM experiment1_positions WHERE account=? AND symbol=?",
             (fill.account.value, fill.symbol),
         ).fetchone()
-        old_qty = Decimal(position["quantity"]) if position else Decimal("0")
-        old_avg = Decimal(position["average_price"]) if position else Decimal("0")
+        old_qty = Decimal(row["quantity"]) if row else Decimal("0")
+        old_avg = Decimal(row["average_price"]) if row else Decimal("0")
 
         if fill.account in (AccountKind.INVESTMENTS, AccountKind.SPOT):
             if fill.action is DecisionAction.BUY:
@@ -247,7 +264,7 @@ class Experiment1Engine:
                 new_qty = old_qty + fill.quantity
                 new_avg = (
                     (old_avg * old_qty + fill.fill_price * fill.quantity) / new_qty
-                    if new_qty > 0 else Decimal("0")
+                    if new_qty else Decimal("0")
                 )
                 cash -= cost
             else:
@@ -256,13 +273,15 @@ class Experiment1Engine:
                 realized += (fill.fill_price - old_avg) * fill.quantity
                 cash += fill.fill_price * fill.quantity - fill.fee
                 new_qty = old_qty - fill.quantity
-                new_avg = old_avg if new_qty > 0 else Decimal("0")
+                new_avg = old_avg if new_qty else Decimal("0")
         else:
             signed = fill.quantity if fill.action is DecisionAction.LONG else -fill.quantity
-            if old_qty == 0 or (old_qty > 0 and signed > 0) or (old_qty < 0 and signed < 0):
+            same_direction = old_qty == 0 or (old_qty > 0 and signed > 0) or (old_qty < 0 and signed < 0)
+            if same_direction:
                 new_qty = old_qty + signed
                 new_avg = (
                     (abs(old_qty) * old_avg + abs(signed) * fill.fill_price) / abs(new_qty)
+                    if new_qty else Decimal("0")
                 )
             else:
                 close_qty = min(abs(old_qty), abs(signed))
@@ -303,26 +322,33 @@ class Experiment1Engine:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                fill.intent_id, fill.account.value, fill.action.value, fill.symbol,
-                str(fill.quantity), str(fill.reference_price), str(fill.fill_price),
-                str(fill.fee), str(fill.leverage), fill.observed_at.isoformat(),
-                fill.source, fill.source_reference,
+                fill.intent_id,
+                fill.account.value,
+                fill.action.value,
+                fill.symbol,
+                str(fill.quantity),
+                str(fill.reference_price),
+                str(fill.fill_price),
+                str(fill.fee),
+                str(fill.leverage),
+                fill.observed_at.isoformat(),
+                fill.source,
+                fill.source_reference,
             ),
         )
 
-    def _update_equity_after_fill(self, conn: sqlite3.Connection, fill: FillRecord, mark_price: Decimal) -> None:
+    def _update_equity(self, conn: sqlite3.Connection, fill: FillRecord, mark_price: Decimal) -> None:
         row = self._account_row(conn, fill.account)
-        cash = Decimal(row["cash"])
-        equity = cash
+        equity = Decimal(row["cash"])
         positions = conn.execute(
-            "SELECT * FROM experiment1_positions WHERE account = ?",
+            "SELECT * FROM experiment1_positions WHERE account=?",
             (fill.account.value,),
         ).fetchall()
         for position in positions:
-            qty = Decimal(position["quantity"])
-            avg = Decimal(position["average_price"])
             if position["symbol"] != fill.symbol:
                 continue
+            qty = Decimal(position["quantity"])
+            avg = Decimal(position["average_price"])
             if fill.account in (AccountKind.INVESTMENTS, AccountKind.SPOT):
                 equity += qty * mark_price
             else:
@@ -352,7 +378,7 @@ class Experiment1Engine:
     def positions(self, account: AccountKind) -> tuple[PositionState, ...]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM experiment1_positions WHERE account = ? AND quantity != '0' ORDER BY symbol",
+                "SELECT * FROM experiment1_positions WHERE account=? ORDER BY symbol",
                 (account.value,),
             ).fetchall()
             return tuple(
@@ -369,7 +395,8 @@ class Experiment1Engine:
 
     def _account_row(self, conn: sqlite3.Connection, account: AccountKind) -> sqlite3.Row:
         row = conn.execute(
-            "SELECT * FROM experiment1_accounts WHERE account = ?", (account.value,)
+            "SELECT * FROM experiment1_accounts WHERE account=?",
+            (account.value,),
         ).fetchone()
         if row is None:
             raise Experiment1Error("account not initialized")
@@ -377,28 +404,36 @@ class Experiment1Engine:
 
     def _load_fill(self, conn: sqlite3.Connection, intent_id: str) -> FillRecord:
         row = conn.execute(
-            "SELECT * FROM experiment1_fills WHERE intent_id = ?", (intent_id,)
+            "SELECT * FROM experiment1_fills WHERE intent_id=?",
+            (intent_id,),
         ).fetchone()
         if row is None:
             raise Experiment1Error("filled intent has no fill record")
         return FillRecord(
-            intent_id=row["intent_id"], account=AccountKind(row["account"]),
-            action=DecisionAction(row["action"]), symbol=row["symbol"],
-            quantity=Decimal(row["quantity"]), reference_price=Decimal(row["reference_price"]),
-            fill_price=Decimal(row["fill_price"]), fee=Decimal(row["fee"]),
-            leverage=Decimal(row["leverage"]), observed_at=datetime.fromisoformat(row["observed_at"]),
-            source=row["source"], source_reference=row["source_reference"],
+            intent_id=row["intent_id"],
+            account=AccountKind(row["account"]),
+            action=DecisionAction(row["action"]),
+            symbol=row["symbol"],
+            quantity=Decimal(row["quantity"]),
+            reference_price=Decimal(row["reference_price"]),
+            fill_price=Decimal(row["fill_price"]),
+            fee=Decimal(row["fee"]),
+            leverage=Decimal(row["leverage"]),
+            observed_at=datetime.fromisoformat(row["observed_at"]),
+            source=row["source"],
+            source_reference=row["source_reference"],
         )
 
     def _intent_from_row(self, row: sqlite3.Row) -> OrderIntent:
         return OrderIntent(
-            intent_id=row["intent_id"], created_at=datetime.fromisoformat(row["created_at"]),
-            account=AccountKind(row["account"]), action=DecisionAction(row["action"]),
-            symbol=row["symbol"], quantity=Decimal(row["quantity"]), reason=row["reason"],
+            intent_id=row["intent_id"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            account=AccountKind(row["account"]),
+            action=DecisionAction(row["action"]),
+            symbol=row["symbol"],
+            quantity=Decimal(row["quantity"]),
+            reason=row["reason"],
             leverage=Decimal(row["leverage"]),
             stop_loss=None if row["stop_loss"] is None else Decimal(row["stop_loss"]),
             take_profit=None if row["take_profit"] is None else Decimal(row["take_profit"]),
         )
-
-    def _row_matches_intent(self, row: sqlite3.Row, intent: OrderIntent) -> bool:
-        return self._intent_from_row(row) == intent

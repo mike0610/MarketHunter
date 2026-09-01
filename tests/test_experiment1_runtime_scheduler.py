@@ -257,3 +257,49 @@ def test_run_experiment1_cycle_is_restart_safe_across_a_fresh_engine_instance(tm
 
     assert second_engine.account_state(AccountKind.FUTURES) == state_before_restart
     assert len(second_engine.positions(AccountKind.FUTURES)) == 1
+
+
+# --- GIL Slack envelope ingest wiring (experiment1/gil_slack_adapter.py) ----
+
+def test_run_experiment1_cycle_skips_slack_ingest_when_no_reader_is_wired(tmp_path):
+    # slack_reader defaults to None (no EXPERIMENT1_GIL_SLACK_BOT_TOKEN
+    # configured) - a normal, successful skip, never an error.
+    engine = Experiment1Engine(tmp_path / "experiment1.db")
+    summary = asyncio.run(run_experiment1_cycle(engine, FakeSource({})))
+    assert summary.slack_ingest_results == ()
+
+
+def test_run_experiment1_cycle_drains_a_slack_delivered_decision_in_the_same_pass(tmp_path):
+    from experiment1.gil_slack_adapter import SlackMessage
+
+    class FakeReader:
+        def __init__(self, messages):
+            self._messages = messages
+
+        async def fetch_new_messages(self, channel_id, after_ts):
+            return self._messages
+
+    engine = Experiment1Engine(tmp_path / "experiment1.db")
+    decision = GilDecision(
+        decision_id="gil-slack-scheduler-1",
+        decided_at=NOW,
+        account=AccountKind.FUTURES,
+        action=DecisionAction.LONG,
+        symbol="BTCUSDT",
+        thesis="slack-delivered scheduler test",
+        quantity=Decimal("1"),
+        leverage=Decimal("2"),
+    )
+    envelope_text = f"GIL DECISION ENVELOPE v1\n```json\n{decision_to_json(decision)}\n```"
+    reader = FakeReader((SlackMessage(ts="200.001", text=envelope_text, channel_id="C0BNACTF4E4"),))
+
+    source = FakeSource({"BTCUSDT": _quote("BTCUSDT", Decimal("100"), observed_at=NOW + timedelta(minutes=1))})
+    summary = asyncio.run(run_experiment1_cycle(engine, source, slack_reader=reader))
+
+    assert summary.slack_ingest_results[0].status == "RECEIVED"
+    assert summary.gil_ingestion_results[0].decision_id == "gil-slack-scheduler-1"
+    assert summary.gil_ingestion_results[0].outcome == "PENDING"
+    # Same pass carries it all the way to a paper position - no manual
+    # step anywhere between a Slack envelope and a fill.
+    assert engine.positions(AccountKind.FUTURES)[0].symbol == "BTCUSDT"
+    assert engine.get_slack_ingest_cursor("C0BNACTF4E4") == "200.001"

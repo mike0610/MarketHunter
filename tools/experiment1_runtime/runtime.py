@@ -7,16 +7,25 @@ Module:
 The Experiment 1 recurring paper-runtime cycle - one bounded pass that
 a systemd timer invokes on a cadence (see deploy/systemd/). Each pass
 runs, in order:
+  0. GIL Slack envelope ingest (experiment1.gil_slack_adapter.run_gil_slack_ingest_cycle)
+     - only when a real Slack read credential is configured (see
+     build_gil_slack_reader/ENV_SLACK_BOT_TOKEN below; skipped entirely,
+     not fabricated, when it is not) - reads the allowlisted
+     #global-investment-lab channel for an explicit
+     "GIL DECISION ENVELOPE v1" marker block and forwards ONLY a
+     validated envelope into the exact same durable GIL Decision Inbox
+     step 1 below already drains. Ordinary Slack prose is never parsed
+     into a decision.
   1. GIL-ingestion drain (experiment1.gil_decision.drain_gil_decision_inbox)
      - automatically processes every envelope durably received via
-     POST /experiment1/gil-decisions since the last cycle, submitting
-     each as a PENDING intent (or NO_ACTION/BLOCKED/WAITING_EVIDENCE, as
-     applicable) before this same pass's fill step runs, so a freshly
-     ingested decision does not have to wait for the next cycle to be
-     eligible for a fill. No manual operator step: this is the "no
-     parallel execution path" automatic drain the GIL Decision Inbox
-     contract requires. A cycle that finds nothing PENDING_DRAIN is a
-     normal, successful, no-action outcome.
+     POST /experiment1/gil-decisions (or the Slack adapter above) since
+     the last cycle, submitting each as a PENDING intent (or
+     NO_ACTION/BLOCKED/WAITING_EVIDENCE, as applicable) before this same
+     pass's fill step runs, so a freshly ingested decision does not have
+     to wait for the next cycle to be eligible for a fill. No manual
+     operator step: this is the "no parallel execution path" automatic
+     drain the GIL Decision Inbox contract requires. A cycle that finds
+     nothing PENDING_DRAIN is a normal, successful, no-action outcome.
   2. market fill cycle (experiment1.runtime.run_market_cycle) - fresh
      evidence for every PENDING intent (including one just drained
      above), paper-fills what it can.
@@ -32,9 +41,10 @@ This module adds no new trading/accounting/quote logic - every step
 above calls an already-merged, already-tested function unmodified.
 Idempotent and restart-safe by construction, inherited directly from
 each of those functions' own tested contracts (PRs #70, #74, #76, #77,
-plus the GIL Decision Inbox this module now drains) - a duplicate or
-restarted invocation of this script cannot duplicate an intent, fill,
-exit, MTM snapshot, or GIL-decision binding.
+plus the GIL Decision Inbox this module now drains, plus the Slack
+ingest adapter's own persisted cursor) - a duplicate or restarted
+invocation of this script cannot duplicate an intent, fill, exit, MTM
+snapshot, or GIL-decision binding.
 
 Fail-closed contract:
 - A quote that is missing, stale, or for a symbol not recognized as a
@@ -52,6 +62,9 @@ Fail-closed contract:
   or a sizing mode that needs a fresh quote that is not currently
   available, stays PENDING_DRAIN and is re-evaluated next cycle - it is
   never submitted early and never guessed at.
+- A Slack message without the exact envelope marker, an edited message,
+  or a malformed/unparseable envelope block is never guessed into a
+  decision - see experiment1/gil_slack_adapter.py.
 """
 
 from __future__ import annotations
@@ -67,6 +80,13 @@ from pathlib import Path
 
 from experiment1.engine import Experiment1Engine, Experiment1Error, STARTING_CASH
 from experiment1.gil_decision import GilIngestionResult, drain_gil_decision_inbox
+from experiment1.gil_slack_adapter import (
+    SlackChannelReader,
+    SlackIngestResult,
+    build_gil_slack_reader,
+    resolve_gil_channel_id,
+    run_gil_slack_ingest_cycle,
+)
 from experiment1.lifecycle import LifecycleResult, run_protective_exit_cycle
 from experiment1.market_data_providers import (
     AssetClass,
@@ -146,16 +166,30 @@ class Experiment1CycleSummary:
     protective_exit_results: tuple[LifecycleResult, ...]
     mtm_results: tuple[MtmCycleResult, ...]
     gil_ingestion_results: tuple[GilIngestionResult, ...]
+    slack_ingest_results: tuple[SlackIngestResult, ...] = ()
 
 
 async def run_experiment1_cycle(
-    engine: Experiment1Engine, quote_source: AsyncQuoteSource
+    engine: Experiment1Engine,
+    quote_source: AsyncQuoteSource,
+    *,
+    slack_reader: SlackChannelReader | None = None,
 ) -> Experiment1CycleSummary:
-    # Automatic drain of the durable GIL Decision Inbox FIRST - no
-    # manual operator step - so a freshly ingested decision becomes a
-    # PENDING intent before this same pass's market fill cycle runs,
-    # rather than waiting for the next timer tick. An empty result
-    # (nothing PENDING_DRAIN) is a normal, successful outcome.
+    # GIL Slack envelope ingest FIRST, when a reader is actually wired -
+    # a validated envelope becomes a durable inbox row before the drain
+    # step below runs, so it is eligible the same pass rather than
+    # waiting a full cycle. slack_reader=None (no credential configured)
+    # is a normal, successful skip - never an error.
+    slack_ingest_results: tuple[SlackIngestResult, ...] = ()
+    if slack_reader is not None:
+        slack_ingest_results = await run_gil_slack_ingest_cycle(engine, slack_reader, resolve_gil_channel_id())
+
+    # Automatic drain of the durable GIL Decision Inbox - no manual
+    # operator step - so a freshly ingested decision (whether from the
+    # HTTP endpoint or the Slack adapter above) becomes a PENDING intent
+    # before this same pass's market fill cycle runs, rather than
+    # waiting for the next timer tick. An empty result (nothing
+    # PENDING_DRAIN) is a normal, successful outcome.
     gil_ingestion_results = await drain_gil_decision_inbox(engine, quote_source)
 
     market_fill_results = await run_market_cycle(engine, quote_source)
@@ -176,7 +210,11 @@ async def run_experiment1_cycle(
             logger.warning("mtm cycle skipped for %s: %s", account.value, exc)
 
     return Experiment1CycleSummary(
-        market_fill_results, protective_exit_results, tuple(mtm_results), gil_ingestion_results
+        market_fill_results,
+        protective_exit_results,
+        tuple(mtm_results),
+        gil_ingestion_results,
+        slack_ingest_results,
     )
 
 
@@ -212,6 +250,14 @@ def _log_summary(summary: Experiment1CycleSummary) -> None:
         len(summary.gil_ingestion_results),
         _count(summary.gil_ingestion_results, "BLOCKED"),
     )
+    logger.info(
+        "gil slack ingest: %d message(s) - received=%d malformed=%d edited_ambiguous=%d ignored=%d",
+        len(summary.slack_ingest_results),
+        sum(1 for r in summary.slack_ingest_results if r.status == "RECEIVED"),
+        sum(1 for r in summary.slack_ingest_results if r.status in ("MALFORMED", "MALFORMED_SHAPE")),
+        sum(1 for r in summary.slack_ingest_results if r.status == "EDITED_AMBIGUOUS"),
+        sum(1 for r in summary.slack_ingest_results if r.status == "IGNORED_NO_MARKER"),
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -228,9 +274,13 @@ def main(argv: list[str] | None = None) -> None:
 
     engine = Experiment1Engine(db_path)
     quote_source = build_quote_source()
+    # None (no EXPERIMENT1_GIL_SLACK_BOT_TOKEN configured) is a normal,
+    # successful skip of the Slack ingest step - see
+    # experiment1/gil_slack_adapter.py's credential boundary.
+    slack_reader = build_gil_slack_reader()
 
     try:
-        summary = asyncio.run(run_experiment1_cycle(engine, quote_source))
+        summary = asyncio.run(run_experiment1_cycle(engine, quote_source, slack_reader=slack_reader))
     except Exception:
         logger.exception("experiment1 runtime cycle failed")
         sys.exit(EXIT_FAILURE)

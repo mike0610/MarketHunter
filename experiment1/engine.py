@@ -147,6 +147,10 @@ class Experiment1Engine:
                     intent_id TEXT,
                     processed_at TEXT
                 );
+                CREATE TABLE IF NOT EXISTS experiment1_slack_ingest_cursor (
+                    channel_id TEXT PRIMARY KEY,
+                    last_processed_ts TEXT NOT NULL
+                );
                 """
             )
             # Migration guards for a database created before these columns
@@ -685,6 +689,39 @@ class Experiment1Engine:
             intent_id=row["intent_id"],
             processed_at=None if row["processed_at"] is None else datetime.fromisoformat(row["processed_at"]),
         )
+
+    def get_slack_ingest_cursor(self, channel_id: str) -> str | None:
+        """
+        The last Slack message ts this channel's ingest adapter has
+        fully handled (ignored, malformed, edited-ambiguous, or
+        forwarded) - see experiment1/gil_slack_adapter.py. None means
+        no cursor has ever been persisted for this channel (first run,
+        or a fresh db) - the adapter then reads from the beginning of
+        whatever history the reader returns.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT last_processed_ts FROM experiment1_slack_ingest_cursor WHERE channel_id=?",
+                (channel_id,),
+            ).fetchone()
+            return None if row is None else row["last_processed_ts"]
+
+    def set_slack_ingest_cursor(self, channel_id: str, ts: str) -> None:
+        """
+        Durably advance channel_id's cursor to ts - restart-safety for
+        the Slack ingest adapter: a re-run after a crash never re-asks
+        for a message already fully handled. decision_id idempotency
+        in receive_gil_decision/record_malformed_gil_decision is the
+        final guard even if a crash happens between processing a
+        message and this call persisting the new cursor.
+        """
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO experiment1_slack_ingest_cursor (channel_id, last_processed_ts)
+                   VALUES (?, ?)
+                   ON CONFLICT(channel_id) DO UPDATE SET last_processed_ts=excluded.last_processed_ts""",
+                (channel_id, ts),
+            )
 
     def closed_trades(self, account: AccountKind) -> tuple[ClosedTrade, ...]:
         """

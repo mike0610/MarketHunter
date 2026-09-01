@@ -8,12 +8,12 @@ The runtime reads only the canonical `#global-investment-lab` channel (`C0BNACTF
 
 A machine-deliverable message must be the entire Slack message and use exactly this shape:
 
-```text
+````text
 GIL DECISION ENVELOPE v1
 ```json
 {canonical GilDecision JSON}
 ```
-```
+````
 
 The JSON must use the exact canonical schema emitted by `experiment1.gil_decision.decision_to_json()`. The domain model still restricts actions to `BUY | SELL | LONG | SHORT | WAIT | HOLD`; unsupported research states fail closed.
 

@@ -88,6 +88,7 @@ jobs:
             tests/test_experiment1_market_source.py \
             tests/test_experiment1_market_data_providers.py \
             tests/test_experiment1_market_data_evidence.py \
+            tests/test_experiment1_alpaca_sip_evidence.py \
             tests/test_experiment1_cost_provenance.py \
             tests/test_experiment1_runtime.py \
             tests/test_experiment1_mtm.py \

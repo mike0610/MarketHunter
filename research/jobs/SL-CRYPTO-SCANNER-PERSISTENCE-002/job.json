@@ -1,0 +1,23 @@
+{
+  "object_id": "SL-CRYPTO-SCANNER-PERSISTENCE-002",
+  "executor": "vps",
+  "status": "FROZEN",
+  "timeout_minutes": 20,
+  "terminal_states": ["PERSISTENCE-PASS", "PERSISTENCE-FAIL", "EVIDENCE-BLOCKED", "PROVIDER-BLOCKED", "BLOCKED-TOOLING"],
+  "family": "crypto_scanner_paper_persistence",
+  "parent_object": "SL-CRYPTO-SCANNER-PAPER-E2E-001",
+  "research_only": true,
+  "real_capital": false,
+  "paid_services": false,
+  "goal": "Prove restart-safe persistence and idempotency for one venue-derived crypto scanner cycle, material state recording, and a clearly-labelled historical paper lifecycle replay without creating live orders.",
+  "contract": {
+    "universe": "Binance public TRADING USDT Spot + USD-M perpetual metadata, Spot/Futures separate",
+    "strategy": "Quiet-RV-v1 frozen parameters unchanged",
+    "persistence": "SQLite artifact with scan_cycles, material_states, replay_trades; deterministic keys; same cycle applied twice across independent DB connections must not duplicate rows",
+    "compaction": "No one-row-per-symbol unchanged NO-SIGNAL persistence",
+    "current_fill": "Never fabricate next-bar-open; current signal may only be PAPER-ENTRY-QUEUED unless an observed next open is part of a later cycle",
+    "replay": "Historical lifecycle replay is not a current position and exists only to prove entry->exit->stats persistence"
+  },
+  "anti_tuning": "No Quiet-RV parameter, asset, threshold, hold, decluster, cost, or strategy-status change. No removal of DOGE/LTC or other same-sample rescue.",
+  "risk": {"virtual_capital_usdt": 1000, "max_paper_notional_fraction": 0.10, "leverage": 1.0, "real_orders": false}
+}

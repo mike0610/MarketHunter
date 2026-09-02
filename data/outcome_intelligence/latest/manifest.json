@@ -1,8 +1,8 @@
 {
   "artifact": "trades.json",
   "byte_count": 330687,
-  "captured_at_utc": "2026-09-02T09:06:59.611326+00:00",
-  "sha256": "281a678fe1b93a66dfa1f663c7ac92f7088e739ce15a82fa48a3954c942ede9f",
+  "captured_at_utc": "2026-09-02T11:24:06.485117+00:00",
+  "sha256": "a3143fe64ed5b3fb26311364d30effdc5cf7f78170fb4d24ab0055db189d73e7",
   "source": "/research/trades",
   "source_revision": "fe53f3b21d22f70c4436f8f3893c62e31b83439b",
   "total": 228

@@ -11,6 +11,9 @@ on:
       - "deploy/systemd/experiment1-runtime.service"
       - "deploy/systemd/experiment1-runtime.timer"
       - "deploy/systemd/experiment1-runtime.env.example"
+      - "tools/crypto_paper_observer/**"
+      - "deploy/systemd/crypto-paper-observer.service"
+      - "deploy/systemd/crypto-paper-observer.timer"
 
 permissions:
   contents: read
@@ -70,7 +73,7 @@ jobs:
             rm -f /tmp/experiment1-gil-slack.env
           fi
 
-      - name: Deploy runtime and run first cycle
+      - name: Deploy runtimes and run first cycles
         shell: bash
         run: |
           set -euo pipefail
@@ -86,6 +89,7 @@ jobs:
           echo '=== PRE-DEPLOY RUNTIME ==='
           systemctl is-active markethunter-api markethunter-worker markethunter-monitor nginx
           systemctl status experiment1-runtime.timer --no-pager 2>/dev/null || true
+          systemctl status crypto-paper-observer.timer --no-pager 2>/dev/null || true
 
           git fetch origin master
           git checkout master
@@ -109,11 +113,14 @@ jobs:
 
           sudo cp deploy/systemd/experiment1-runtime.service \
                   deploy/systemd/experiment1-runtime.timer \
+                  deploy/systemd/crypto-paper-observer.service \
+                  deploy/systemd/crypto-paper-observer.timer \
                   /etc/systemd/system/
           sudo systemctl daemon-reload
           sudo systemctl restart markethunter-api
           sudo systemctl is-active --quiet markethunter-api
           sudo systemctl enable --now experiment1-runtime.timer
+          sudo systemctl enable --now crypto-paper-observer.timer
 
           echo '=== GIL SLACK TRANSPORT CONFIG ==='
           if [ -f "$ENV_FILE" ] && \
@@ -124,22 +131,29 @@ jobs:
             echo 'gil_slack_transport_credentials=MISSING_OR_DISABLED'
           fi
 
-          echo '=== FIRST BOUNDED CYCLE ==='
+          echo '=== FIRST EXPERIMENT1 CYCLE ==='
           sudo systemctl start experiment1-runtime.service
           sudo systemctl is-failed experiment1-runtime.service >/dev/null && exit 4 || true
           journalctl -u experiment1-runtime.service -n 100 --no-pager
 
+          echo '=== FIRST CRYPTO PAPER CYCLE ==='
+          sudo systemctl start crypto-paper-observer.service
+          sudo systemctl is-failed crypto-paper-observer.service >/dev/null && exit 5 || true
+          journalctl -u crypto-paper-observer.service -n 100 --no-pager
+
           echo '=== TIMER STATE ==='
           systemctl is-enabled experiment1-runtime.timer
           systemctl is-active experiment1-runtime.timer
-          systemctl list-timers 'experiment1-runtime.timer' --no-pager
+          systemctl is-enabled crypto-paper-observer.timer
+          systemctl is-active crypto-paper-observer.timer
+          systemctl list-timers 'experiment1-runtime.timer' 'crypto-paper-observer.timer' --no-pager
           REMOTE
 
-      - name: Wait for scheduled timer cycle
+      - name: Wait for scheduled Experiment1 timer cycle
         shell: bash
         run: sleep 330
 
-      - name: Verify scheduled cycle, restart and recovery
+      - name: Verify scheduled cycle, persistence and recovery
         shell: bash
         run: |
           set -euo pipefail
@@ -157,7 +171,7 @@ jobs:
             exit 6
           fi
 
-          echo '=== SCHEDULED CYCLE JOURNAL ==='
+          echo '=== SCHEDULED EXPERIMENT1 CYCLE JOURNAL ==='
           journalctl -u experiment1-runtime.service --since '-7 minutes' --no-pager
           SCHEDULED_COUNT=$(journalctl -u experiment1-runtime.service --since '-7 minutes' --no-pager | grep -c 'experiment1 runtime cycle complete' || true)
           echo "completed_cycles_last_7m=$SCHEDULED_COUNT"
@@ -166,12 +180,14 @@ jobs:
             exit 7
           fi
 
-          echo '=== CONTROLLED TIMER RESTART + RECOVERY CYCLE ==='
-          sudo systemctl restart experiment1-runtime.timer
+          echo '=== CONTROLLED TIMER RESTART + RECOVERY CYCLES ==='
+          sudo systemctl restart experiment1-runtime.timer crypto-paper-observer.timer
           sudo systemctl is-active --quiet experiment1-runtime.timer
+          sudo systemctl is-active --quiet crypto-paper-observer.timer
           sudo systemctl start experiment1-runtime.service
+          sudo systemctl start crypto-paper-observer.service
           sudo systemctl is-failed experiment1-runtime.service >/dev/null && exit 8 || true
-          journalctl -u experiment1-runtime.service -n 140 --no-pager
+          sudo systemctl is-failed crypto-paper-observer.service >/dev/null && exit 9 || true
 
           echo '=== READ-ONLY EXPERIMENT1 DB AUDIT ==='
           "$REPO/.venv/bin/python" - <<'PY'
@@ -182,17 +198,27 @@ jobs:
           if p.exists():
               con = sqlite3.connect(f'file:{p}?mode=ro', uri=True)
               names = {r[0] for r in con.execute("select name from sqlite_master where type='table'")}
-              for table in [
-                  'experiment1_intents',
-                  'experiment1_fills',
-                  'experiment1_positions',
-                  'experiment1_closed_trades',
-                  'experiment1_gil_decision_inbox',
-              ]:
+              for table in ['experiment1_intents','experiment1_fills','experiment1_positions','experiment1_closed_trades','experiment1_gil_decision_inbox']:
                   if table in names:
-                      count = con.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
-                      print(f'{table}={count}')
+                      print(f'{table}={con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]}')
               con.close()
+          PY
+
+          echo '=== READ-ONLY CRYPTO PAPER DB AUDIT ==='
+          "$REPO/.venv/bin/python" - <<'PY'
+          import sqlite3
+          from pathlib import Path
+          p = Path('data/crypto_paper.db')
+          print('db=', p, 'exists=', p.exists())
+          assert p.exists(), 'crypto paper db missing'
+          con = sqlite3.connect(f'file:{p}?mode=ro', uri=True)
+          names = {r[0] for r in con.execute("select name from sqlite_master where type='table'")}
+          required = {'crypto_scan_cycles','crypto_material_states','crypto_paper_orders'}
+          assert required <= names, f'missing tables: {required-names}'
+          print('crypto_scan_cycles=', con.execute('SELECT COUNT(*) FROM crypto_scan_cycles').fetchone()[0])
+          print('crypto_material_states=', con.execute('SELECT COUNT(*) FROM crypto_material_states').fetchone()[0])
+          print('crypto_paper_orders=', con.execute('SELECT COUNT(*) FROM crypto_paper_orders').fetchone()[0])
+          con.close()
           PY
 
           echo '=== API ROUTE PROOF ==='
@@ -201,8 +227,10 @@ jobs:
 
           echo '=== EXISTING SERVICES UNAFFECTED ==='
           systemctl is-active markethunter-api markethunter-worker markethunter-monitor nginx
-          echo '=== FINAL TIMER ==='
+          echo '=== FINAL TIMERS ==='
           systemctl is-enabled experiment1-runtime.timer
           systemctl is-active experiment1-runtime.timer
-          systemctl list-timers 'experiment1-runtime.timer' --no-pager
+          systemctl is-enabled crypto-paper-observer.timer
+          systemctl is-active crypto-paper-observer.timer
+          systemctl list-timers 'experiment1-runtime.timer' 'crypto-paper-observer.timer' --no-pager
           REMOTE

@@ -1,0 +1,14 @@
+[Unit]
+Description=MarketHunter Crypto Paper Observer - Quiet-RV forward paper cycle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/MarketHunter
+EnvironmentFile=-/home/ubuntu/MarketHunter/deploy/systemd/crypto-paper-observer.env
+ExecStart=/home/ubuntu/MarketHunter/.venv/bin/python -m tools.crypto_paper_observer.runtime
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full

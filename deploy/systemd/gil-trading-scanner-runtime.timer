@@ -1,0 +1,15 @@
+# MarketHunter - runs gil-trading-scanner-runtime.service every 15 minutes.
+# A discovery scan, not an execution-evidence lookup - no freshness
+# window elsewhere in the codebase to stay in lockstep with, unlike
+# experiment1-runtime.timer's own 5-minute cadence.
+
+[Unit]
+Description=Run MarketHunter GIL Trading Scanner discovery cycle every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

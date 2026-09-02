@@ -23,7 +23,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
-from trading_scanner.models import IbkrContract, LiquidityContext
+from trading_scanner.models import CatalystEvidence, IbkrContract, LiquidityContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +69,16 @@ class AsyncIbkrUniverseSource(Protocol):
 
     async def liquidity_context_for(self, contract: IbkrContract) -> LiquidityContext | None:
         """Recent average-volume/price facts for one contract, or None if genuinely unavailable."""
+        ...
+
+    async def catalyst_for(self, contract: IbkrContract) -> CatalystEvidence | None:
+        """
+        Explicit catalyst evidence for one contract, or None if none is
+        genuinely available - this repository has no news/filing feed
+        of its own, so a real implementation of this method is the
+        only place a catalyst can ever come from. ABNORMAL_VOLUME_CATALYST
+        can never match without one (see trading_scanner/setups.py).
+        """
         ...
 
 

@@ -1,0 +1,35 @@
+# MarketHunter - GIL Trading Scanner recurring discovery cycle.
+# Triggered by gil-trading-scanner-runtime.timer - not enabled directly.
+#
+# This unit is currently a safe no-op every run: build_ibkr_universe_source()
+# always returns None (BLOCKED-IBKR-SESSION - see trading_scanner/universe.py),
+# so the cycle logs and exits cleanly without ever touching the network.
+# Installing this now proves the wiring is correct; it does nothing live
+# until a real IBKR universe source is supplied in a future slice.
+#
+# Paths/user below match the production layout reported via the
+# successor bridge for the existing Experiment 1/Outcome Intelligence
+# units (User=ubuntu, repo at /home/ubuntu/MarketHunter) - reused here
+# for consistency. This has NOT been independently verified by the
+# implementing agent (no VPS access) - confirm against the real host
+# before installing. See deploy/systemd/README.md.
+
+[Unit]
+Description=MarketHunter GIL Trading Scanner - discovery-only setup scan cycle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/MarketHunter
+EnvironmentFile=-/home/ubuntu/MarketHunter/deploy/systemd/gil-trading-scanner-runtime.env
+ExecStart=/home/ubuntu/MarketHunter/.venv/bin/python -m tools.gil_trading_scanner_runtime.runtime
+
+# Hardening - safe defaults for a short-lived, read-only-market-data,
+# filesystem-writing (only the scanner's own sqlite db under
+# TRADING_SCANNER_DB_PATH, default data/trading_scanner.db) oneshot job.
+# Adjust if the real deployment layout differs.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full

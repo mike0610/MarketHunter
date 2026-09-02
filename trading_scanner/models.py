@@ -67,7 +67,10 @@ class IbkrContract:
     instrument identity. `conid` is IBKR's own unique integer contract
     identifier; `symbol`/`sec_type`/`exchange`/`currency` are preserved
     verbatim from whatever resolved this contract (never guessed or
-    normalized beyond what the source actually returned).
+    normalized beyond what the source actually returned). `restricted`
+    is caller-supplied trading-restriction provenance (e.g. a halt or
+    a restricted-list flag a real IBKR connector would report) -
+    defaults to False, never inferred by this package itself.
     """
 
     conid: int
@@ -76,6 +79,7 @@ class IbkrContract:
     exchange: str
     currency: str
     primary_exchange: str | None = None
+    restricted: bool = False
 
     def __post_init__(self) -> None:
         if self.conid <= 0:

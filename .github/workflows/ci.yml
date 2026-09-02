@@ -60,6 +60,7 @@ jobs:
       - name: Run Stage 2C backend regression tests
         run: |
           python -m pytest \
+            tests/test_bybit_client.py \
             tests/test_setup_reason_statistics.py \
             tests/test_research_api.py \
             tests/test_target_block_statistics.py \

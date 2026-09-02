@@ -94,6 +94,129 @@ class MarketQuote:
             raise ValueError("fee_bps/slippage_bps must be non-negative")
 
 
+class PriceType(str, Enum):
+    """
+    What the evidence's price actually represents - a real BID/ASK/MID/
+    TRADE observation is a materially different kind of evidence than a
+    stale EOD close or a DERIVED (e.g. computed/composite) value, even
+    at an identical price. See experiment1.market_data_evidence's
+    execution-grade gate, which accepts only the former.
+    """
+
+    TRADE = "TRADE"
+    BID = "BID"
+    ASK = "ASK"
+    MID = "MID"
+    EOD_CLOSE = "EOD_CLOSE"
+    DERIVED = "DERIVED"
+
+
+class QuoteMode(str, Enum):
+    """How the provider itself characterizes this evidence's timeliness."""
+
+    REALTIME = "REALTIME"
+    DELAYED = "DELAYED"
+    EOD = "EOD"
+    DERIVED = "DERIVED"
+
+
+class SessionState(str, Enum):
+    """The instrument's trading-session state at source_timestamp, as the provider reports it."""
+
+    PRE_MARKET = "PRE_MARKET"
+    REGULAR = "REGULAR"
+    POST_MARKET = "POST_MARKET"
+    CLOSED = "CLOSED"
+
+
+class EvidenceValidationStatus(str, Enum):
+    """
+    The single, closed verdict experiment1.market_data_evidence.
+    evaluate_market_data_evidence produces for one piece of
+    MarketDataEvidence checked against a caller's expected instrument/
+    currency/listing and freshness bound. VALID is necessary (not
+    sufficient) for either EXECUTION_EVIDENCE_OK or
+    VALUATION_EVIDENCE_OK - see that function's own docstring for the
+    additional execution-grade gate.
+    """
+
+    VALID = "VALID"
+    STALE = "STALE"
+    MISSING = "MISSING"
+    INSTRUMENT_MISMATCH = "INSTRUMENT_MISMATCH"
+    CURRENCY_MISMATCH = "CURRENCY_MISMATCH"
+    LISTING_MISMATCH = "LISTING_MISMATCH"
+
+
+@dataclass(frozen=True, slots=True)
+class MarketDataEvidence:
+    """
+    The generic, provider-independent market-data evidence record for
+    any non-crypto (or crypto) instrument - deliberately richer than
+    MarketQuote's bare price, so a bare price is never sufficient
+    evidence for a paper fill or a mark on its own. A concrete provider
+    adapter (e.g. a future Alpaca SIP / Tiingo / Twelve Data
+    integration) constructs one of these from its own raw response;
+    this repository never fabricates a field it wasn't actually given.
+
+    This dataclass only enforces well-formedness (non-blank identity
+    fields, aware timestamps, a positive price, a plausible currency
+    code) - it does NOT decide whether the evidence is fresh enough or
+    matches what a caller expected. That fail-closed judgment is
+    evaluate_market_data_evidence's job (experiment1/market_data_evidence.py),
+    kept separate exactly like FreshnessGuardedQuoteSource already
+    keeps staleness-checking separate from MarketQuote itself.
+
+    provider: the data provider/feed's own identity (e.g. "ALPACA_SIP",
+        "BINANCE") - free text, since no closed provider taxonomy is
+        evidenced yet.
+    instrument: MarketHunter's own canonical instrument identifier -
+        the same string OrderIntent.symbol/GilDecision.symbol use.
+    provider_symbol: the provider's own raw ticker/symbol for this
+        instrument - may differ from `instrument` (e.g. a provider-
+        specific class suffix), preserved verbatim for audit.
+    exchange: the listing/exchange or venue code the evidence was
+        sourced against (e.g. "XNYS", "XNAS", or a crypto venue code).
+    currency: ISO-4217-style 3-letter uppercase currency code the
+        price is denominated in.
+    price_type: see PriceType.
+    source_timestamp: the provider's own UTC timestamp for this
+        observation (participant/exchange time, not receipt time).
+    receive_timestamp: when this MarketHunter process actually
+        received/observed this evidence, in UTC.
+    session_state: see SessionState.
+    mode: see QuoteMode.
+    source_reference: opaque provenance - the provider's own raw
+        response/message id or equivalent, for audit traceability.
+    """
+
+    provider: str
+    instrument: str
+    provider_symbol: str
+    exchange: str
+    currency: str
+    price: Decimal
+    price_type: PriceType
+    source_timestamp: datetime
+    receive_timestamp: datetime
+    session_state: SessionState
+    mode: QuoteMode
+    source_reference: str
+
+    def __post_init__(self) -> None:
+        _nonblank(self.provider, "provider")
+        _nonblank(self.instrument, "instrument")
+        _nonblank(self.provider_symbol, "provider_symbol")
+        _nonblank(self.exchange, "exchange")
+        _nonblank(self.source_reference, "source_reference")
+        _aware(self.source_timestamp, "source_timestamp")
+        _aware(self.receive_timestamp, "receive_timestamp")
+        if self.price <= 0:
+            raise ValueError("price must be positive")
+        if len(self.currency) != 3 or not self.currency.isalpha() or not self.currency.isupper():
+            raise ValueError("currency must be an uppercase 3-letter code")
+
+
 @dataclass(frozen=True, slots=True)
 class FillRecord:
     intent_id: str

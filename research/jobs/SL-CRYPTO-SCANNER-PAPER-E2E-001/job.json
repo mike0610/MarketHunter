@@ -1,0 +1,20 @@
+{
+  "object_id": "SL-CRYPTO-SCANNER-PAPER-E2E-001",
+  "executor": "vps",
+  "status": "FROZEN",
+  "timeout_minutes": 20,
+  "terminal_states": ["E2E-PASS-NO-CURRENT-TRADE", "E2E-PASS-CURRENT-PAPER-QUEUED", "E2E-BLOCKED-EVIDENCE", "PROVIDER-BLOCKED", "BLOCKED-TOOLING"],
+  "family": "crypto_scanner_paper_e2e",
+  "research_only": true,
+  "real_capital": false,
+  "paid_services": false,
+  "books": ["SPOT", "FUTURES"],
+  "virtual_capital_usdt": 1000,
+  "goal": "Prove broad public crypto-universe discovery, Spot/Futures separation, strategy compatibility, frozen Quiet-RV evaluation, risk/evidence gating, honest current paper action or no-trade, and one clearly-labelled historical lifecycle replay for entry->exit->statistics plumbing.",
+  "anti_tuning": "Quiet-RV parameters are copied unchanged from SL-VAL-QUIET-RV-001 / portability lineage: 8 assets, 4h, 42/540/30% quiet-vol gate, 42/540/90% deviation trigger, 6-bar hold, 6-bar decluster, 10bps cost. No asset/rule/threshold/holding/cost tuning. Universe discovery is venue-derived, not a handpicked scanner universe.",
+  "current_market_rule": "Evaluate only the latest fully closed common 4h bar. If no frozen signal exists, record NO-SIGNAL. If a signal exists, queue PAPER-ENTRY for next-bar-open and never fabricate an unobserved fill.",
+  "historical_replay_rule": "Use the latest already-completed frozen event inside the freshly acquired public dataset solely to prove lifecycle accounting; mark it HISTORICAL-LIFECYCLE-REPLAY / NOT CURRENT TRADE.",
+  "risk": {"max_paper_notional_fraction": 0.10, "leverage": 1.0, "real_orders": false},
+  "persistence_semantics": "Artifact must prove full-universe coverage with counts/hashes, preserve material states and reasons, and compact repetitive unchanged per-symbol no-signal states rather than emitting one durable row per symbol per cycle.",
+  "limitations": "This first bounded E2E is a research harness proof, not the final persistent production scanner. Quiet-RV venue-price portability does not imply funding/OI/execution portability, and Futures must fail closed unless a separately frozen compatible paper strategy version exists."
+}

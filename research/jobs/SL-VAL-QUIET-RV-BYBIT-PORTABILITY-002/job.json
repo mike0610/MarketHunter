@@ -1,0 +1,44 @@
+{
+  "anti_tuning": "Correction-only rerun of SL-VAL-QUIET-RV-BYBIT-PORTABILITY-001. Quiet-RV signal parameters, 8-asset universe, holding period, decluster window, costs, data window, venues, and terminal gate are unchanged. The sole semantic correction is normalizing Bybit kline timestamps from milliseconds to Unix seconds before storage/intersection/diagnostics, matching the Binance timestamp unit already used by the frozen runner. No strategy tuning.",
+  "book": "FUTURES-DIAGNOSTIC",
+  "capital_usdt_equivalent": 1000,
+  "costs": {"base_round_trip_bps": 10, "oos_stress_round_trip_bps": 20},
+  "data": {
+    "assets": ["BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "XRPUSDT", "DOGEUSDT", "LINKUSDT", "LTCUSDT"],
+    "timeframe": "4h",
+    "warm_start": "2022-01-01",
+    "start": "2022-07-01",
+    "split": "2025-01-01",
+    "end": "2026-08-01",
+    "venue_a": "Binance Spot monthly klines (data.binance.vision) - identical source used by parent SL-VAL-QUIET-RV-001",
+    "venue_b": "Bybit USDT linear-perpetual public V5 kline API (api.bybit.com/v5/market/kline) - price only, no funding/OI"
+  },
+  "executor": "vps",
+  "family": "crypto_quiet_rv_cross_venue_price_portability",
+  "hypothesis": "The exact frozen Quiet-RV signal produces materially consistent OOS event timing/sides and price-return outcomes when fed Bybit linear-perpetual prices instead of Binance Spot prices over actual overlapping coverage.",
+  "leverage": 1.0,
+  "object_id": "SL-VAL-QUIET-RV-BYBIT-PORTABILITY-002",
+  "parent_object": "SL-VAL-QUIET-RV-BYBIT-PORTABILITY-001",
+  "root_strategy_object": "SL-VAL-QUIET-RV-001",
+  "correction": {"invalidated_run": "SL-VAL-QUIET-RV-BYBIT-PORTABILITY-001", "defect": "Bybit timestamps were stored in milliseconds while Binance timestamps were stored in seconds, forcing zero cross-venue timestamp intersection and false Bybit gap diagnostics.", "change": "Convert Bybit row[0] milliseconds to Unix seconds for the data dictionary and diagnostics while retaining millisecond cursor pagination."},
+  "signal": {
+    "quiet_regime": "42-bar basket realized volatility <= strictly-prior 540-bar 30th percentile",
+    "relative_deviation": "42-bar cumulative asset-minus-equal-weight-basket log return",
+    "trigger": "largest absolute deviation across the 8-asset basket exceeds the strictly-prior pooled 540-bar 90th percentile",
+    "direction": "fade the deviation (SHORT if positive, LONG if negative)",
+    "entry": "next_bar_open",
+    "hold_bars": 6,
+    "decluster_bars": 6,
+    "base_cost": 0.001,
+    "stress_cost": 0.002
+  },
+  "status": "FROZEN",
+  "terminal_gate": {
+    "min_oos_events_per_venue": 30,
+    "support_if": "Bybit-sourced OOS10bps mean>0 AND PF>1 AND OOS20bps mean>0 over the common window, AND event-level overlap with the Binance-sourced event set >=70%",
+    "otherwise": "portability_verdict enumerates the exact failure mode; never infer a strategy verdict from tooling/alignment failure"
+  },
+  "terminal_states": ["OUTCOME-COMPLETE", "PROVIDER-BLOCKED"],
+  "timeframe": "4h",
+  "timeout_minutes": 20
+}

@@ -61,6 +61,8 @@ jobs:
         run: |
           python -m pytest \
             tests/test_bybit_client.py \
+            tests/test_trading_scanner.py \
+            tests/test_trading_scanner_boundary.py \
             tests/test_setup_reason_statistics.py \
             tests/test_research_api.py \
             tests/test_target_block_statistics.py \

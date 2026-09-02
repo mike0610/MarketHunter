@@ -188,6 +188,48 @@ class GilDecisionInboxEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_post_accepts_a_reference_close_price_for_a_non_leveraged_investments_decision(self) -> None:
+        payload = self._payload(
+            decision_id="gil-crox-tranche-1",
+            account="INVESTMENTS_GROWTH",
+            action="BUY",
+            symbol="CROX",
+            quantity="4",
+            leverage="1",
+        )
+        payload["reference_close_price"] = "115.28"
+
+        response = self.client.post("/experiment1/gil-decisions", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "PENDING_DRAIN")
+
+    def test_post_rejects_a_reference_close_price_for_futures_active_trading_as_malformed(self) -> None:
+        payload = self._payload(decision_id="gil-uso-bad-reference-close")
+        payload["reference_close_price"] = "143.00"
+
+        response = self.client.post("/experiment1/gil-decisions", json=payload)
+
+        self.assertEqual(response.status_code, 400)
+        status = self.client.get("/experiment1/gil-decisions/gil-uso-bad-reference-close").json()
+        self.assertEqual(status["status"], "MALFORMED")
+        self.assertIn("Active Trading", status["outcome_reason"])
+
+    def test_post_rejects_a_non_positive_reference_close_price_at_the_schema_level(self) -> None:
+        payload = self._payload(
+            decision_id="gil-crox-bad-price",
+            account="INVESTMENTS_GROWTH",
+            action="BUY",
+            symbol="CROX",
+            quantity="4",
+            leverage="1",
+        )
+        payload["reference_close_price"] = "0"
+
+        response = self.client.post("/experiment1/gil-decisions", json=payload)
+
+        self.assertEqual(response.status_code, 422)
+
 
 if __name__ == "__main__":
     unittest.main()

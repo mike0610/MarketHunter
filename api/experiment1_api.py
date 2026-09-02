@@ -77,6 +77,14 @@ class GilDecisionRequest(BaseModel):
     `sizing` (resolved from fresh evidence - see SizingIntentRequest)
     must be provided. `trigger` is optional - omitted or IMMEDIATE means
     submit as soon as risk-validated, matching the original behavior.
+
+    `reference_close_price` is the narrow, explicitly-labeled exception
+    for a non-leveraged Investments decision GIL has already priced
+    itself (see experiment1.models.GilDecision's own docstring) -
+    GilDecision.__post_init__ rejects it for any Active Trading
+    (SPOT/FUTURES) account, so this constructor call below fails
+    closed to the same 400/malformed-record path as any other
+    domain-validation error.
     """
 
     decision_id: str = Field(min_length=1)
@@ -92,6 +100,7 @@ class GilDecisionRequest(BaseModel):
     execution_condition: str | None = Field(default=None, min_length=1)
     trigger: ExecutionTriggerRequest | None = None
     sizing: SizingIntentRequest | None = None
+    reference_close_price: Decimal | None = Field(default=None, gt=0)
 
 
 class QuoteRequest(BaseModel):
@@ -174,6 +183,7 @@ def submit_gil_decision(payload: GilDecisionRequest):
             execution_condition=payload.execution_condition,
             trigger=None if payload.trigger is None else ExecutionTrigger(**payload.trigger.model_dump()),
             sizing=None if payload.sizing is None else SizingIntent(**payload.sizing.model_dump()),
+            reference_close_price=payload.reference_close_price,
         )
     except ValueError as exc:
         try:

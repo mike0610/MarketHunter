@@ -13,6 +13,7 @@ from experiment1.models import (
     ExecutionTrigger,
     GilDecision,
     IntentStatus,
+    MarketQuote,
     OrderIntent,
     SizingIntent,
     SizingMode,
@@ -184,6 +185,7 @@ def decision_to_json(decision: GilDecision) -> str:
             "execution_condition": decision.execution_condition,
             "trigger": _trigger_to_dict(decision.trigger),
             "sizing": _sizing_to_dict(decision.sizing),
+            "reference_close_price": None if decision.reference_close_price is None else str(decision.reference_close_price),
         },
         sort_keys=True,
     )
@@ -254,6 +256,9 @@ def decision_from_json(raw: str) -> GilDecision:
         execution_condition=data.get("execution_condition"),
         trigger=trigger,
         sizing=sizing,
+        reference_close_price=None
+        if data.get("reference_close_price") is None
+        else Decimal(data["reference_close_price"]),
     )
 
 
@@ -321,6 +326,31 @@ def _observation_intent(account: AccountKind, symbol: str, now: datetime) -> Ord
     )
 
 
+def _reference_close_quote(decision: GilDecision, now: datetime) -> MarketQuote:
+    """
+    A GIL-declared reference-close price is NOT live market evidence
+    MarketHunter independently verified - it is GIL's own claimed fill
+    reference. Explicitly labeled as such in source/source_reference so
+    no downstream reader (audit, statistics, a future readiness
+    verdict) can mistake this fill for verified live execution.
+    GilDecision.__post_init__ already guarantees reference_close_price
+    is only ever set for a non-leveraged Investments account - never
+    Active Trading (SPOT/FUTURES). `now` (the drain cycle's own
+    processing moment, not decision.decided_at) satisfies
+    execute_pending's own "quote must be observed after intent
+    creation" invariant.
+    """
+    return MarketQuote(
+        symbol=decision.symbol,
+        price=decision.reference_close_price,
+        observed_at=now,
+        source="GIL_SIMULATED_REFERENCE_CLOSE_FILL",
+        source_reference=f"gil-decision:{decision.decision_id}:reference-close",
+        fee_bps=Decimal("0"),
+        slippage_bps=Decimal("0"),
+    )
+
+
 async def drain_gil_decision_inbox(
     engine: Experiment1Engine, quote_source: AsyncQuoteSource
 ) -> tuple[GilIngestionResult, ...]:
@@ -353,6 +383,14 @@ async def drain_gil_decision_inbox(
     quantity known or derived) goes through the exact same
     ingest_gil_decision path as a directly ingested one - same risk
     validation, same BLOCKED-persistence contract, same idempotency.
+
+    A decision carrying reference_close_price (only ever valid for a
+    non-leveraged Investments account - see
+    GilDecision.__post_init__) is filled immediately once its intent
+    reaches PENDING, using GIL's own declared price rather than a live
+    quote - execute_pending's own idempotency (a FILLED intent's
+    resubmission returns the same fill, never a duplicate) makes this
+    restart-safe exactly like every other path here.
 
     Idempotent and restart-safe: only PENDING_DRAIN rows are selected,
     so re-running drain (including after a process restart) never
@@ -411,8 +449,17 @@ async def drain_gil_decision_inbox(
 
         try:
             status = ingest_gil_decision(engine, decision, resolved_quantity=resolved_quantity, sizing_note=sizing_note)
+            detail = None
+            if status is IntentStatus.PENDING and decision.reference_close_price is not None:
+                quote = _reference_close_quote(decision, datetime.now(timezone.utc))
+                engine.execute_pending(intent_id, quote)
+                status = IntentStatus.FILLED
+                detail = (
+                    f"filled at GIL-declared reference-close price {decision.reference_close_price} - "
+                    "not independently-verified live market evidence"
+                )
             engine.mark_gil_decision_processed(decision_id, outcome=status.value, outcome_reason=None, intent_id=intent_id)
-            results.append(GilIngestionResult(decision_id, intent_id, status.value))
+            results.append(GilIngestionResult(decision_id, intent_id, status.value, detail=detail))
         except Experiment1Error as exc:
             engine.mark_gil_decision_processed(
                 decision_id, outcome="BLOCKED", outcome_reason=str(exc), intent_id=intent_id

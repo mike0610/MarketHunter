@@ -398,6 +398,18 @@ class SizingIntent:
             raise ValueError(f"only the field matching {self.mode.value} may be set")
 
 
+# The only account kinds GilDecision.reference_close_price may ever be
+# set for - the buy-and-hold Investments ledgers. Deliberately excludes
+# SPOT and FUTURES (Active Trading, which always requires independently
+# verified live market evidence) and the legacy single INVESTMENTS
+# account (never (re)created for a fresh deployment).
+REFERENCE_CLOSE_ELIGIBLE_ACCOUNTS = (
+    AccountKind.INVESTMENTS_DEFENSIVE,
+    AccountKind.INVESTMENTS_BALANCED,
+    AccountKind.INVESTMENTS_GROWTH,
+)
+
+
 @dataclass(frozen=True, slots=True)
 class GilDecision:
     """
@@ -431,6 +443,24 @@ class GilDecision:
     precedence over trigger if both are somehow present, since it means
     GIL itself flagged this decision as not fully machine-verifiable.
 
+    reference_close_price is the narrow, explicitly-labeled exception
+    to "MarketHunter independently verifies evidence before a fill":
+    GIL's own claimed reference/closing price for a non-leveraged
+    Investments decision (INVESTMENTS_DEFENSIVE/BALANCED/GROWTH only -
+    never SPOT/FUTURES Active Trading, enforced below at construction
+    time, the earliest possible point). It exists because Investments
+    is buy-and-hold research sizing, not execution-grade Active
+    Trading, and this repository has no live non-crypto quote provider
+    wired into the runtime at all (see experiment1/market_data_evidence.py) -
+    without this field, every non-crypto Investments decision would
+    stay WAITING_EVIDENCE forever. drain_gil_decision_inbox uses it to
+    fill the resulting intent immediately, with the fill's own
+    source/source_reference explicitly labeled
+    "GIL_SIMULATED_REFERENCE_CLOSE_FILL" - never presented as verified
+    live market evidence, never usable for Active Trading, and never
+    silently substitutable for EXECUTION_EVIDENCE_OK anywhere else in
+    this codebase.
+
     See experiment1/gil_decision.py for the deterministic mapping into
     the canonical OrderIntent and the MarketHunter risk-validation step
     that follows.
@@ -449,6 +479,7 @@ class GilDecision:
     execution_condition: str | None = None
     trigger: ExecutionTrigger | None = None
     sizing: SizingIntent | None = None
+    reference_close_price: Decimal | None = None
 
     def __post_init__(self) -> None:
         _nonblank(self.decision_id, "decision_id")
@@ -461,6 +492,20 @@ class GilDecision:
             raise ValueError("exactly one of quantity or sizing must be provided")
         if self.sizing is not None and self.sizing.mode is SizingMode.RISK_BUDGET_FROM_STOP and self.stop_loss is None:
             raise ValueError("RISK_BUDGET_FROM_STOP sizing requires stop_loss")
+        if self.reference_close_price is not None:
+            if self.reference_close_price <= 0:
+                raise ValueError("reference_close_price must be positive")
+            if self.account not in REFERENCE_CLOSE_ELIGIBLE_ACCOUNTS:
+                raise ValueError(
+                    "reference_close_price is only valid for non-leveraged Investments accounts "
+                    "(INVESTMENTS_DEFENSIVE/BALANCED/GROWTH) - Active Trading (SPOT/FUTURES) must "
+                    "always fill from independently-verified live market evidence, never a "
+                    "GIL-declared reference price"
+                )
+            if self.sizing is not None:
+                raise ValueError("reference_close_price requires a fixed quantity, not evidence-derived sizing")
+            if self.trigger is not None and self.trigger.trigger_type is not TriggerType.IMMEDIATE:
+                raise ValueError("reference_close_price cannot be combined with a non-IMMEDIATE execution trigger")
 
 
 class GilInboxStatus(str, Enum):

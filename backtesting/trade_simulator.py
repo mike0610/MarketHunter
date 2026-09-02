@@ -33,6 +33,48 @@ class SimulationResult:
     exit_fill: float
 
 
+def resolve_exit(
+    side: str,
+    stop: float,
+    target: float,
+    candles,
+    ambiguous_candle_policy: str = "stop_first",
+) -> tuple[float, int, str]:
+    """
+    Pure OHLC exit-scan: the deterministic stop-first/target-first
+    ambiguity rule, extracted unchanged from TradeSimulator.long/short
+    so a caller with its own entry-fill/fee model (e.g.
+    backtesting/execution_policy.py's passive-maker baseline, which
+    fills at its own resting price rather than TradeSimulator's
+    adverse-slippage-adjusted entry) can reuse the exact same,
+    already-tested exit logic instead of duplicating it.
+    TradeSimulator.long/short delegate to this function - behavior is
+    identical to before this extraction.
+    """
+    if not candles:
+        raise ValueError("Trade simulation requires at least one candle.")
+    if ambiguous_candle_policy not in {"stop_first", "target_first"}:
+        raise ValueError("Unsupported ambiguous candle policy.")
+
+    for offset, candle in enumerate(candles):
+        if side == "LONG":
+            stop_hit = candle.low <= stop
+            target_hit = candle.high >= target
+        else:
+            stop_hit = candle.high >= stop
+            target_hit = candle.low <= target
+        if stop_hit and target_hit:
+            if ambiguous_candle_policy == "target_first":
+                return target, offset, "target"
+            return stop, offset, "stop"
+        if stop_hit:
+            return stop, offset, "stop"
+        if target_hit:
+            return target, offset, "target"
+
+    return candles[-1].close, len(candles) - 1, "window_close"
+
+
 class TradeSimulator:
     """OHLC replay with adverse slippage, fees and deterministic ambiguity rules."""
 
@@ -84,47 +126,22 @@ class TradeSimulator:
             exit_fill=float(exit_fill),
         )
 
-    def _choose_ambiguous_exit(self, stop: float, target: float) -> tuple[float, str]:
-        if self.assumptions.ambiguous_candle_policy == "target_first":
-            return target, "target"
-        return stop, "stop"
-
     def long(self, position: Position, candles) -> SimulationResult:
-        if not candles:
-            raise ValueError("Trade simulation requires at least one candle.")
-
-        for offset, candle in enumerate(candles):
-            stop_hit = candle.low <= position.stop_loss
-            target_hit = candle.high >= position.take_profit
-            if stop_hit and target_hit:
-                price, reason = self._choose_ambiguous_exit(
-                    position.stop_loss,
-                    position.take_profit,
-                )
-                return self._result(position, price, offset, reason)
-            if stop_hit:
-                return self._result(position, position.stop_loss, offset, "stop")
-            if target_hit:
-                return self._result(position, position.take_profit, offset, "target")
-
-        return self._result(position, candles[-1].close, len(candles) - 1, "window_close")
+        raw_exit, offset, reason = resolve_exit(
+            "LONG",
+            position.stop_loss,
+            position.take_profit,
+            candles,
+            self.assumptions.ambiguous_candle_policy,
+        )
+        return self._result(position, raw_exit, offset, reason)
 
     def short(self, position: Position, candles) -> SimulationResult:
-        if not candles:
-            raise ValueError("Trade simulation requires at least one candle.")
-
-        for offset, candle in enumerate(candles):
-            stop_hit = candle.high >= position.stop_loss
-            target_hit = candle.low <= position.take_profit
-            if stop_hit and target_hit:
-                price, reason = self._choose_ambiguous_exit(
-                    position.stop_loss,
-                    position.take_profit,
-                )
-                return self._result(position, price, offset, reason)
-            if stop_hit:
-                return self._result(position, position.stop_loss, offset, "stop")
-            if target_hit:
-                return self._result(position, position.take_profit, offset, "target")
-
-        return self._result(position, candles[-1].close, len(candles) - 1, "window_close")
+        raw_exit, offset, reason = resolve_exit(
+            "SHORT",
+            position.stop_loss,
+            position.take_profit,
+            candles,
+            self.assumptions.ambiguous_candle_policy,
+        )
+        return self._result(position, raw_exit, offset, reason)

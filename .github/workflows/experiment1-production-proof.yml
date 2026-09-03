@@ -1,6 +1,10 @@
 name: Experiment1 Production Proof
 
 on:
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/experiment1-production-proof.yml"
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:

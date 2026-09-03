@@ -2,6 +2,6 @@
   "object_id": "SL-VAL-TAKER-FLOW-PRESCREEN-001",
   "status": "FROZEN",
   "executor": "vps",
-  "timeout_minutes": 30,
+  "timeout_minutes": 20,
   "terminal_states": ["OUTCOME-COMPLETE", "BLOCKED-EVIDENCE", "PROVIDER-BLOCKED"]
 }

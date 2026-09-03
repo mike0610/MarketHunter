@@ -66,6 +66,7 @@ _TOP_LEVEL_KEYS = {
     "execution_condition",
     "trigger",
     "sizing",
+    "reference_close_price",
 }
 _TRIGGER_KEYS = {
     "trigger_type",

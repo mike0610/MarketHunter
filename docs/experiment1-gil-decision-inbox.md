@@ -142,6 +142,30 @@ A decision whose trigger is not yet satisfied, or whose sizing needs a fresh quo
 
 A stale, missing, or unsupported quote for the decision's symbol produces the same watchable `WAITING_EVIDENCE` result as an unmet trigger - never a fabricated mark, never a guess.
 
+## GIL-declared reference-close fill (Investments buy-and-hold only)
+
+`reference_close_price` (optional `Decimal`, positive) is the narrow, explicitly-labeled exception to "MarketHunter independently verifies evidence before a fill": GIL's own claimed reference/closing price for a decision it has already priced itself. It exists because this repository has no live non-crypto quote provider wired into the runtime (see `docs/experiment1-market-data-evidence-contract.md`) - without it, a non-crypto Investments decision would stay `WAITING_EVIDENCE` forever, even for buy-and-hold research sizing that doesn't need execution-grade evidence the way Active Trading does.
+
+**Only valid for `INVESTMENTS_DEFENSIVE`/`INVESTMENTS_BALANCED`/`INVESTMENTS_GROWTH`.** `GilDecision.__post_init__` rejects it outright for `SPOT`/`FUTURES` (Active Trading) - a `400`/persisted-`MALFORMED` response, the same fail-closed path as any other domain-validation error, never a silent downgrade of `EXECUTION_EVIDENCE_OK`. It also requires a fixed `quantity` (not `sizing`) and, if a `trigger` is present, only `IMMEDIATE`.
+
+When present, `drain_gil_decision_inbox` fills the resulting intent immediately once it reaches `PENDING`, using GIL's own declared price rather than a live quote - no `AsyncQuoteSource` lookup happens at all for this decision. The resulting fill's `source` is explicitly `"GIL_SIMULATED_REFERENCE_CLOSE_FILL"` (never a live-provider name) and `source_reference` is `"gil-decision:{decision_id}:reference-close"` - so no downstream reader (audit, statistics, a future readiness verdict) can mistake this for independently-verified live execution. `outcome` is reported as `FILLED` (see `IntentStatus`) rather than the usual `PENDING`.
+
+### Example request - Investments reference-close fill
+
+```json
+POST /experiment1/gil-decisions
+{
+  "decision_id": "gil-2026-09-02-crox-tranche-1",
+  "decided_at": "2026-09-02T00:00:00+00:00",
+  "account": "INVESTMENTS_GROWTH",
+  "action": "BUY",
+  "symbol": "CROX",
+  "thesis": "first Growth tranche in the CROX buy zone",
+  "quantity": "4",
+  "reference_close_price": "115.28"
+}
+```
+
 ## What this closes, and what remains
 
 Closed by this contract: GIL now has a fixed, machine-addressable HTTP endpoint to deliver a decision to, with durable receipt, automatic processing, full audit provenance, and idempotent replay - no manual copy/paste step exists in MarketHunter's side of the pipeline once a request reaches this endpoint.

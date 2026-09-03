@@ -626,3 +626,227 @@ def test_trigger_and_sizing_decision_replay_restart_remains_idempotent(tmp_path)
     second_engine.receive_gil_decision(decision.decision_id, decision_to_json(decision))
     assert asyncio.run(drain_gil_decision_inbox(second_engine, source)) == ()
     assert len(second_engine.pending_intent_ids()) == 1
+
+
+# --- GIL-declared reference-close fill (Investments buy-and-hold only) ------
+
+class NeverCalledQuoteSource:
+    """Proves a reference-close fill never needs a live quote lookup."""
+
+    async def quote_for(self, intent):
+        raise AssertionError("a reference-close-price decision must never fetch a live quote")
+
+
+def _crox_decision(**overrides) -> GilDecision:
+    data = dict(
+        decision_id="gil-crox-tranche-1",
+        decided_at=NOW,
+        account=AccountKind.INVESTMENTS_GROWTH,
+        action=DecisionAction.BUY,
+        symbol="CROX",
+        thesis="first Growth tranche in the CROX buy zone",
+        quantity=Decimal("4"),
+        reference_close_price=Decimal("115.28"),
+    )
+    data.update(overrides)
+    return GilDecision(**data)
+
+
+def test_reference_close_price_is_rejected_for_futures_active_trading():
+    with pytest.raises(ValueError, match="Active Trading"):
+        GilDecision(
+            decision_id="gil-uso-bad",
+            decided_at=NOW,
+            account=AccountKind.FUTURES,
+            action=DecisionAction.LONG,
+            symbol="USO",
+            thesis="oil thesis",
+            quantity=Decimal("1"),
+            reference_close_price=Decimal("143.00"),
+        )
+
+
+def test_reference_close_price_is_rejected_for_spot_active_trading():
+    with pytest.raises(ValueError, match="Active Trading"):
+        GilDecision(
+            decision_id="gil-uso-bad-spot",
+            decided_at=NOW,
+            account=AccountKind.SPOT,
+            action=DecisionAction.BUY,
+            symbol="USO",
+            thesis="oil thesis",
+            quantity=Decimal("1"),
+            reference_close_price=Decimal("143.00"),
+        )
+
+
+def test_reference_close_price_must_be_positive():
+    with pytest.raises(ValueError, match="positive"):
+        _crox_decision(reference_close_price=Decimal("0"))
+
+
+def test_reference_close_price_cannot_combine_with_sizing():
+    with pytest.raises(ValueError, match="fixed quantity"):
+        GilDecision(
+            decision_id="gil-crox-bad-sizing",
+            decided_at=NOW,
+            account=AccountKind.INVESTMENTS_GROWTH,
+            action=DecisionAction.BUY,
+            symbol="CROX",
+            thesis="t",
+            quantity=None,
+            sizing=SizingIntent(mode=SizingMode.MAX_NOTIONAL, max_notional=Decimal("500")),
+            reference_close_price=Decimal("115.28"),
+        )
+
+
+def test_reference_close_price_cannot_combine_with_a_non_immediate_trigger():
+    with pytest.raises(ValueError, match="trigger"):
+        _crox_decision(
+            trigger=ExecutionTrigger(trigger_type=TriggerType.PRICE_AT_OR_BELOW, trigger_price=Decimal("110")),
+        )
+
+
+def test_reference_close_price_round_trips_through_json():
+    decision = _crox_decision()
+    restored = decision_from_json(decision_to_json(decision))
+    assert restored.reference_close_price == Decimal("115.28")
+    assert restored == decision
+
+
+def test_reference_close_price_json_round_trip_when_absent():
+    decision = _decision()
+    restored = decision_from_json(decision_to_json(decision))
+    assert restored.reference_close_price is None
+
+
+def test_drain_fills_crox_from_reference_close_price_without_any_live_quote(engine):
+    decision = _crox_decision()
+    _seed(engine, decision)
+
+    results = asyncio.run(drain_gil_decision_inbox(engine, NeverCalledQuoteSource()))
+
+    assert results[0].outcome == "FILLED"
+    assert "reference-close" in results[0].detail
+
+    positions = engine.positions(AccountKind.INVESTMENTS_GROWTH)
+    assert len(positions) == 1
+    assert positions[0].symbol == "CROX"
+    assert positions[0].quantity == Decimal("4")
+    assert positions[0].average_price == Decimal("115.28")
+
+    state = engine.account_state(AccountKind.INVESTMENTS_GROWTH)
+    assert state.cash == Decimal("5000") - Decimal("4") * Decimal("115.28")
+
+    record = engine.gil_decision_inbox_status(decision.decision_id)
+    assert record.status.value == "PROCESSED"
+    assert record.outcome == "FILLED"
+
+
+def test_the_reference_close_fill_is_explicitly_labeled_never_presented_as_live_evidence(engine):
+    decision = _crox_decision()
+    _seed(engine, decision)
+    asyncio.run(drain_gil_decision_inbox(engine, NeverCalledQuoteSource()))
+
+    intent_id = intent_id_for(decision.decision_id)
+    # execute_pending is idempotent on an already-FILLED intent - it
+    # returns the already-stored FillRecord without re-applying
+    # anything, regardless of the quote argument given - a public-API
+    # way to read back exactly what was persisted.
+    fill = engine.execute_pending(intent_id, _quote(decision.symbol, Decimal("999")))
+    assert fill.source == "GIL_SIMULATED_REFERENCE_CLOSE_FILL"
+    assert fill.source_reference == f"gil-decision:{decision.decision_id}:reference-close"
+    assert fill.fill_price == Decimal("115.28")
+
+
+def test_replaying_the_same_crox_decision_never_creates_a_second_fill(engine):
+    decision = _crox_decision()
+    _seed(engine, decision)
+    asyncio.run(drain_gil_decision_inbox(engine, NeverCalledQuoteSource()))
+
+    # Resubmitting the identical envelope, then draining again, must not
+    # duplicate the position.
+    engine.receive_gil_decision(decision.decision_id, decision_to_json(decision))
+    second_results = asyncio.run(drain_gil_decision_inbox(engine, NeverCalledQuoteSource()))
+
+    assert second_results == ()  # already PROCESSED - not re-selected by drain
+    positions = engine.positions(AccountKind.INVESTMENTS_GROWTH)
+    assert len(positions) == 1
+    assert positions[0].quantity == Decimal("4")
+
+
+def test_restart_across_a_fresh_engine_instance_does_not_duplicate_the_fill(tmp_path):
+    db_path = tmp_path / "experiment1.db"
+    first_engine = Experiment1Engine(db_path)
+    decision = _crox_decision()
+    _seed(first_engine, decision)
+    asyncio.run(drain_gil_decision_inbox(first_engine, NeverCalledQuoteSource()))
+    state_before_restart = first_engine.account_state(AccountKind.INVESTMENTS_GROWTH)
+
+    second_engine = Experiment1Engine(db_path)
+    assert second_engine.account_state(AccountKind.INVESTMENTS_GROWTH) == state_before_restart
+    assert asyncio.run(drain_gil_decision_inbox(second_engine, NeverCalledQuoteSource())) == ()
+    assert len(second_engine.positions(AccountKind.INVESTMENTS_GROWTH)) == 1
+
+
+def test_defensive_and_balanced_wait_decisions_stay_100_percent_cash(engine):
+    for account in (AccountKind.INVESTMENTS_DEFENSIVE, AccountKind.INVESTMENTS_BALANCED):
+        decision = _decision(
+            decision_id=f"gil-wait-{account.value}",
+            account=account,
+            action=DecisionAction.WAIT,
+            symbol="CASH",
+            quantity=Decimal("0"),
+            leverage=Decimal("1"),
+        )
+        _seed(engine, decision)
+        results = asyncio.run(drain_gil_decision_inbox(engine, NeverCalledQuoteSource()))
+        assert results[0].outcome == "NO_ACTION"
+
+        state = engine.account_state(account)
+        assert state.cash == Decimal("5000")
+        assert engine.positions(account) == ()
+
+
+def test_a_reference_close_fill_that_exceeds_available_cash_is_blocked_not_a_silent_partial_fill(engine):
+    decision = _crox_decision(
+        decision_id="gil-crox-too-big",
+        quantity=Decimal("1000"),  # 1000 * 115.28 = 115,280 >> the $5,000 Growth ledger
+    )
+    _seed(engine, decision)
+
+    results = asyncio.run(drain_gil_decision_inbox(engine, NeverCalledQuoteSource()))
+
+    assert results[0].outcome == "BLOCKED"
+    assert "insufficient paper cash" in results[0].detail
+    assert engine.positions(AccountKind.INVESTMENTS_GROWTH) == ()
+    record = engine.gil_decision_inbox_status(decision.decision_id)
+    assert record.outcome == "BLOCKED"
+
+
+def test_reference_close_semantics_cannot_silently_authorize_a_uso_active_trading_fill(engine):
+    # The exact scenario the dispatch names: a conditional USO Active
+    # Trading intent must never be fillable via GIL's own declared
+    # price - it must always go through independently-verified live
+    # market evidence (or stay WAITING_EVIDENCE), never
+    # GIL_SIMULATED_REFERENCE_CLOSE_FILL. Enforced structurally: such a
+    # GilDecision cannot even be constructed (see the two rejection
+    # tests above) - so the only way a USO-style decision reaches drain
+    # at all is without reference_close_price, and it must then behave
+    # exactly like every other execution-grade Active Trading decision:
+    # no live quote available -> WAITING_EVIDENCE, never a fabricated fill.
+    decision = _decision(
+        decision_id="gil-uso-conditional",
+        account=AccountKind.SPOT,
+        action=DecisionAction.BUY,
+        symbol="USO",
+        thesis="oil thesis intact, enter only <= $143.00",
+        leverage=Decimal("1"),
+        trigger=ExecutionTrigger(trigger_type=TriggerType.PRICE_AT_OR_BELOW, trigger_price=Decimal("143.00")),
+    )
+    _seed(engine, decision)
+
+    results = asyncio.run(drain_gil_decision_inbox(engine, FakeSource({})))  # no USO quote available
+
+    assert results[0].outcome == "WAITING_EVIDENCE"
+    assert engine.positions(AccountKind.SPOT) == ()

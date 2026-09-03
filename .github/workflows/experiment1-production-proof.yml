@@ -1,11 +1,13 @@
 name: Experiment1 Production Proof
 
 on:
+  schedule:
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       decision_id:
-        description: "Exact GIL decision_id to audit"
-        required: true
+        description: "Optional exact GIL decision_id to audit"
+        required: false
         type: string
       slack_ts:
         description: "Optional exact Slack message ts for journal evidence"
@@ -14,6 +16,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: experiment1-production-proof
+  cancel-in-progress: true
 
 jobs:
   proof:
@@ -24,8 +30,8 @@ jobs:
       VPS_USER: ubuntu
       VPS_REPO: /home/ubuntu/MarketHunter
       SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
-      DECISION_ID: ${{ inputs.decision_id }}
-      SLACK_TS: ${{ inputs.slack_ts }}
+      DECISION_ID: ${{ inputs.decision_id || '' }}
+      SLACK_TS: ${{ inputs.slack_ts || '' }}
 
     steps:
       - name: Validate proof inputs
@@ -33,7 +39,9 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$SSH_PRIVATE_KEY" || { echo 'MISSING SSH SECRET'; exit 2; }
-          [[ "$DECISION_ID" =~ ^[A-Za-z0-9._:-]{1,160}$ ]] || { echo 'INVALID decision_id'; exit 3; }
+          if [ -n "$DECISION_ID" ]; then
+            [[ "$DECISION_ID" =~ ^[A-Za-z0-9._:-]{1,160}$ ]] || { echo 'INVALID decision_id'; exit 3; }
+          fi
           if [ -n "$SLACK_TS" ]; then
             [[ "$SLACK_TS" =~ ^[0-9]{10}\.[0-9]{6}$ ]] || { echo 'INVALID slack_ts'; exit 4; }
           fi
@@ -48,7 +56,7 @@ jobs:
           ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Read-only production proof
+      - name: Autonomous read-only production proof
         shell: bash
         run: |
           set -euo pipefail
@@ -62,19 +70,28 @@ jobs:
           echo '=== PRODUCTION SHA ==='
           git rev-parse HEAD
 
-          echo '=== TARGETED TRANSPORT EVIDENCE ==='
-          if [ -n "$SLACK_TS" ]; then
-            journalctl -u experiment1-runtime.service --since '-30 minutes' --no-pager | grep -F "$SLACK_TS" || true
-          fi
-          journalctl -u experiment1-runtime.service --since '-30 minutes' --no-pager | grep -F "$DECISION_ID" || true
+          echo '=== RUNTIME HEALTH ==='
+          systemctl is-active experiment1-runtime.timer
+          systemctl is-active markethunter-api
+          systemctl is-active markethunter-worker
 
-          echo '=== READ-ONLY DECISION PIPELINE AUDIT ==='
+          echo '=== RECENT TRANSPORT HEALTH ==='
+          journalctl -u experiment1-runtime.service --since '-20 minutes' --no-pager \
+            | grep -E 'GIL Slack transport:|Slack GIL envelope rejected|experiment1 runtime cycle (starting|complete|failed)' \
+            | tail -n 80 || true
+
+          if [ -n "$SLACK_TS" ]; then
+            echo '=== TARGET SLACK EVIDENCE ==='
+            journalctl -u experiment1-runtime.service --since '-24 hours' --no-pager | grep -F "$SLACK_TS" || true
+          fi
+
+          echo '=== DECISION PIPELINE PROOF ==='
           DECISION_ID="$DECISION_ID" "$REPO/.venv/bin/python" - <<'PY'
           import os
           import sqlite3
           from pathlib import Path
 
-          decision_id = os.environ['DECISION_ID']
+          requested = os.environ.get('DECISION_ID', '').strip()
           db = Path(os.environ.get('EXPERIMENT1_DB_PATH', 'data/experiment1.db'))
           print('db=', db, 'exists=', db.exists())
           if not db.exists():
@@ -82,29 +99,49 @@ jobs:
 
           con = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
           con.row_factory = sqlite3.Row
-          names = {r[0] for r in con.execute("select name from sqlite_master where type='table'")}
-          targets = [
-              'experiment1_gil_decision_inbox',
-              'experiment1_intents',
-              'experiment1_fills',
-              'experiment1_positions',
-          ]
-          for table in targets:
-              if table not in names:
-                  print(f'{table}=MISSING_TABLE')
-                  continue
-              columns = [r[1] for r in con.execute(f'pragma table_info({table})')]
-              key = next((c for c in ('decision_id', 'source_decision_id', 'gil_decision_id') if c in columns), None)
-              if key:
-                  count = con.execute(f'SELECT COUNT(*) FROM {table} WHERE {key}=?', (decision_id,)).fetchone()[0]
-                  print(f'{table}[{key}]={count}')
-              else:
-                  print(f'{table}=NO_DECISION_KEY')
+          tables = {r[0] for r in con.execute("select name from sqlite_master where type='table'")}
+          inbox = 'experiment1_gil_decision_inbox'
+          if inbox not in tables:
+              print('PROOF=BLOCKED missing inbox table')
+              raise SystemExit(6)
+
+          inbox_cols = [r[1] for r in con.execute(f'pragma table_info({inbox})')]
+          order_col = 'received_at' if 'received_at' in inbox_cols else 'decision_id'
+          if requested:
+              decision_ids = [requested]
+          else:
+              decision_ids = [
+                  r[0] for r in con.execute(
+                      f'SELECT decision_id FROM {inbox} ORDER BY {order_col} DESC LIMIT 20'
+                  )
+              ]
+
+          if not decision_ids:
+              print('PROOF=IDLE no GIL decisions in inbox')
+              con.close()
+              raise SystemExit(0)
+
+          def count_by_key(table, keys, value):
+              if table not in tables:
+                  return None
+              cols = [r[1] for r in con.execute(f'pragma table_info({table})')]
+              key = next((k for k in keys if k in cols), None)
+              if key is None:
+                  return None
+              return con.execute(f'SELECT COUNT(*) FROM {table} WHERE {key}=?', (value,)).fetchone()[0]
+
+          for decision_id in decision_ids:
+              intent_id = f'gil-decision:{decision_id}'
+              inbox_count = con.execute(
+                  f'SELECT COUNT(*) FROM {inbox} WHERE decision_id=?', (decision_id,)
+              ).fetchone()[0]
+              intent_count = count_by_key('experiment1_intents', ('intent_id',), intent_id)
+              fill_count = count_by_key('experiment1_fills', ('intent_id', 'source_intent_id'), intent_id)
+              position_count = count_by_key('experiment1_positions', ('intent_id', 'source_intent_id'), intent_id)
+              print(
+                  f'decision_id={decision_id} inbox={inbox_count} '
+                  f'intent={intent_count} fill={fill_count} position={position_count}'
+              )
           con.close()
           PY
-
-          echo '=== SERVICE STATE ==='
-          systemctl is-active experiment1-runtime.timer
-          systemctl is-active markethunter-api
-          systemctl is-active markethunter-worker
           REMOTE

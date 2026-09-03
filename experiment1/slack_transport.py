@@ -228,6 +228,14 @@ def parse_structured_envelope(text: str) -> str | None:
     return decision_to_json(decision)
 
 
+def _diagnostic_text_repr(text: object, *, limit: int = 4000) -> str:
+    """Escaped, bounded representation of rejected Slack text for transport diagnostics."""
+    rendered = repr(text)
+    if len(rendered) <= limit:
+        return rendered
+    return rendered[:limit] + f"...<truncated {len(rendered) - limit} chars>"
+
+
 def _load_checkpoint(path: Path) -> str | None:
     if not path.exists():
         return None
@@ -337,7 +345,12 @@ def poll_slack_gil_decisions(
                 logger.warning("Slack GIL envelope rejected at inbox boundary - ts=%s reason=%s", ts, exc)
         else:
             rejected += 1
-            logger.warning("Slack GIL envelope rejected - ts=%s reason=%s", ts, reason)
+            logger.warning(
+                "Slack GIL envelope rejected - ts=%s reason=%s raw_text=%s",
+                ts,
+                reason,
+                _diagnostic_text_repr(text),
+            )
 
         # Advance only after this message has been deterministically handled.
         # If the process crashes after durable inbox receipt but before this

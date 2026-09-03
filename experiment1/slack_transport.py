@@ -24,7 +24,7 @@ CHATGPT_SLACK_APP_USER_ID = "U0BME2V91TQ"
 # surfaces enrich that same mention as <@USER_ID|DisplayName>. Accept exactly
 # these two deterministic provenance renderings and no arbitrary footer.
 CHATGPT_CONNECTOR_FOOTER = f"*Sent using* <@{CHATGPT_SLACK_APP_USER_ID}>"
-CHATGPT_CONNECTOR_RENDERED_FOOTER = f"*Sent using* <@{CHATGPT_SLACK_APP_USER_ID}|ChatGPT>"
+CHATGPT_CONNECTOR_RENDERED_FOOTER = f"*Sent using* <@{CHATGPT_SLACK_APP_USER_ID}|ChatGPT>"\n# Some Slack history reads render the same connector provenance as a bare app\n# mention without a display label. Keep this exact suffix allowlisted too.\nCHATGPT_CONNECTOR_BARE_FOOTER = f"*Sent using* <@{CHATGPT_SLACK_APP_USER_ID}>"
 
 ENV_ENABLED = "GIL_SLACK_TRANSPORT_ENABLED"
 ENV_TOKEN = "GIL_SLACK_BOT_TOKEN"
@@ -47,7 +47,7 @@ _CANONICAL_ENVELOPE_RE = re.compile(
 # must be first, the JSON object must consume the complete payload, and any
 # trailer must be the exact ChatGPT provenance footer. Arbitrary prose remains
 # rejected.
-_CONNECTOR_FOOTER_RE = rf"(?:{re.escape(CHATGPT_CONNECTOR_FOOTER)}|{re.escape(CHATGPT_CONNECTOR_RENDERED_FOOTER)})"
+_CONNECTOR_FOOTER_RE = rf"(?:{re.escape(CHATGPT_CONNECTOR_FOOTER)}|{re.escape(CHATGPT_CONNECTOR_RENDERED_FOOTER)}|{re.escape(CHATGPT_CONNECTOR_BARE_FOOTER)})"
 _CONNECTOR_ENVELOPE_RE = re.compile(
     rf"\A\s*GIL DECISION ENVELOPE v1\s*\n```(?:json\s*\n?)?\s*(?P<payload>\{{.*\}})\s*```\s*\n{_CONNECTOR_FOOTER_RE}\s*\Z",
     re.DOTALL,

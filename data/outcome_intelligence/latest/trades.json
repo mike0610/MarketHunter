@@ -1,11 +1,11 @@
 {
-  "captured_at_utc": "2026-09-03T12:56:56.984370+00:00",
+  "captured_at_utc": "2026-09-03T14:13:13.716837+00:00",
   "source": "/research/trades",
-  "source_revision": "f58221d9172bd2d019e9e1dec138c789b5b98fc0",
+  "source_revision": "f413f60826d46413e613c335bedc3d869bdc5305",
   "total": 231,
   "trades": [
     {
-      "active_candles": 11,
+      "active_candles": 13,
       "close_reason": "LIVE_ENTRY_FILLED",
       "closed_at": null,
       "created_at": "2026-09-03T01:25:10.922673Z",
@@ -15,7 +15,7 @@
       "id": "723c3568-16bb-457f-88c6-6fcc49ed9fbc",
       "is_experimental": true,
       "is_profitable_expired": false,
-      "last_processed_candle_at": "2026-09-03T11:59:59.999000Z",
+      "last_processed_candle_at": "2026-09-03T13:59:59.999000Z",
       "market": "spot",
       "max_active_candles": 30,
       "max_drawdown_percent": -2.3255813953488467,
@@ -47,7 +47,7 @@
       "timeframe": "1h"
     },
     {
-      "active_candles": 23,
+      "active_candles": 25,
       "close_reason": "LIVE_SL_MOVED_BREAKEVEN",
       "closed_at": null,
       "created_at": "2026-09-02T13:25:06.830621Z",
@@ -57,7 +57,7 @@
       "id": "fff59c03-ac11-4a99-bb3e-a521d3fda9e1",
       "is_experimental": false,
       "is_profitable_expired": false,
-      "last_processed_candle_at": "2026-09-03T11:59:59.999000Z",
+      "last_processed_candle_at": "2026-09-03T13:59:59.999000Z",
       "market": "futures",
       "max_active_candles": 30,
       "max_drawdown_percent": -1.2247557003257283,

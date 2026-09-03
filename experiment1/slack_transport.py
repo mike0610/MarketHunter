@@ -41,15 +41,18 @@ _CANONICAL_ENVELOPE_RE = re.compile(
     re.DOTALL,
 )
 
-# ChatGPT's Slack connector deterministically serializes a code block as
-# ```{...}``` (no language tag/newlines) and appends one provenance footer.
-# Accept ONLY the raw Slack API mention form or the read-surface enriched form;
-# arbitrary trailing prose or a look-alike footer remains rejected. Compact
-# canonical JSON emitted by decision_to_json is one line, so newlines inside
-# the payload are deliberately disallowed here.
+# ChatGPT's Slack connector can persist code formatting in either a fenced
+# block or a single-backtick inline code span. Both forms are still treated as
+# machine-only envelopes: the marker must be first, the JSON payload must be
+# the only code content, and the only allowed trailer is the exact ChatGPT
+# provenance footer. Arbitrary prose remains rejected.
 _CONNECTOR_FOOTER_RE = rf"(?:{re.escape(CHATGPT_CONNECTOR_FOOTER)}|{re.escape(CHATGPT_CONNECTOR_RENDERED_FOOTER)})"
 _CONNECTOR_ENVELOPE_RE = re.compile(
-    rf"\A\s*GIL DECISION ENVELOPE v1\s*\n```(?P<payload>\{{[^\r\n]*\}})```\s*\n{_CONNECTOR_FOOTER_RE}\s*\Z"
+    rf"\A\s*GIL DECISION ENVELOPE v1\s*\n```(?:json\s*\n?)?\s*(?P<payload>\{{.*\}})\s*```\s*\n{_CONNECTOR_FOOTER_RE}\s*\Z",
+    re.DOTALL,
+)
+_CONNECTOR_INLINE_ENVELOPE_RE = re.compile(
+    rf"\A\s*GIL DECISION ENVELOPE v1\s*\n`(?P<payload>\{{[^\r\n`]*\}})`\s*\n{_CONNECTOR_FOOTER_RE}\s*\Z"
 )
 
 _TOP_LEVEL_KEYS = {
@@ -199,14 +202,16 @@ def _validate_exact_schema(data: object) -> dict:
 def parse_structured_envelope(text: str) -> str | None:
     """
     Return canonical decision JSON only when the entire Slack message is one
-    of two explicitly supported machine forms: the original canonical fenced
-    JSON form, or the deterministic ChatGPT Slack-connector rendering with its
-    exact provenance footer. Ordinary GIL research text is always ignored.
+    of the explicitly supported machine forms: the original canonical fenced
+    JSON form, a connector fenced form, or the connector's observed inline
+    code serialization. Ordinary GIL research text is always ignored.
     """
     raw = text or ""
     match = _CANONICAL_ENVELOPE_RE.match(raw)
     if match is None:
         match = _CONNECTOR_ENVELOPE_RE.match(raw)
+    if match is None:
+        match = _CONNECTOR_INLINE_ENVELOPE_RE.match(raw)
     if match is None:
         return None
     data = json.loads(match.group("payload"))

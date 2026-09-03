@@ -80,9 +80,9 @@ jobs:
           KEY="$HOME/.ssh/markethunter_actions_ed25519"
           ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "set -euo pipefail; TMP=/tmp/markethunter-dashboard-${GITHUB_SHA}; rm -rf \"\$TMP\"; mkdir -p \"\$TMP\"; tar -xzf /tmp/markethunter-dashboard-${GITHUB_SHA}.tgz -C \"\$TMP\"; test -f \"\$TMP/dist/index.html\"; sudo mkdir -p '${DASHBOARD_ROOT}'; sudo rsync -a --delete \"\$TMP/dist/\" '${DASHBOARD_ROOT}/'; rm -rf \"\$TMP\" /tmp/markethunter-dashboard-${GITHUB_SHA}.tgz"
 
-      - name: Verify deployed route and API
+      - name: Verify deployed Investments route and API
         run: |
           set -euo pipefail
           KEY="$HOME/.ssh/markethunter_actions_ed25519"
-          ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "test -f '${DASHBOARD_ROOT}/index.html'; curl -fsS -o /dev/null http://127.0.0.1/active-trading || curl -fsS -o /dev/null http://127.0.0.1/; curl -fsS http://127.0.0.1/api/health >/dev/null"
-          echo "DEPLOYED dashboard SHA=${GITHUB_SHA} route=/active-trading api=/api"
+          ssh -i "$KEY" "${VPS_USER}@${VPS_HOST}" "set -euo pipefail; test -f '${DASHBOARD_ROOT}/index.html'; curl -fsS -o /dev/null http://127.0.0.1/investments; curl -fsS http://127.0.0.1/api/health >/dev/null; curl -fsS http://127.0.0.1/api/experiment1/state | grep -q 'INVESTMENTS_DEFENSIVE'; curl -fsS http://127.0.0.1/api/experiment1/state | grep -q 'INVESTMENTS_BALANCED'; curl -fsS http://127.0.0.1/api/experiment1/state | grep -q 'INVESTMENTS_GROWTH'"
+          echo "DEPLOYED dashboard SHA=${GITHUB_SHA} route=/investments api=/api/experiment1/state ledgers=3"

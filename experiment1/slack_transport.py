@@ -41,11 +41,12 @@ _CANONICAL_ENVELOPE_RE = re.compile(
     re.DOTALL,
 )
 
-# ChatGPT's Slack connector can persist code formatting in either a fenced
-# block or a single-backtick inline code span. Both forms are still treated as
-# machine-only envelopes: the marker must be first, the JSON payload must be
-# the only code content, and the only allowed trailer is the exact ChatGPT
-# provenance footer. Arbitrary prose remains rejected.
+# ChatGPT's Slack connector can persist code formatting in a fenced block, a
+# single-backtick inline code span, or as plain text after markdown
+# normalization. All accepted forms remain machine-only envelopes: the marker
+# must be first, the JSON object must consume the complete payload, and any
+# trailer must be the exact ChatGPT provenance footer. Arbitrary prose remains
+# rejected.
 _CONNECTOR_FOOTER_RE = rf"(?:{re.escape(CHATGPT_CONNECTOR_FOOTER)}|{re.escape(CHATGPT_CONNECTOR_RENDERED_FOOTER)})"
 _CONNECTOR_ENVELOPE_RE = re.compile(
     rf"\A\s*GIL DECISION ENVELOPE v1\s*\n```(?:json\s*\n?)?\s*(?P<payload>\{{.*\}})\s*```\s*\n{_CONNECTOR_FOOTER_RE}\s*\Z",
@@ -53,6 +54,10 @@ _CONNECTOR_ENVELOPE_RE = re.compile(
 )
 _CONNECTOR_INLINE_ENVELOPE_RE = re.compile(
     rf"\A\s*GIL DECISION ENVELOPE v1\s*\n`(?P<payload>\{{[^\r\n`]*\}})`\s*\n{_CONNECTOR_FOOTER_RE}\s*\Z"
+)
+_PLAIN_ENVELOPE_RE = re.compile(
+    rf"\A\s*GIL DECISION ENVELOPE v1\s*\n(?P<payload>\{{.*\}})(?:\s*\n{_CONNECTOR_FOOTER_RE})?\s*\Z",
+    re.DOTALL,
 )
 
 _TOP_LEVEL_KEYS = {
@@ -203,15 +208,18 @@ def parse_structured_envelope(text: str) -> str | None:
     """
     Return canonical decision JSON only when the entire Slack message is one
     of the explicitly supported machine forms: the original canonical fenced
-    JSON form, a connector fenced form, or the connector's observed inline
-    code serialization. Ordinary GIL research text is always ignored.
+    JSON form, connector fenced/inline forms, or Slack's observed plain-text
+    normalization of the same strict envelope. Ordinary GIL research text is
+    always ignored.
     """
-    raw = text or ""
+    raw = (text or "").replace("\r\n", "\n")
     match = _CANONICAL_ENVELOPE_RE.match(raw)
     if match is None:
         match = _CONNECTOR_ENVELOPE_RE.match(raw)
     if match is None:
         match = _CONNECTOR_INLINE_ENVELOPE_RE.match(raw)
+    if match is None:
+        match = _PLAIN_ENVELOPE_RE.match(raw)
     if match is None:
         return None
     data = json.loads(match.group("payload"))

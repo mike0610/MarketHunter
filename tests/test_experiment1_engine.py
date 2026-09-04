@@ -7,7 +7,14 @@ from decimal import Decimal
 from pathlib import Path
 
 from experiment1.engine import Experiment1Engine, Experiment1Error
-from experiment1.models import (\n    AccountKind, DecisionAction, GilInboxStatus, MarketQuote, OrderIntent, TradingInboxStatus\n)
+from experiment1.models import (
+    AccountKind,
+    DecisionAction,
+    GilInboxStatus,
+    MarketQuote,
+    OrderIntent,
+    TradingInboxStatus,
+)
 
 
 NOW = datetime(2026, 9, 1, 3, 0, tzinfo=timezone.utc)

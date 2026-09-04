@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 OBJECT_ID = "MH-STAGE2-SCANNER-LIVE-PROOF-001"
-EXPECTED_SHA = "2cb2339a18fcb63ef6e7fa443dddff7ecce4aa64"
+EXPECTED_SHA = "bee8c21a24b2dcd0524638385406c01fcf509988"
 UNIVERSE = "SPY,QQQ,AAPL,MSFT,NVDA"
 
 

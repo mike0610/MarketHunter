@@ -19,5 +19,10 @@ class PriceSanityTests(unittest.TestCase):
     def test_positive_prices_compute_return(self):
         self.assertAlmostEqual(mod.safe_ratio_return(11.0, 10.0), 0.1)
 
+    def test_close_to_close_uses_close_field_not_return_field(self):
+        prev=(100.0,101.0,-0.75,0.1)
+        now=(102.0,103.0,0.0,-0.2)
+        self.assertAlmostEqual(mod.close_to_close_return(now,prev),103.0/101.0-1.0)
+
 if __name__ == "__main__":
     unittest.main()

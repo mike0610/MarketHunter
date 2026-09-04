@@ -1,0 +1,49 @@
+name: Diagnose Active Trading Runtime
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/diagnose-active-trading-runtime.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VPS_HOST: 149.56.45.39
+      VPS_USER: ubuntu
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+
+    steps:
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Read runtime failure evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/key" "${VPS_USER}@${VPS_HOST}" 'bash -s' <<'REMOTE'
+          set -u
+          cd /home/ubuntu/MarketHunter
+          echo "SHA=$(git rev-parse HEAD)"
+          echo '=== TIMER ==='
+          systemctl status experiment1-runtime.timer --no-pager || true
+          echo '=== SERVICE ==='
+          systemctl status experiment1-runtime.service --no-pager || true
+          echo '=== JOURNAL ==='
+          journalctl -u experiment1-runtime.service -n 200 --no-pager || true
+          echo '=== ENV KEYS ==='
+          if [ -f deploy/systemd/experiment1-runtime.env ]; then
+            grep -E '^(GIL_SLACK_TRANSPORT_ENABLED|TRADING_SLACK_TRANSPORT_ENABLED|TRADING_SLACK_CHANNEL_ID|TRADING_SLACK_ALLOWED_USER_ID)=' deploy/systemd/experiment1-runtime.env || true
+          fi
+          REMOTE

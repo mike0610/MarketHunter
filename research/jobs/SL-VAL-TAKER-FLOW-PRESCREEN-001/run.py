@@ -76,7 +76,7 @@ def main(out,job):
  def checked_return(sym,ts_now,ts_prev,context):
   nonlocal price_ratio_checks
   price_ratio_checks+=1
-  numer=data[sym][ts_now][2];denom=data[sym][ts_prev][2]
+  numer=data[sym][ts_now][1];denom=data[sym][ts_prev][1]
   v=safe_ratio_return(numer,denom)
   if v is None:record_invalid(sym,ts_now,ts_prev,context,numer,denom)
   return v

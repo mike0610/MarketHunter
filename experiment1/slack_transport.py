@@ -49,14 +49,14 @@ _CANONICAL_ENVELOPE_RE = re.compile(
 # rejected.
 _CONNECTOR_FOOTER_RE = rf"(?:{re.escape(CHATGPT_CONNECTOR_FOOTER)}|{re.escape(CHATGPT_CONNECTOR_RENDERED_FOOTER)})"
 _CONNECTOR_ENVELOPE_RE = re.compile(
-    rf"\A\s*GIL DECISION ENVELOPE v1\s*\n```(?:json\s*\n?)?\s*(?P<payload>\{{.*\}})\s*```\s*\n{_CONNECTOR_FOOTER_RE}\s*\Z",
+    rf"\A\s*GIL DECISION ENVELOPE v1\s*\n```(?:json\s*\n?)?\s*(?P<payload>\{{.*\}})\s*```\s+{_CONNECTOR_FOOTER_RE}\s*\Z",
     re.DOTALL,
 )
 _CONNECTOR_INLINE_ENVELOPE_RE = re.compile(
-    rf"\A\s*GIL DECISION ENVELOPE v1\s*\n`(?P<payload>\{{[^\r\n`]*\}})`\s*\n{_CONNECTOR_FOOTER_RE}\s*\Z"
+    rf"\A\s*GIL DECISION ENVELOPE v1\s*\n`(?P<payload>\{{[^\r\n`]*\}})`\s+{_CONNECTOR_FOOTER_RE}\s*\Z"
 )
 _PLAIN_ENVELOPE_RE = re.compile(
-    rf"\A\s*GIL DECISION ENVELOPE v1\s*\n(?P<payload>\{{.*\}})(?:\s*\n{_CONNECTOR_FOOTER_RE})?\s*\Z",
+    rf"\A\s*GIL DECISION ENVELOPE v1\s*\n(?P<payload>\{{.*\}})(?:\s+{_CONNECTOR_FOOTER_RE})?\s*\Z",
     re.DOTALL,
 )
 

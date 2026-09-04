@@ -1,13 +1,14 @@
-# MarketHunter - runs gil-trading-scanner-runtime.service every 15 minutes.
-# A discovery scan, not an execution-evidence lookup - no freshness
-# window elsewhere in the codebase to stay in lockstep with, unlike
-# experiment1-runtime.timer's own 5-minute cadence.
+# MarketHunter - runs gil-trading-scanner-runtime.service every 30 minutes.
+# A discovery scan, not an execution-evidence lookup. Thirty minutes is the
+# Product Owner-approved discovery cadence for structural Active Trading
+# setups; the separate Experiment1 execution runtime can continue on its own
+# tighter cadence for trigger checks, fills, SL/TP and portfolio state.
 
 [Unit]
-Description=Run MarketHunter GIL Trading Scanner discovery cycle every 15 minutes
+Description=Run MarketHunter GIL Trading Scanner discovery cycle every 30 minutes
 
 [Timer]
-OnCalendar=*:0/15
+OnCalendar=*:0/30
 Persistent=true
 RandomizedDelaySec=30
 

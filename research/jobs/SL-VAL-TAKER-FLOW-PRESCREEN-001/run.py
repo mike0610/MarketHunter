@@ -32,6 +32,8 @@ def valid_price(x):return isinstance(x,(int,float)) and math.isfinite(x) and x>0
 def safe_ratio_return(numer,denom):
  if not valid_price(numer) or not valid_price(denom):return None
  return numer/denom-1.0
+def close_to_close_return(row_now,row_prev):
+ return safe_ratio_return(row_now[1],row_prev[1])
 def pct(vals,p):
  if not vals:return None
  s=sorted(vals);k=(len(s)-1)*p;f=math.floor(k);c=math.ceil(k)
@@ -76,8 +78,9 @@ def main(out,job):
  def checked_return(sym,ts_now,ts_prev,context):
   nonlocal price_ratio_checks
   price_ratio_checks+=1
-  numer=data[sym][ts_now][1];denom=data[sym][ts_prev][1]
-  v=safe_ratio_return(numer,denom)
+  row_now=data[sym][ts_now];row_prev=data[sym][ts_prev]
+  numer=row_now[1];denom=row_prev[1]
+  v=close_to_close_return(row_now,row_prev)
   if v is None:record_invalid(sym,ts_now,ts_prev,context,numer,denom)
   return v
  residual={s:{} for s in ASSETS}

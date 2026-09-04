@@ -539,3 +539,22 @@ class GilInboxRecord:
     outcome_reason: str | None
     intent_id: str | None
     processed_at: datetime | None
+
+# Active Trading uses the same small durable-inbox lifecycle vocabulary as
+# GIL, but its records live in a separate table/namespace. Keeping a distinct
+# record type prevents the two producer domains from being accidentally mixed.
+TradingInboxStatus = GilInboxStatus
+
+
+@dataclass(frozen=True, slots=True)
+class TradingInboxRecord:
+    """One durable Strategy Lab / Active Trading decision inbox row."""
+
+    decision_id: str
+    received_at: datetime
+    status: TradingInboxStatus
+    outcome: str | None
+    outcome_reason: str | None
+    intent_id: str | None
+    processed_at: datetime | None
+

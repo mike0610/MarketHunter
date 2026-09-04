@@ -50,9 +50,11 @@ def main(job_path, output):
                 "TRADING_SCANNER_MAX_DATA_AGE_SECONDS": "345600",
             }
         )
-        cmd = [str(work / ".venv" / "bin" / "python"), "-m", "tools.gil_trading_scanner_runtime.runtime"]
-        if not Path(cmd[0]).exists():
-            cmd[0] = "python3"
+        vps_python = Path("/home/ubuntu/MarketHunter/.venv/bin/python")
+        if not vps_python.exists():
+            emit(output, "BLOCKED-RUNTIME", reason="vps-venv-python-missing", expected_path=str(vps_python))
+            return
+        cmd = [str(vps_python), "-m", "tools.gil_trading_scanner_runtime.runtime"]
 
         proc = subprocess.run(cmd, cwd=work, env=env, capture_output=True, text=True, timeout=240)
         (out / "runtime.stdout.log").write_text(proc.stdout)

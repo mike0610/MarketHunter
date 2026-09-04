@@ -7,7 +7,14 @@ from decimal import Decimal
 from pathlib import Path
 
 from experiment1.engine import Experiment1Engine, Experiment1Error
-from experiment1.models import AccountKind, DecisionAction, GilInboxStatus, MarketQuote, OrderIntent
+from experiment1.models import (
+    AccountKind,
+    DecisionAction,
+    GilInboxStatus,
+    MarketQuote,
+    OrderIntent,
+    TradingInboxStatus,
+)
 
 
 NOW = datetime(2026, 9, 1, 3, 0, tzinfo=timezone.utc)
@@ -870,6 +877,120 @@ class Experiment1GilInboxTests(unittest.TestCase):
         record = second.gil_decision_inbox_status("gil-1")
         self.assertEqual(record.status, GilInboxStatus.PROCESSED)
         self.assertEqual(record.outcome, "PENDING")
+
+
+class Experiment1TradingInboxTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / "experiment1.db"
+        self.engine = Experiment1Engine(self.db_path)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_receive_trading_decision_persists_pending_row(self) -> None:
+        record = self.engine.receive_trading_decision(
+            "sl-1", '{"decision_id":"sl-1"}', now=NOW
+        )
+
+        self.assertEqual(record.decision_id, "sl-1")
+        self.assertEqual(record.status, TradingInboxStatus.PENDING_DRAIN)
+        self.assertEqual(record.received_at, NOW)
+        self.assertIsNone(record.outcome)
+        self.assertEqual(
+            self.engine.pending_trading_decision_inbox(),
+            (("sl-1", '{"decision_id":"sl-1"}'),),
+        )
+
+    def test_identical_replay_is_idempotent_and_keeps_original_timestamp(self) -> None:
+        first = self.engine.receive_trading_decision("sl-1", '{"a":1}', now=NOW)
+        second = self.engine.receive_trading_decision(
+            "sl-1", '{"a":1}', now=NOW + timedelta(minutes=5)
+        )
+
+        self.assertEqual(first, second)
+        self.assertEqual(first.received_at, NOW)
+        self.assertEqual(len(self.engine.pending_trading_decision_inbox()), 1)
+
+    def test_same_id_with_different_payload_fails_closed(self) -> None:
+        self.engine.receive_trading_decision("sl-1", '{"a":1}', now=NOW)
+
+        with self.assertRaisesRegex(
+            Experiment1Error, "already exists with different content"
+        ):
+            self.engine.receive_trading_decision("sl-1", '{"a":2}', now=NOW)
+
+    def test_malformed_is_terminal_and_never_pending(self) -> None:
+        record = self.engine.record_malformed_trading_decision(
+            "sl-bad",
+            '{"decision_id":"sl-bad"}',
+            "invalid trading envelope",
+            now=NOW,
+        )
+
+        self.assertEqual(record.status, TradingInboxStatus.MALFORMED)
+        self.assertEqual(record.outcome_reason, "invalid trading envelope")
+        self.assertEqual(record.processed_at, NOW)
+        self.assertEqual(self.engine.pending_trading_decision_inbox(), ())
+
+    def test_mark_processed_removes_row_from_pending_drain(self) -> None:
+        self.engine.receive_trading_decision("sl-1", '{"a":1}', now=NOW)
+        self.engine.mark_trading_decision_processed(
+            "sl-1",
+            outcome="PENDING",
+            outcome_reason=None,
+            intent_id="trading-decision:sl-1",
+            now=NOW + timedelta(minutes=1),
+        )
+
+        record = self.engine.trading_decision_inbox_status("sl-1")
+        self.assertEqual(record.status, TradingInboxStatus.PROCESSED)
+        self.assertEqual(record.outcome, "PENDING")
+        self.assertEqual(record.intent_id, "trading-decision:sl-1")
+        self.assertEqual(record.processed_at, NOW + timedelta(minutes=1))
+        self.assertEqual(self.engine.pending_trading_decision_inbox(), ())
+
+    def test_watch_reason_survives_while_row_stays_pending(self) -> None:
+        self.engine.receive_trading_decision("sl-1", '{"a":1}', now=NOW)
+        self.engine.record_trading_decision_watch("sl-1", "fresh quote unavailable")
+
+        record = self.engine.trading_decision_inbox_status("sl-1")
+        self.assertEqual(record.status, TradingInboxStatus.PENDING_DRAIN)
+        self.assertEqual(record.outcome_reason, "fresh quote unavailable")
+        self.assertEqual(len(self.engine.pending_trading_decision_inbox()), 1)
+
+    def test_trading_inbox_survives_process_restart_and_replay(self) -> None:
+        first = Experiment1Engine(self.db_path)
+        original = first.receive_trading_decision("sl-1", '{"a":1}', now=NOW)
+
+        second = Experiment1Engine(self.db_path)
+        recovered = second.trading_decision_inbox_status("sl-1")
+        replay = second.receive_trading_decision(
+            "sl-1", '{"a":1}', now=NOW + timedelta(hours=1)
+        )
+
+        self.assertEqual(recovered, original)
+        self.assertEqual(replay, original)
+        self.assertEqual(len(second.pending_trading_decision_inbox()), 1)
+
+    def test_gil_and_trading_namespaces_allow_same_decision_id(self) -> None:
+        gil = self.engine.receive_gil_decision("same-id", '{"producer":"gil"}', now=NOW)
+        trading = self.engine.receive_trading_decision(
+            "same-id", '{"producer":"strategy-lab"}', now=NOW
+        )
+
+        self.assertEqual(gil.decision_id, trading.decision_id)
+        self.assertEqual(
+            self.engine.pending_gil_decision_inbox(),
+            (("same-id", '{"producer":"gil"}'),),
+        )
+        self.assertEqual(
+            self.engine.pending_trading_decision_inbox(),
+            (("same-id", '{"producer":"strategy-lab"}'),),
+        )
+
+    def test_unknown_status_returns_none(self) -> None:
+        self.assertIsNone(self.engine.trading_decision_inbox_status("missing"))
 
 
 class Experiment1RestartReplayTests(unittest.TestCase):

@@ -1,0 +1,63 @@
+name: Repair Active Trading Slack Membership
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/repair-active-trading-slack-membership.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  repair-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VPS_HOST: 149.56.45.39
+      VPS_USER: ubuntu
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+      SLACK_BOT_TOKEN: ${{ secrets.GIL_SLACK_BOT_TOKEN }}
+      CHANNEL_ID: C0BME3BU1LN
+
+    steps:
+      - name: Join runtime bot to strategy-lab
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESPONSE=$(curl -fsS -X POST https://slack.com/api/conversations.join             -H "Authorization: Bearer ${SLACK_BOT_TOKEN}"             -H "Content-Type: application/x-www-form-urlencoded"             --data-urlencode "channel=${CHANNEL_ID}")
+          echo "$RESPONSE" | jq '{ok,error,channel:{id:.channel.id,name:.channel.name,is_member:.channel.is_member}}'
+          test "$(echo "$RESPONSE" | jq -r '.ok')" = "true"
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Restart Experiment1 runtime and verify transport
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/key" "${VPS_USER}@${VPS_HOST}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd /home/ubuntu/MarketHunter
+
+          sudo systemctl restart experiment1-runtime.timer
+          sudo systemctl start experiment1-runtime.service
+
+          echo '=== LAST RUNTIME ==='
+          journalctl -u experiment1-runtime.service -n 80 --no-pager
+
+          journalctl -u experiment1-runtime.service -n 80 --no-pager | grep -q 'Trading Slack transport:'
+          if journalctl -u experiment1-runtime.service -n 80 --no-pager | grep -q 'not_in_channel'; then
+            echo 'Slack membership repair did not take effect'
+            exit 4
+          fi
+
+          systemctl is-active --quiet experiment1-runtime.timer
+          echo 'ACTIVE_TRADING_SLACK_MEMBERSHIP=PASS'
+          REMOTE

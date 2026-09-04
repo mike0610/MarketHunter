@@ -24,7 +24,7 @@ CHATGPT_SLACK_APP_USER_ID = "U0BME2V91TQ"
 # surfaces enrich that same mention as <@USER_ID|DisplayName>. Accept exactly
 # these two deterministic provenance renderings and no arbitrary footer.
 CHATGPT_CONNECTOR_FOOTER = f"*Sent using* <@{CHATGPT_SLACK_APP_USER_ID}>"
-CHATGPT_CONNECTOR_RENDERED_FOOTER = f"*Sent using* <@{CHATGPT_SLACK_APP_USER_ID}|ChatGPT>"\n# Some Slack history reads render the same connector provenance as a bare app\n# mention without a display label. Keep this exact suffix allowlisted too.\nCHATGPT_CONNECTOR_BARE_FOOTER = f"*Sent using* <@{CHATGPT_SLACK_APP_USER_ID}>"
+CHATGPT_CONNECTOR_RENDERED_FOOTER = f"*Sent using* <@{CHATGPT_SLACK_APP_USER_ID}|ChatGPT>"
 
 ENV_ENABLED = "GIL_SLACK_TRANSPORT_ENABLED"
 ENV_TOKEN = "GIL_SLACK_BOT_TOKEN"

@@ -1,0 +1,70 @@
+name: Active Trading Runtime Proof
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/active-trading-runtime-proof.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VPS_HOST: 149.56.45.39
+      VPS_USER: ubuntu
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+      EXPECTED_SHA: ${{ github.sha }}
+
+    steps:
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Pull current master and prove runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/key" "${VPS_USER}@${VPS_HOST}" "EXPECTED_SHA='${EXPECTED_SHA}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd /home/ubuntu/MarketHunter
+
+          git fetch origin master
+          git checkout master
+          git pull --ff-only origin master
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+          sudo systemctl restart experiment1-runtime.timer
+          sudo systemctl start experiment1-runtime.service
+
+          echo '=== LATEST RUNTIME ==='
+          journalctl -u experiment1-runtime.service -n 100 --no-pager
+
+          journalctl -u experiment1-runtime.service -n 100 --no-pager | grep -q 'Trading Slack transport:'
+          if journalctl -u experiment1-runtime.service -n 100 --no-pager | grep -q 'not_in_channel'; then
+            exit 4
+          fi
+
+          .venv/bin/python - <<'PY'
+          import sqlite3
+          con = sqlite3.connect("data/experiment1.db")
+          names = {row[0] for row in con.execute("select name from sqlite_master where type='table'")}
+          assert "experiment1_trading_decision_inbox" in names
+          print("trading_inbox=", con.execute("select count(*) from experiment1_trading_decision_inbox").fetchone()[0])
+          print("intents=", con.execute("select count(*) from experiment1_intents").fetchone()[0])
+          print("fills=", con.execute("select count(*) from experiment1_fills").fetchone()[0])
+          con.close()
+          PY
+
+          systemctl is-active --quiet experiment1-runtime.timer
+          systemctl is-active markethunter-api markethunter-worker markethunter-monitor nginx
+          echo 'ACTIVE_TRADING_RUNTIME_PROOF=PASS'
+          REMOTE

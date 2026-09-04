@@ -1,0 +1,7 @@
+{
+  "object_id": "MH-STAGE2-SCANNER-LIVE-PROOF-001",
+  "executor": "vps",
+  "timeout_minutes": 10,
+  "terminal_states": ["PASS", "BLOCKED-EVIDENCE", "BLOCKED-RUNTIME"],
+  "execution_revision": "2026-09-04-stage2-proof-1"
+}

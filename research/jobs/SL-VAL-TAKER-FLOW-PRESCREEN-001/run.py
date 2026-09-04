@@ -6,6 +6,8 @@ OBJECT_ID='SL-VAL-TAKER-FLOW-PRESCREEN-001'
 ASSETS=['BTCUSDT','ETHUSDT','BNBUSDT','ADAUSDT','XRPUSDT','DOGEUSDT','LINKUSDT','LTCUSDT']
 TF='1h'; WARM=datetime(2023,1,1,tzinfo=timezone.utc); START=datetime(2023,7,1,tzinfo=timezone.utc); SPLIT=datetime(2025,1,1,tzinfo=timezone.utc); END=datetime(2026,8,1,tzinfo=timezone.utc)
 ROLL=168; THRESH=720; HOLD=4; COST10=.001; COST20=.002
+MAX_INVALID_PRICE_ROWS=20; MAX_INVALID_PRICE_RATE=.001
+
 
 def emit(out,state,**x):
  p=Path(out);p.mkdir(parents=True,exist_ok=True);(p/'terminal_result.json').write_text(json.dumps({'object_id':OBJECT_ID,'terminal_state':state,**x},indent=2,sort_keys=True))
@@ -26,6 +28,10 @@ def month(sym,y,m):
    ret=c/o-1.0 if o else 0.0
    rows.append((ts,o,c,ret,flow))
  return rows,{'symbol':sym,'url':u,'sha256':a,'rows':len(rows)}
+def valid_price(x):return isinstance(x,(int,float)) and math.isfinite(x) and x>0
+def safe_ratio_return(numer,denom):
+ if not valid_price(numer) or not valid_price(denom):return None
+ return numer/denom-1.0
 def pct(vals,p):
  if not vals:return None
  s=sorted(vals);k=(len(s)-1)*p;f=math.floor(k);c=math.ceil(k)
@@ -62,12 +68,26 @@ def main(out,job):
  except Exception as e:
   emit(out,'PROVIDER-BLOCKED',reason=repr(e),parameter_tuning=False);return
  common=sorted(set.intersection(*[set(data[s]) for s in ASSETS]));idx={t:i for i,t in enumerate(common)}
+ invalid_price_rows=[];price_ratio_checks=0
+ def checked_return(sym,ts_now,ts_prev,context):
+  nonlocal price_ratio_checks
+  price_ratio_checks+=1
+  numer=data[sym][ts_now][2];denom=data[sym][ts_prev][2]
+  v=safe_ratio_return(numer,denom)
+  if v is None:invalid_price_rows.append({'symbol':sym,'ts':ts_now,'prev_ts':ts_prev,'context':context,'numerator':numer,'denominator':denom})
+  return v
  residual={s:{} for s in ASSETS}
  for s in ASSETS:
   for i in range(ROLL,len(common)):
-   t=common[i];hist=common[i-ROLL:i];xs=[data[s][h][2]/data[s][common[idx[h]-1]][2]-1.0 for h in hist if idx[h]>0];ys=[data[s][h][3] for h in hist if idx[h]>0]
+   t=common[i];hist=common[i-ROLL:i];pairs=[]
+   for h in hist:
+    if idx[h]<=0:continue
+    rv=checked_return(s,h,common[idx[h]-1],'residual_history')
+    if rv is not None:pairs.append((rv,data[s][h][3]))
+   xs=[p[0] for p in pairs];ys=[p[1] for p in pairs]
    if len(xs)!=len(ys) or len(xs)<20 or i==0:continue
-   x=data[s][t][2]/data[s][common[i-1]][2]-1.0;y=data[s][t][3]
+   x=checked_return(s,t,common[i-1],'residual_current');y=data[s][t][3]
+   if x is None:continue
    z=lin_resid(xs,ys,x,y)
    if z is not None:residual[s][t]=z
  ts_events=[];xs_events=[];last_ts={s:-10**9 for s in ASSETS};last_x=-10**9
@@ -81,18 +101,37 @@ def main(out,job):
    if len(hist)<200:continue
    lo=pct(hist,.10);hi=pct(hist,.90);side=1 if z>=hi else (-1 if z<=lo else 0)
    if not side:continue
-   entry=data[s][common[i+1]][0];exitp=data[s][common[i+HOLD+1]][0];gross=side*(exitp/entry-1.0)
+   entry=data[s][common[i+1]][0];exitp=data[s][common[i+HOLD+1]][0];price_ratio_checks+=1
+   gross0=safe_ratio_return(exitp,entry)
+   if gross0 is None:
+    invalid_price_rows.append({'symbol':s,'ts':common[i+HOLD+1],'prev_ts':common[i+1],'context':'time_series_execution','numerator':exitp,'denominator':entry});continue
+   gross=side*gross0
    ts_events.append({'ts':t,'symbol':s,'side':side,'residual':z,'net10':gross-COST10,'net20':gross-COST20,'period':period});last_ts[s]=i
   avail=[(residual[s].get(t),s) for s in ASSETS if residual[s].get(t) is not None]
   if len(avail)==len(ASSETS) and i-last_x>=HOLD:
    q=sorted(avail);shorts=[x[1] for x in q[:2]];longs=[x[1] for x in q[-2:]]
-   lg=sum(data[s][common[i+HOLD+1]][0]/data[s][common[i+1]][0]-1.0 for s in longs)/2.0
-   sh=sum(1.0-data[s][common[i+HOLD+1]][0]/data[s][common[i+1]][0] for s in shorts)/2.0
+   long_returns=[];short_returns=[];bad_xs=False
+   for s in longs:
+    price_ratio_checks+=1;rv=safe_ratio_return(data[s][common[i+HOLD+1]][0],data[s][common[i+1]][0])
+    if rv is None:
+     invalid_price_rows.append({'symbol':s,'ts':common[i+HOLD+1],'prev_ts':common[i+1],'context':'cross_sectional_long_execution','numerator':data[s][common[i+HOLD+1]][0],'denominator':data[s][common[i+1]][0]});bad_xs=True;break
+    long_returns.append(rv)
+   if bad_xs:continue
+   for s in shorts:
+    price_ratio_checks+=1;rv=safe_ratio_return(data[s][common[i+HOLD+1]][0],data[s][common[i+1]][0])
+    if rv is None:
+     invalid_price_rows.append({'symbol':s,'ts':common[i+HOLD+1],'prev_ts':common[i+1],'context':'cross_sectional_short_execution','numerator':data[s][common[i+HOLD+1]][0],'denominator':data[s][common[i+1]][0]});bad_xs=True;break
+    short_returns.append(-rv)
+   if bad_xs:continue
+   lg=sum(long_returns)/2.0;sh=sum(short_returns)/2.0
    gross=.5*lg+.5*sh;xs_events.append({'ts':t,'longs':longs,'shorts':shorts,'net10':gross-COST10,'net20':gross-COST20,'period':period});last_x=i
+ invalid_rate=(len(invalid_price_rows)/price_ratio_checks) if price_ratio_checks else 0.0
+ if len(invalid_price_rows)>MAX_INVALID_PRICE_ROWS or invalid_rate>MAX_INVALID_PRICE_RATE:
+  emit(out,'PROVIDER-BLOCKED',reason='material invalid/non-finite/non-positive price rows',data_quality={'invalid_price_rows':len(invalid_price_rows),'price_ratio_checks':price_ratio_checks,'invalid_rate':invalid_rate,'max_invalid_rows':MAX_INVALID_PRICE_ROWS,'max_invalid_rate':MAX_INVALID_PRICE_RATE,'examples':invalid_price_rows[:50]},parameter_tuning=False);return
  def pack(ev):
   o=[e for e in ev if e['period']=='OOS'];s10=stats([e['net10'] for e in o]);s20=stats([e['net20'] for e in o]);return {'event_count':len(ev),'is_10bps':stats([e['net10'] for e in ev if e['period']=='IS']),'oos_10bps':s10,'oos_20bps':s20,'verdict':verdict(s10,s20)}
  tpack=pack(ts_events);xpack=pack(xs_events)
  terminal='OUTCOME-COMPLETE' if tpack['verdict']!='BLOCKED-EVIDENCE' or xpack['verdict']!='BLOCKED-EVIDENCE' else 'BLOCKED-EVIDENCE'
- emit(out,terminal,contract={'purpose':'bounded information-value prescreen only; not broad-universe promotion evidence','assets':ASSETS,'venue':'Binance Spot public klines','tf':TF,'flow_proxy':'(2*taker_buy_base_volume-total_base_volume)/total_base_volume','return_control':'rolling 168h linear residualization versus same-bar close-to-close return','time_series_branch':'asset-local residual top/bottom rolling 720h decile, continuation sign, 4h non-overlap','cross_sectional_branch':'hourly rank residual; long top2 short bottom2, 4h non-overlap','entry':'next_bar_open benchmark only','hold_hours':HOLD,'costs':[COST10,COST20],'split':'2025-01-01','parameter_tuning':False,'execution_note':'signal-edge prescreen only; no market-order promotion. Any paper promotion requires separately frozen LIMIT-first contract.'},time_series=tpack,cross_sectional=xpack,source_files=files,parameter_tuning=False,limitations=['fixed eight-asset long-lived basket; not broad-universe evidence','spot archives used as price/flow evidence; short branch is diagnostic only','current test measures venue-local taker-flow proxy, not academic world order flow','simple linear return control only','no ML, leverage, sizing, funding, or order-book execution model'])
+ emit(out,terminal,data_quality={'invalid_price_rows':len(invalid_price_rows),'price_ratio_checks':price_ratio_checks,'invalid_rate':invalid_rate,'max_invalid_rows':MAX_INVALID_PRICE_ROWS,'max_invalid_rate':MAX_INVALID_PRICE_RATE,'examples':invalid_price_rows[:50]},contract={'purpose':'bounded information-value prescreen only; not broad-universe promotion evidence','assets':ASSETS,'venue':'Binance Spot public klines','tf':TF,'flow_proxy':'(2*taker_buy_base_volume-total_base_volume)/total_base_volume','return_control':'rolling 168h linear residualization versus same-bar close-to-close return','time_series_branch':'asset-local residual top/bottom rolling 720h decile, continuation sign, 4h non-overlap','cross_sectional_branch':'hourly rank residual; long top2 short bottom2, 4h non-overlap','entry':'next_bar_open benchmark only','hold_hours':HOLD,'costs':[COST10,COST20],'split':'2025-01-01','parameter_tuning':False,'execution_note':'signal-edge prescreen only; no market-order promotion. Any paper promotion requires separately frozen LIMIT-first contract.'},time_series=tpack,cross_sectional=xpack,source_files=files,parameter_tuning=False,limitations=['fixed eight-asset long-lived basket; not broad-universe evidence','spot archives used as price/flow evidence; short branch is diagnostic only','current test measures venue-local taker-flow proxy, not academic world order flow','simple linear return control only','no ML, leverage, sizing, funding, or order-book execution model'])
 if __name__=='__main__':
  a=argparse.ArgumentParser();a.add_argument('--job',required=True);a.add_argument('--output',required=True);q=a.parse_args();main(q.output,q.job)

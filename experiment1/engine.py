@@ -15,6 +15,8 @@ from experiment1.models import (
     GilInboxRecord,
     GilInboxStatus,
     IntentStatus,
+    TradingInboxRecord,
+    TradingInboxStatus,
     MarketQuote,
     OrderIntent,
     PositionState,
@@ -138,6 +140,16 @@ class Experiment1Engine:
                     PRIMARY KEY(account, period)
                 );
                 CREATE TABLE IF NOT EXISTS experiment1_gil_decision_inbox (
+                    decision_id TEXT PRIMARY KEY,
+                    received_at TEXT NOT NULL,
+                    raw_payload TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    outcome TEXT,
+                    outcome_reason TEXT,
+                    intent_id TEXT,
+                    processed_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS experiment1_trading_decision_inbox (
                     decision_id TEXT PRIMARY KEY,
                     received_at TEXT NOT NULL,
                     raw_payload TEXT NOT NULL,
@@ -684,6 +696,168 @@ class Experiment1Engine:
             outcome_reason=row["outcome_reason"],
             intent_id=row["intent_id"],
             processed_at=None if row["processed_at"] is None else datetime.fromisoformat(row["processed_at"]),
+        )
+
+    def receive_trading_decision(
+        self, decision_id: str, raw_payload: str, *, now: datetime | None = None
+    ) -> TradingInboxRecord:
+        """
+        Durably persist one Strategy Lab / Active Trading envelope before
+        processing. The namespace is deliberately separate from GIL, so an
+        identical decision_id may exist independently in each producer domain.
+
+        Replay is idempotent only when the exact payload matches. Reusing the
+        same trading decision_id with different content fails closed.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM experiment1_trading_decision_inbox WHERE decision_id=?",
+                (decision_id,),
+            ).fetchone()
+            if row is not None:
+                if row["raw_payload"] == raw_payload:
+                    return self._trading_inbox_record_from_row(row)
+                raise Experiment1Error(
+                    "trading decision_id already exists with different content"
+                )
+
+            received_at = (now or datetime.now(timezone.utc)).isoformat()
+            conn.execute(
+                """INSERT INTO experiment1_trading_decision_inbox
+                   (decision_id, received_at, raw_payload, status, outcome,
+                    outcome_reason, intent_id, processed_at)
+                   VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL)""",
+                (
+                    decision_id,
+                    received_at,
+                    raw_payload,
+                    TradingInboxStatus.PENDING_DRAIN.value,
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM experiment1_trading_decision_inbox WHERE decision_id=?",
+                (decision_id,),
+            ).fetchone()
+            return self._trading_inbox_record_from_row(row)
+
+    def record_malformed_trading_decision(
+        self,
+        decision_id: str,
+        raw_payload: str,
+        reason: str,
+        *,
+        now: datetime | None = None,
+    ) -> TradingInboxRecord:
+        """Persist a malformed trading envelope as terminal, never executable."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM experiment1_trading_decision_inbox WHERE decision_id=?",
+                (decision_id,),
+            ).fetchone()
+            if row is not None:
+                if row["raw_payload"] == raw_payload:
+                    return self._trading_inbox_record_from_row(row)
+                raise Experiment1Error(
+                    "trading decision_id already exists with different content"
+                )
+
+            moment = (now or datetime.now(timezone.utc)).isoformat()
+            conn.execute(
+                """INSERT INTO experiment1_trading_decision_inbox
+                   (decision_id, received_at, raw_payload, status, outcome,
+                    outcome_reason, intent_id, processed_at)
+                   VALUES (?, ?, ?, ?, NULL, ?, NULL, ?)""",
+                (
+                    decision_id,
+                    moment,
+                    raw_payload,
+                    TradingInboxStatus.MALFORMED.value,
+                    reason,
+                    moment,
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM experiment1_trading_decision_inbox WHERE decision_id=?",
+                (decision_id,),
+            ).fetchone()
+            return self._trading_inbox_record_from_row(row)
+
+    def pending_trading_decision_inbox(self) -> tuple[tuple[str, str], ...]:
+        """Return every Active Trading envelope still PENDING_DRAIN, oldest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT decision_id, raw_payload FROM experiment1_trading_decision_inbox "
+                "WHERE status=? ORDER BY received_at, decision_id",
+                (TradingInboxStatus.PENDING_DRAIN.value,),
+            ).fetchall()
+            return tuple((row["decision_id"], row["raw_payload"]) for row in rows)
+
+    def mark_trading_decision_processed(
+        self,
+        decision_id: str,
+        outcome: str,
+        outcome_reason: str | None,
+        intent_id: str | None,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE experiment1_trading_decision_inbox
+                   SET status=?, outcome=?, outcome_reason=?, intent_id=?, processed_at=?
+                   WHERE decision_id=?""",
+                (
+                    TradingInboxStatus.PROCESSED.value,
+                    outcome,
+                    outcome_reason,
+                    intent_id,
+                    (now or datetime.now(timezone.utc)).isoformat(),
+                    decision_id,
+                ),
+            )
+
+    def record_trading_decision_watch(self, decision_id: str, reason: str) -> None:
+        """Keep an unresolved trading decision watchable without making it terminal."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE experiment1_trading_decision_inbox SET outcome_reason=? "
+                "WHERE decision_id=? AND status=?",
+                (
+                    reason,
+                    decision_id,
+                    TradingInboxStatus.PENDING_DRAIN.value,
+                ),
+            )
+
+    def trading_decision_inbox_status(
+        self, decision_id: str
+    ) -> TradingInboxRecord | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM experiment1_trading_decision_inbox WHERE decision_id=?",
+                (decision_id,),
+            ).fetchone()
+            return (
+                None
+                if row is None
+                else self._trading_inbox_record_from_row(row)
+            )
+
+    def _trading_inbox_record_from_row(
+        self, row: sqlite3.Row
+    ) -> TradingInboxRecord:
+        return TradingInboxRecord(
+            decision_id=row["decision_id"],
+            received_at=datetime.fromisoformat(row["received_at"]),
+            status=TradingInboxStatus(row["status"]),
+            outcome=row["outcome"],
+            outcome_reason=row["outcome_reason"],
+            intent_id=row["intent_id"],
+            processed_at=(
+                None
+                if row["processed_at"] is None
+                else datetime.fromisoformat(row["processed_at"])
+            ),
         )
 
     def closed_trades(self, account: AccountKind) -> tuple[ClosedTrade, ...]:

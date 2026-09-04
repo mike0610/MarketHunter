@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Protocol
 
-from experiment1.engine import Experiment1Engine
+from experiment1.engine import Experiment1Engine, Experiment1Error
 from experiment1.models import (
     AccountKind,
     DecisionAction,
@@ -236,3 +237,214 @@ def decision_from_json(raw: str) -> TradingDecision:
         trigger=trigger,
         sizing=sizing,
     )
+
+
+class AsyncTradingQuoteSource(Protocol):
+    async def quote_for(self, intent: OrderIntent): ...
+
+
+@dataclass(frozen=True, slots=True)
+class TradingIngestionResult:
+    decision_id: str
+    intent_id: str
+    outcome: str
+    detail: str | None = None
+
+
+def _trigger_satisfied(trigger: ExecutionTrigger, price: Decimal) -> bool:
+    if trigger.trigger_type is TriggerType.IMMEDIATE:
+        return True
+    if trigger.trigger_type is TriggerType.PRICE_AT_OR_ABOVE:
+        return price >= trigger.trigger_price
+    if trigger.trigger_type is TriggerType.PRICE_AT_OR_BELOW:
+        return price <= trigger.trigger_price
+    return trigger.trigger_price_low <= price <= trigger.trigger_price_high
+
+
+def _resolve_sizing(
+    decision: TradingDecision, price: Decimal | None
+) -> tuple[Decimal | None, str | None]:
+    sizing = decision.sizing
+    if sizing is None:
+        return decision.quantity, None
+    if sizing.mode is SizingMode.EXACT_QUANTITY:
+        return sizing.exact_quantity, f"sizing EXACT_QUANTITY={sizing.exact_quantity}"
+    if price is None:
+        return None, "fresh quote required to resolve trading sizing"
+    if sizing.mode is SizingMode.MAX_NOTIONAL:
+        quantity = sizing.max_notional / price
+        return quantity, (
+            f"sizing MAX_NOTIONAL={sizing.max_notional} @ price={price} "
+            f"-> quantity={quantity}"
+        )
+
+    distance = abs(price - decision.stop_loss)
+    if distance == 0:
+        return None, (
+            f"RISK_BUDGET_FROM_STOP cannot resolve because price {price} "
+            f"equals stop_loss {decision.stop_loss}"
+        )
+    quantity = sizing.risk_budget_amount / distance
+    return quantity, (
+        f"sizing RISK_BUDGET_FROM_STOP={sizing.risk_budget_amount} "
+        f"@ price={price} stop_loss={decision.stop_loss} -> quantity={quantity}"
+    )
+
+
+def _observation_intent(decision: TradingDecision) -> OrderIntent:
+    return OrderIntent(
+        intent_id=f"trading-observe:{decision.decision_id}",
+        created_at=datetime.now(timezone.utc),
+        account=decision.account,
+        action=DecisionAction.WAIT,
+        symbol=decision.symbol,
+        quantity=Decimal("0"),
+        reason="Active Trading trigger/sizing observation only",
+        leverage=Decimal("1"),
+    )
+
+
+async def drain_trading_decision_inbox(
+    engine: Experiment1Engine,
+    quote_source: AsyncTradingQuoteSource,
+) -> tuple[TradingIngestionResult, ...]:
+    """
+    Convert durable Strategy Lab decisions into canonical Experiment1 intents.
+
+    Fixed-quantity immediate decisions require no quote at drain time. A
+    non-immediate trigger or market-dependent sizing requires fresh quote
+    evidence. If evidence is absent or the trigger is not satisfied, the row
+    remains PENDING_DRAIN and is retried on a later runtime cycle.
+
+    This function never fills an intent. The existing run_market_cycle remains
+    the only paper execution path, preserving one execution engine for GIL and
+    Active Trading.
+    """
+    results: list[TradingIngestionResult] = []
+
+    for decision_id, raw_payload in engine.pending_trading_decision_inbox():
+        decision = decision_from_json(raw_payload)
+        intent_id = intent_id_for(decision.decision_id)
+
+        if decision.action in (DecisionAction.WAIT, DecisionAction.HOLD):
+            try:
+                status = ingest_trading_decision(engine, decision)
+            except (Experiment1Error, ValueError) as exc:
+                engine.mark_trading_decision_processed(
+                    decision_id,
+                    outcome="BLOCKED",
+                    outcome_reason=str(exc),
+                    intent_id=intent_id,
+                )
+                results.append(
+                    TradingIngestionResult(
+                        decision_id, intent_id, "BLOCKED", detail=str(exc)
+                    )
+                )
+                continue
+
+            engine.mark_trading_decision_processed(
+                decision_id,
+                outcome=status.value,
+                outcome_reason=None,
+                intent_id=intent_id,
+            )
+            results.append(
+                TradingIngestionResult(decision_id, intent_id, status.value)
+            )
+            continue
+
+        gated_by_trigger = (
+            decision.trigger is not None
+            and decision.trigger.trigger_type is not TriggerType.IMMEDIATE
+        )
+        gated_by_sizing = (
+            decision.sizing is not None
+            and decision.sizing.mode
+            in (SizingMode.MAX_NOTIONAL, SizingMode.RISK_BUDGET_FROM_STOP)
+        )
+        needs_quote = gated_by_trigger or gated_by_sizing
+
+        price: Decimal | None = None
+        if needs_quote:
+            try:
+                quote = await quote_source.quote_for(_observation_intent(decision))
+            except Exception as exc:
+                reason = f"quote lookup failed for {decision.symbol}: {exc}"
+                engine.record_trading_decision_watch(decision_id, reason)
+                results.append(
+                    TradingIngestionResult(
+                        decision_id, intent_id, "WAITING_EVIDENCE", reason
+                    )
+                )
+                continue
+
+            if quote is None:
+                reason = f"no fresh quote available for {decision.symbol}"
+                engine.record_trading_decision_watch(decision_id, reason)
+                results.append(
+                    TradingIngestionResult(
+                        decision_id, intent_id, "WAITING_EVIDENCE", reason
+                    )
+                )
+                continue
+            price = quote.price
+
+            if gated_by_trigger and not _trigger_satisfied(
+                decision.trigger, price
+            ):
+                reason = (
+                    f"trigger {decision.trigger.trigger_type.value} "
+                    f"not satisfied at price {price}"
+                )
+                engine.record_trading_decision_watch(decision_id, reason)
+                results.append(
+                    TradingIngestionResult(
+                        decision_id, intent_id, "WAITING_EVIDENCE", reason
+                    )
+                )
+                continue
+
+        resolved_quantity, sizing_note = _resolve_sizing(decision, price)
+        if resolved_quantity is None:
+            reason = sizing_note or "unable to resolve trading quantity"
+            engine.record_trading_decision_watch(decision_id, reason)
+            results.append(
+                TradingIngestionResult(
+                    decision_id, intent_id, "WAITING_EVIDENCE", reason
+                )
+            )
+            continue
+
+        try:
+            status = ingest_trading_decision(
+                engine,
+                decision,
+                resolved_quantity=resolved_quantity,
+                sizing_note=sizing_note,
+            )
+        except (Experiment1Error, ValueError) as exc:
+            engine.mark_trading_decision_processed(
+                decision_id,
+                outcome="BLOCKED",
+                outcome_reason=str(exc),
+                intent_id=intent_id,
+            )
+            results.append(
+                TradingIngestionResult(
+                    decision_id, intent_id, "BLOCKED", detail=str(exc)
+                )
+            )
+            continue
+
+        engine.mark_trading_decision_processed(
+            decision_id,
+            outcome=status.value,
+            outcome_reason=None,
+            intent_id=intent_id,
+        )
+        results.append(
+            TradingIngestionResult(decision_id, intent_id, status.value)
+        )
+
+    return tuple(results)

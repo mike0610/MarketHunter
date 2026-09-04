@@ -12,6 +12,7 @@ from pathlib import Path
 from api.trading_scanner_api import DEFAULT_DB_PATH, ENV_DB_PATH
 from experiment1.models import SessionState
 from market_data.stooq_provider import StooqDailyProvider
+from market_data.yahoo_provider import YahooChartDailyProvider
 from trading_scanner.market_data_adapter import MarketDataScannerAdapter
 from trading_scanner.scan import run_scan_cycle
 from trading_scanner.store import TradingScannerStore
@@ -28,7 +29,7 @@ def _resolve_db_path() -> Path:
 
 def _build_market_data_source() -> MarketDataScannerAdapter | None:
     provider_name = os.getenv("TRADING_SCANNER_MARKET_DATA_PROVIDER", "").strip().lower()
-    if provider_name != "stooq":
+    if provider_name not in {"stooq", "yahoo"}:
         return None
     symbols = tuple(
         item.strip().upper()
@@ -38,7 +39,12 @@ def _build_market_data_source() -> MarketDataScannerAdapter | None:
     if not symbols:
         raise ValueError("TRADING_SCANNER_UNIVERSE_SYMBOLS is required for stooq provider")
     max_age = int(os.getenv("TRADING_SCANNER_MAX_DATA_AGE_SECONDS", str(4 * 24 * 3600)))
-    return MarketDataScannerAdapter(StooqDailyProvider(symbols, max_age_seconds=max_age))
+    provider = (
+        StooqDailyProvider(symbols, max_age_seconds=max_age)
+        if provider_name == "stooq"
+        else YahooChartDailyProvider(symbols, max_age_seconds=max_age)
+    )
+    return MarketDataScannerAdapter(provider)
 
 
 def main(argv: list[str] | None = None) -> None:

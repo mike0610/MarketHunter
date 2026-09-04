@@ -79,10 +79,11 @@ def main(out,job):
  residual={s:{} for s in ASSETS}
  for s in ASSETS:
   for i in range(ROLL,len(common)):
-   t=common[i];hist=common[i-ROLL:i];xs=[];ys=[]
-   for h in hist:
-    if idx[h]<=0:continue
-    rv=checked_return(s,h,common[idx[h]-1],'residual_history')
+   t=common[i]
+   xs=[];ys=[]
+   for j in range(i-ROLL,i):
+    if j<=0:continue
+    h=common[j];rv=checked_return(s,h,common[j-1],'residual_history')
     if rv is not None:
      xs.append(rv);ys.append(data[s][h][3])
    if len(xs)!=len(ys) or len(xs)<20 or i==0:continue

@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from experiment1.engine import Experiment1Engine
 from experiment1.gil_decision import decision_to_json
+from experiment1.trading_decision import TradingDecision, decision_to_json as trading_decision_to_json
 from experiment1.market_data_providers import AssetClass, MultiAssetQuoteSource
 from experiment1.models import AccountKind, DecisionAction, GilDecision, MarketQuote, OrderIntent
 from experiment1.mtm import MtmCompleteness
@@ -257,3 +258,133 @@ def test_run_experiment1_cycle_is_restart_safe_across_a_fresh_engine_instance(tm
 
     assert second_engine.account_state(AccountKind.FUTURES) == state_before_restart
     assert len(second_engine.positions(AccountKind.FUTURES)) == 1
+
+
+def test_run_experiment1_cycle_automatically_drains_trading_decision_and_fills_same_pass(tmp_path):
+    engine = Experiment1Engine(tmp_path / "experiment1.db")
+    decision = TradingDecision(
+        decision_id="sl-scheduler-1",
+        decided_at=NOW,
+        account=AccountKind.FUTURES,
+        action=DecisionAction.LONG,
+        symbol="BTCUSDT",
+        thesis="active trading scheduler proof",
+        quantity=Decimal("1"),
+        leverage=Decimal("2"),
+        stop_loss=Decimal("90"),
+        take_profit=Decimal("120"),
+    )
+    engine.receive_trading_decision(
+        decision.decision_id,
+        trading_decision_to_json(decision),
+    )
+    source = FakeSource(
+        {
+            "BTCUSDT": _quote(
+                "BTCUSDT",
+                Decimal("100"),
+                observed_at=NOW + timedelta(minutes=1),
+            )
+        }
+    )
+
+    summary = asyncio.run(run_experiment1_cycle(engine, source))
+
+    assert summary.trading_ingestion_results[0].outcome == "PENDING"
+    record = engine.trading_decision_inbox_status("sl-scheduler-1")
+    assert record.status.value == "PROCESSED"
+    assert record.intent_id == "trading-decision:sl-scheduler-1"
+    assert len(summary.market_fill_results) == 1
+    assert summary.market_fill_results[0].outcome == "PAPER_FILLED"
+    positions = engine.positions(AccountKind.FUTURES)
+    assert len(positions) == 1
+    assert positions[0].symbol == "BTCUSDT"
+
+
+def test_run_experiment1_cycle_keeps_triggered_trading_decision_pending_until_condition(tmp_path):
+    from experiment1.models import ExecutionTrigger, TriggerType
+
+    engine = Experiment1Engine(tmp_path / "experiment1.db")
+    decision = TradingDecision(
+        decision_id="sl-trigger-1",
+        decided_at=NOW,
+        account=AccountKind.FUTURES,
+        action=DecisionAction.LONG,
+        symbol="BTCUSDT",
+        thesis="wait for breakout",
+        quantity=Decimal("1"),
+        leverage=Decimal("2"),
+        trigger=ExecutionTrigger(
+            trigger_type=TriggerType.PRICE_AT_OR_ABOVE,
+            trigger_price=Decimal("110"),
+        ),
+    )
+    engine.receive_trading_decision(
+        decision.decision_id,
+        trading_decision_to_json(decision),
+    )
+
+    below = FakeSource(
+        {
+            "BTCUSDT": _quote(
+                "BTCUSDT",
+                Decimal("100"),
+                observed_at=NOW + timedelta(minutes=1),
+            )
+        }
+    )
+    first = asyncio.run(run_experiment1_cycle(engine, below))
+    assert first.trading_ingestion_results[0].outcome == "WAITING_EVIDENCE"
+    assert engine.trading_decision_inbox_status("sl-trigger-1").status.value == "PENDING_DRAIN"
+    assert engine.positions(AccountKind.FUTURES) == ()
+
+    above = FakeSource(
+        {
+            "BTCUSDT": _quote(
+                "BTCUSDT",
+                Decimal("111"),
+                observed_at=NOW + timedelta(minutes=2),
+                ref="quote-2",
+            )
+        }
+    )
+    second = asyncio.run(run_experiment1_cycle(engine, above))
+    assert second.trading_ingestion_results[0].outcome == "PENDING"
+    assert engine.trading_decision_inbox_status("sl-trigger-1").status.value == "PROCESSED"
+    assert engine.positions(AccountKind.FUTURES)[0].symbol == "BTCUSDT"
+
+
+def test_run_experiment1_cycle_trading_decision_is_restart_safe(tmp_path):
+    db_path = tmp_path / "experiment1.db"
+    first_engine = Experiment1Engine(db_path)
+    decision = TradingDecision(
+        decision_id="sl-restart-1",
+        decided_at=NOW,
+        account=AccountKind.SPOT,
+        action=DecisionAction.BUY,
+        symbol="ETHUSDT",
+        thesis="restart proof",
+        quantity=Decimal("1"),
+    )
+    first_engine.receive_trading_decision(
+        decision.decision_id,
+        trading_decision_to_json(decision),
+    )
+    source = FakeSource(
+        {
+            "ETHUSDT": _quote(
+                "ETHUSDT",
+                Decimal("10"),
+                observed_at=NOW + timedelta(minutes=1),
+            )
+        }
+    )
+    asyncio.run(run_experiment1_cycle(first_engine, source))
+    state = first_engine.account_state(AccountKind.SPOT)
+
+    second_engine = Experiment1Engine(db_path)
+    second = asyncio.run(run_experiment1_cycle(second_engine, source))
+
+    assert second.trading_ingestion_results == ()
+    assert second_engine.account_state(AccountKind.SPOT) == state
+    assert len(second_engine.positions(AccountKind.SPOT)) == 1

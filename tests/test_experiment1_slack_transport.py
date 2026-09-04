@@ -86,13 +86,13 @@ def test_parser_round_trips_raw_slack_api_connector_rendering():
 
 def test_parser_round_trips_actual_same_line_connector_rendering():
     decision = _wait_decision("connector-same-line-form")
-    text = f"{MARKER}\n\`\`\`{decision_to_json(decision)}\`\`\` {CHATGPT_CONNECTOR_FOOTER}"
+    text = f"{MARKER}\n```{decision_to_json(decision)}``` {CHATGPT_CONNECTOR_FOOTER}"
     assert parse_structured_envelope(text) == decision_to_json(decision)
 
 
 def test_parser_rejects_same_line_connector_rendering_with_extra_prose():
     decision = _wait_decision("connector-same-line-extra")
-    text = f"{MARKER}\n\`\`\`{decision_to_json(decision)}\`\`\` {CHATGPT_CONNECTOR_FOOTER} extra prose"
+    text = f"{MARKER}\n```{decision_to_json(decision)}``` {CHATGPT_CONNECTOR_FOOTER} extra prose"
     assert parse_structured_envelope(text) is None
 
 

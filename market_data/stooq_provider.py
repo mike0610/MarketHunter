@@ -136,6 +136,13 @@ class StooqDailyProvider(AsyncMarketDataProvider):
 
     @staticmethod
     def _http_get_text(url: str) -> str:
-        req = urllib.request.Request(url, headers={"User-Agent": "MarketHunter/1.0"})
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; MarketHunter/1.0; +https://github.com/mike0610/MarketHunter)",
+                "Accept": "text/csv,text/plain;q=0.9,*/*;q=0.1",
+                "Accept-Language": "en-US,en;q=0.8",
+            },
+        )
         with urllib.request.urlopen(req, timeout=20) as response:
             return response.read().decode("utf-8")

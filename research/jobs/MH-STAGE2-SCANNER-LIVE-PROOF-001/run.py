@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 OBJECT_ID = "MH-STAGE2-SCANNER-LIVE-PROOF-001"
-EXPECTED_SHA = "bee8c21a24b2dcd0524638385406c01fcf509988"
+EXPECTED_SHA = "33cc1de0527c4262bbcba3eef8e88a2a62d769ca"
 UNIVERSE = "SPY,QQQ,AAPL,MSFT,NVDA"
 
 
@@ -45,7 +45,7 @@ def main(job_path, output):
             {
                 "PYTHONPATH": str(work),
                 "TRADING_SCANNER_DB_PATH": str(db),
-                "TRADING_SCANNER_MARKET_DATA_PROVIDER": "stooq",
+                "TRADING_SCANNER_MARKET_DATA_PROVIDER": "yahoo",
                 "TRADING_SCANNER_UNIVERSE_SYMBOLS": UNIVERSE,
                 "TRADING_SCANNER_MAX_DATA_AGE_SECONDS": "345600",
             }
@@ -131,7 +131,7 @@ def main(job_path, output):
             "PASS",
             expected_sha=EXPECTED_SHA,
             actual_sha=actual_sha,
-            provider="stooq",
+            provider="yahoo",
             universe=UNIVERSE.split(","),
             exact_command=" ".join(cmd),
             runtime_returncode=proc.returncode,

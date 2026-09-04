@@ -557,4 +557,3 @@ class TradingInboxRecord:
     outcome_reason: str | None
     intent_id: str | None
     processed_at: datetime | None
-

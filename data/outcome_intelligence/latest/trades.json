@@ -1,7 +1,7 @@
 {
-  "captured_at_utc": "2026-09-04T16:25:22.834611+00:00",
+  "captured_at_utc": "2026-09-04T16:35:36.198898+00:00",
   "source": "/research/trades",
-  "source_revision": "b3315dc3fb76463c39ba516a00c0a34dd0b61dab",
+  "source_revision": "2dceb0fa2138d12139904f3dd9976354492e27ea",
   "total": 242,
   "trades": [
     {
@@ -19,7 +19,7 @@
       "market": "futures",
       "max_active_candles": 30,
       "max_drawdown_percent": -1.6937350236549413,
-      "max_profit_percent": 2.8529297315010154,
+      "max_profit_percent": 4.497511622667794,
       "mtf": null,
       "notional": 100.0,
       "opened_at": "2026-09-04T13:28:52.052782Z",

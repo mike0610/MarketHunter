@@ -34,12 +34,19 @@ from experiment1.market_source import BinanceExperiment1QuoteSource
 from experiment1.models import OrderIntent
 from experiment1.mtm import MtmCycleResult, run_mtm_cycle
 from experiment1.runtime import AsyncQuoteSource, CycleResult, run_market_cycle
+from experiment1.trading_decision import TradingIngestionResult, drain_trading_decision_inbox
 from experiment1.slack_transport import (
     SlackTransportError,
     client_from_env,
     config_from_env,
     poll_slack_gil_decisions,
     transport_enabled_from_env,
+)
+from experiment1.trading_slack_transport import (
+    TradingSlackTransportError,
+    config_from_env as trading_config_from_env,
+    poll_slack_trading_decisions,
+    transport_enabled_from_env as trading_transport_enabled_from_env,
 )
 
 ENV_DB_PATH = "EXPERIMENT1_DB_PATH"
@@ -83,12 +90,14 @@ class Experiment1CycleSummary:
     protective_exit_results: tuple[LifecycleResult, ...]
     mtm_results: tuple[MtmCycleResult, ...]
     gil_ingestion_results: tuple[GilIngestionResult, ...]
+    trading_ingestion_results: tuple[TradingIngestionResult, ...]
 
 
 async def run_experiment1_cycle(
     engine: Experiment1Engine, quote_source: AsyncQuoteSource
 ) -> Experiment1CycleSummary:
     gil_ingestion_results = await drain_gil_decision_inbox(engine, quote_source)
+    trading_ingestion_results = await drain_trading_decision_inbox(engine, quote_source)
     market_fill_results = await run_market_cycle(engine, quote_source)
     protective_exit_results = await run_protective_exit_cycle(
         engine, quote_source, _protective_exit_candidates(engine)
@@ -102,7 +111,7 @@ async def run_experiment1_cycle(
             logger.warning("mtm cycle skipped for %s: %s", account.value, exc)
 
     return Experiment1CycleSummary(
-        market_fill_results, protective_exit_results, tuple(mtm_results), gil_ingestion_results
+        market_fill_results, protective_exit_results, tuple(mtm_results), gil_ingestion_results, trading_ingestion_results
     )
 
 
@@ -140,6 +149,12 @@ def _log_summary(summary: Experiment1CycleSummary) -> None:
         len(summary.gil_ingestion_results),
         _count(summary.gil_ingestion_results, "BLOCKED"),
     )
+    logger.info(
+        "trading ingestion: %d decision(s) - blocked=%d waiting=%d",
+        len(summary.trading_ingestion_results),
+        _count(summary.trading_ingestion_results, "BLOCKED"),
+        _count(summary.trading_ingestion_results, "WAITING_EVIDENCE"),
+    )
 
 
 def _poll_optional_slack_transport(engine: Experiment1Engine) -> None:
@@ -165,6 +180,37 @@ def _poll_optional_slack_transport(engine: Experiment1Engine) -> None:
     )
 
 
+
+def _poll_optional_trading_slack_transport(engine: Experiment1Engine) -> None:
+    if not trading_transport_enabled_from_env():
+        logger.info("Trading Slack transport: disabled")
+        return
+    token = os.getenv("TRADING_SLACK_BOT_TOKEN", "").strip()
+    if not token:
+        logger.warning("Trading Slack transport unavailable - TRADING_SLACK_BOT_TOKEN is not configured")
+        return
+    try:
+        from experiment1.slack_transport import SlackWebApiHistoryClient
+
+        summary = poll_slack_trading_decisions(
+            engine,
+            SlackWebApiHistoryClient(token),
+            config=trading_config_from_env(),
+        )
+    except TradingSlackTransportError as exc:
+        logger.warning("Trading Slack transport unavailable - %s", exc)
+        return
+    logger.info(
+        "Trading Slack transport: bootstrapped=%s seen=%d ignored=%d accepted=%d rejected=%d checkpoint=%s",
+        summary.bootstrapped,
+        summary.messages_seen,
+        summary.ordinary_ignored,
+        summary.accepted,
+        summary.rejected,
+        summary.checkpoint,
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="experiment1-runtime")
     parser.parse_args(argv)
@@ -181,6 +227,7 @@ def main(argv: list[str] | None = None) -> None:
     quote_source = build_quote_source()
 
     _poll_optional_slack_transport(engine)
+    _poll_optional_trading_slack_transport(engine)
 
     try:
         summary = asyncio.run(run_experiment1_cycle(engine, quote_source))

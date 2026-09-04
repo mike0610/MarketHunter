@@ -1,0 +1,125 @@
+name: Deploy Active Trading Runtime
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/deploy-active-trading-runtime.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: active-trading-runtime-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VPS_HOST: 149.56.45.39
+      VPS_USER: ubuntu
+      VPS_REPO: /home/ubuntu/MarketHunter
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+      TRADING_SLACK_BOT_TOKEN: ${{ secrets.GIL_SLACK_BOT_TOKEN }}
+      EXPECTED_SHA: ${{ github.sha }}
+
+    steps:
+      - name: Fail closed when required secrets are unavailable
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}" || { echo "missing SSH secret"; exit 2; }
+          test -n "${TRADING_SLACK_BOT_TOKEN}" || { echo "missing Slack bot token"; exit 3; }
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/markethunter_vps_ed25519
+          chmod 600 ~/.ssh/markethunter_vps_ed25519
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Stage Active Trading Slack environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          {
+            printf '%s\n' 'TRADING_SLACK_TRANSPORT_ENABLED=1'
+            printf 'TRADING_SLACK_BOT_TOKEN=%s\n' "${TRADING_SLACK_BOT_TOKEN}"
+            printf '%s\n' 'TRADING_SLACK_CHANNEL_ID=C0BME3BU1LN'
+            printf '%s\n' 'TRADING_SLACK_ALLOWED_USER_ID=U0BMKMQ4U04'
+            printf '%s\n' 'TRADING_SLACK_CHECKPOINT_PATH=/home/ubuntu/MarketHunter/data/experiment1_trading_slack_checkpoint.json'
+          } > /tmp/experiment1-trading-slack.env
+          scp -i "$HOME/.ssh/markethunter_vps_ed25519"             /tmp/experiment1-trading-slack.env             "${VPS_USER}@${VPS_HOST}:/tmp/experiment1-trading-slack.env.github-actions"
+          rm -f /tmp/experiment1-trading-slack.env
+
+      - name: Deploy master and run controlled runtime cycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEY="$HOME/.ssh/markethunter_vps_ed25519"
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -i "$KEY"             "${VPS_USER}@${VPS_HOST}" "EXPECTED_SHA='${EXPECTED_SHA}' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          REPO=/home/ubuntu/MarketHunter
+          ENV_FILE="$REPO/deploy/systemd/experiment1-runtime.env"
+          STAGED=/tmp/experiment1-trading-slack.env.github-actions
+
+          cd "$REPO"
+          git fetch origin master
+          git checkout master
+          git pull --ff-only origin master
+
+          DEPLOYED_SHA=$(git rev-parse HEAD)
+          echo "DEPLOYED_SHA=$DEPLOYED_SHA"
+          test "$DEPLOYED_SHA" = "$EXPECTED_SHA"
+
+          test -f "$STAGED"
+          touch "$ENV_FILE"
+          chmod 600 "$ENV_FILE"
+          sed -i '/^TRADING_SLACK_/d' "$ENV_FILE"
+          cat "$STAGED" >> "$ENV_FILE"
+          rm -f "$STAGED"
+          chown ubuntu:ubuntu "$ENV_FILE"
+
+          echo '=== ACTIVE TRADING ENV ==='
+          grep -q '^TRADING_SLACK_TRANSPORT_ENABLED=1$' "$ENV_FILE"
+          grep -q '^TRADING_SLACK_CHANNEL_ID=C0BME3BU1LN$' "$ENV_FILE"
+          grep -q '^TRADING_SLACK_ALLOWED_USER_ID=U0BMKMQ4U04$' "$ENV_FILE"
+          grep -Eq '^TRADING_SLACK_BOT_TOKEN=.+$' "$ENV_FILE"
+          echo 'trading_slack_transport=CONFIGURED'
+
+          sudo systemctl restart experiment1-runtime.timer
+          sudo systemctl is-active --quiet experiment1-runtime.timer
+          sudo systemctl start experiment1-runtime.service
+          sudo systemctl is-failed experiment1-runtime.service >/dev/null && exit 4 || true
+
+          echo '=== RUNTIME LOG ==='
+          journalctl -u experiment1-runtime.service -n 120 --no-pager
+          journalctl -u experiment1-runtime.service -n 120 --no-pager | grep -q 'Trading Slack transport:'
+
+          echo '=== DB PROOF ==='
+          "$REPO/.venv/bin/python" - <<'PY'
+          import sqlite3
+          from pathlib import Path
+
+          p = Path("data/experiment1.db")
+          assert p.exists(), "experiment1 db missing"
+          con = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
+          names = {row[0] for row in con.execute("select name from sqlite_master where type='table'")}
+          assert "experiment1_trading_decision_inbox" in names, "trading inbox table missing"
+          print("experiment1_trading_decision_inbox=", con.execute("select count(*) from experiment1_trading_decision_inbox").fetchone()[0])
+          print("experiment1_intents=", con.execute("select count(*) from experiment1_intents").fetchone()[0])
+          print("experiment1_fills=", con.execute("select count(*) from experiment1_fills").fetchone()[0])
+          con.close()
+          PY
+
+          echo '=== EXISTING SERVICES ==='
+          systemctl is-active markethunter-api markethunter-worker markethunter-monitor nginx
+          echo 'ACTIVE_TRADING_DEPLOY_PROOF=PASS'
+          REMOTE

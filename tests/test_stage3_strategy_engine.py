@@ -19,7 +19,7 @@ from trading_scanner.models import (
 NOW = datetime(2026, 9, 5, 1, 30, tzinfo=timezone.utc)
 
 
-def candidate(state=QueueState.CANDIDATE, family=SetupFamily.BREAKOUT_OR_PULLBACK_IN_TREND):
+def candidate(state=QueueState.CANDIDATE, family=SetupFamily.BREAKOUT_OR_PULLBACK_IN_TREND, invalidation_reference=None):
     return TradingCandidate(
         conid=1, symbol="SPY", sec_type="STK", exchange="SMART", currency="USD",
         setup_family=family, reason_stack=("BREAKOUT confirmed",),
@@ -27,6 +27,7 @@ def candidate(state=QueueState.CANDIDATE, family=SetupFamily.BREAKOUT_OR_PULLBAC
         volatility=VolatilityContext(Decimal("1.2")), evidence_status="OK", eligible=True,
         discovered_at=NOW, scan_cycle_id="cycle-1",
         dedupe_key=f"1:{family.value}:cycle-1", queue_state=state,
+        invalidation_reference=invalidation_reference,
     )
 
 
@@ -39,6 +40,21 @@ class Stage3StrategyEngineTests(unittest.TestCase):
         self.assertEqual(result.outcome, StrategyDecisionOutcome.LONG)
         for forbidden in ("quantity", "leverage", "stop_loss", "take_profit", "order_intent", "fill", "position"):
             self.assertFalse(hasattr(result, forbidden))
+
+    def test_structural_stop_is_derived_only_from_explicit_scanner_evidence(self):
+        result = validate_candidate(
+            candidate(invalidation_reference="close back below the breakout level (490.25)"),
+            strategy_assessment=USABLE,
+            decided_at=NOW,
+        )
+        self.assertEqual(result.reference_price, Decimal("500"))
+        self.assertEqual(result.structural_stop_price, Decimal("490.25"))
+        self.assertEqual(result.structural_stop_source, "close back below the breakout level (490.25)")
+
+    def test_missing_structural_stop_remains_none(self):
+        result = validate_candidate(candidate(), strategy_assessment=USABLE, decided_at=NOW)
+        self.assertIsNone(result.structural_stop_price)
+        self.assertIsNone(result.structural_stop_source)
 
     def test_non_candidate_is_rejected(self):
         result = validate_candidate(candidate(QueueState.WATCH), strategy_assessment=USABLE, decided_at=NOW)

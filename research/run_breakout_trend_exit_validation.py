@@ -11,7 +11,7 @@ import json
 from dataclasses import asdict, dataclass
 from math import isfinite
 
-from backtesting.trade_simulator import TradeSimulator
+from backtesting.trade_simulator import ExecutionAssumptions
 from market_data.foundation import MarketSeries
 from market_data.yahoo_provider import YahooChartDailyProvider
 from models.position import Position
@@ -90,7 +90,7 @@ def simulate_filled_observations(
     series: MarketSeries,
     summary: BreakoutValidationSummary,
 ) -> tuple[TrendExitTradeEvidence, ...]:
-    simulator = TradeSimulator()
+    assumptions = ExecutionAssumptions()
     evidence: list[TrendExitTradeEvidence] = []
     bars = series.bars
 
@@ -136,24 +136,14 @@ def simulate_filled_observations(
             exit_index = len(bars) - 1
             exit_reason = "window_close"
 
-        position = Position(
-            symbol=obs.symbol,
-            market="RESEARCH",
-            side="LONG",
-            quantity=1.0,
-            entry=entry,
-            stop_loss=stop,
-            take_profit=float("inf"),
-            opened_at=float(obs.fill_index),
-            current_price=entry,
-        )
-        result = simulator._result(
-            position,
-            raw_exit,
-            exit_index - obs.fill_index,
-            exit_reason,
-        )
-        net_r = result.pnl / risk
+        slippage_rate = assumptions.slippage_bps_per_side / 10_000.0
+        fee_rate = assumptions.fee_bps_per_side / 10_000.0
+        entry_fill = entry * (1.0 + slippage_rate)
+        exit_fill = raw_exit * (1.0 - slippage_rate)
+        gross_pnl = exit_fill - entry_fill
+        fees = (entry_fill + exit_fill) * fee_rate
+        pnl = gross_pnl - fees
+        net_r = pnl / risk
         if not isfinite(net_r):
             raise ValueError("non-finite R result")
 
@@ -165,8 +155,8 @@ def simulate_filled_observations(
                 stop=stop,
                 exit_reason=exit_reason,
                 holding_bars=int(exit_index - obs.fill_index),
-                pnl_1unit=float(result.pnl),
-                fees_1unit=float(result.fees),
+                pnl_1unit=float(pnl),
+                fees_1unit=float(fees),
                 net_r=float(net_r),
                 gap_stop=gap_stop,
             )

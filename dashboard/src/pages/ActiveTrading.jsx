@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
     Alert,
     Box,
     Chip,
+    CircularProgress,
     Divider,
     Paper,
     Stack,
@@ -14,8 +15,7 @@ import {
 
 import PageHeader from "../components/layout/PageHeader";
 import MetricCard from "../components/layout/MetricCard";
-
-const STARTING_CAPITAL = 2000;
+import { getExperiment1State } from "../api/experiment1Api";
 
 const ACCOUNT_TYPES = [
     { key: "spot", label: "Spot" },
@@ -57,8 +57,10 @@ const MARKET_CARDS = [
     },
 ];
 
-const ACTIVE_TRADES = [];
-const COMPLETED_TRADES = [];
+function usd(value) {
+    const n = Number(value ?? 0);
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number.isFinite(n) ? n : 0);
+}
 
 function formatUsd(value) {
     return new Intl.NumberFormat("en-US", {
@@ -129,6 +131,20 @@ export default function ActiveTrading() {
     const [accountType, setAccountType] = useState("spot");
     const [assetClass, setAssetClass] = useState("all");
     const [tradeView, setTradeView] = useState("active");
+    const [state, setState] = useState(null);
+    const [error, setError] = useState("");
+
+    useEffect(() => {
+        let active = true;
+        getExperiment1State().then((data) => { if (active) setState(data); }).catch((err) => { if (active) setError(err?.message || "Не вдалося завантажити runtime state"); });
+        return () => { active = false; };
+    }, []);
+
+    const byAccount = useMemo(() => new Map((state?.accounts || []).map((item) => [item.account, item])), [state]);
+    const spot = byAccount.get("SPOT");
+    const futures = byAccount.get("FUTURES");
+    const ACTIVE_TRADES = useMemo(() => [spot, futures].flatMap((a) => (a?.positions || []).map((p) => ({ id: `${a.account}-${p.symbol}`, symbol: p.symbol, accountType: a.account === "SPOT" ? "Spot" : "Futures", accountTypeKey: a.account === "SPOT" ? "spot" : "futures", assetClass: "Runtime", assetClassKey: "all", direction: Number(p.quantity) >= 0 ? "LONG" : "SHORT", strategy: "Durable runtime position", timeframe: "runtime", entry: usd(p.average_price), stopLoss: "runtime-managed", takeProfit: "runtime-managed" }))), [spot, futures]);
+    const COMPLETED_TRADES = [];
 
     const filteredActive = useMemo(
         () =>
@@ -150,12 +166,16 @@ export default function ActiveTrading() {
         [accountType, assetClass],
     );
 
+    if (!state && !error) return <Box sx={{ display: "flex", justifyContent: "center", py: 8 }}><CircularProgress /></Box>;
+
     return (
         <Box sx={{ width: "100%", minWidth: 0 }}>
             <PageHeader
                 title="Active Trading"
                 subtitle="Experiment 1: два незалежні paper-trading рахунки Spot і Futures, окремо від Investments та crypto statistics."
             />
+
+            {error && <Alert severity="error" sx={{ mb: 3, borderRadius: 3 }}>{error}</Alert>}
 
             <Alert severity="info" sx={{ mb: 3, borderRadius: 3 }}>
                 Simulation only. Spot і Futures мають окремі баланси, P&L, drawdown та статистику. Реальні брокерські ордери вимкнені.
@@ -185,10 +205,10 @@ export default function ActiveTrading() {
                                 gap: 1.5,
                             }}
                         >
-                            <MetricCard label="Balance" value={formatUsd(STARTING_CAPITAL)} caption="Стартовий депозит" />
-                            <MetricCard label="P&L" value="$0" caption="Окремо від Futures" />
-                            <MetricCard label="Drawdown" value="0%" caption="Поки немає угод" />
-                            <MetricCard label="Trades" value="0" caption="Завершені paper trades" />
+                            <MetricCard label="Equity" value={usd(spot?.last_equity)} caption="Durable runtime state" />
+                            <MetricCard label="Realized P&L" value={usd(spot?.realized_pnl)} caption="Окремо від Futures" />
+                            <MetricCard label="Max drawdown" value={usd(spot?.max_drawdown)} caption="Runtime ledger" />
+                            <MetricCard label="Positions" value={spot?.positions?.length ?? 0} caption="Open paper positions" />
                         </Box>
                     </Stack>
                 </Paper>
@@ -206,10 +226,10 @@ export default function ActiveTrading() {
                                 gap: 1.5,
                             }}
                         >
-                            <MetricCard label="Balance" value={formatUsd(STARTING_CAPITAL)} caption="Стартовий депозит" />
-                            <MetricCard label="P&L" value="$0" caption="LONG + SHORT" />
-                            <MetricCard label="Drawdown" value="0%" caption="Survival first" />
-                            <MetricCard label="Trades" value="0" caption="Завершені paper trades" />
+                            <MetricCard label="Equity" value={usd(futures?.last_equity)} caption="Durable runtime state" />
+                            <MetricCard label="Realized P&L" value={usd(futures?.realized_pnl)} caption="LONG + SHORT" />
+                            <MetricCard label="Max drawdown" value={usd(futures?.max_drawdown)} caption="Runtime ledger" />
+                            <MetricCard label="Positions" value={futures?.positions?.length ?? 0} caption="Open paper positions" />
                         </Box>
                     </Stack>
                 </Paper>

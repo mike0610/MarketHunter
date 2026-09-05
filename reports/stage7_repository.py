@@ -17,10 +17,16 @@ class Stage7ClosedTradeReader:
   with sqlite3.connect(self.db_path) as c:
    tables=self._tables(c)
    if "stage6_closed_trades" not in tables:return ()
+   where_clause = ""
+   if "stage10_test_only_provenance" in tables:
+    where_clause = """ where not exists (
+      select 1 from stage10_test_only_provenance t
+      where t.position_id = stage6_closed_trades.position_id
+    )"""
    rows=c.execute("""select closed_trade_id,position_id,symbol,direction,strategy_id,strategy_version,
       exit_reason,quantity,entry_price,exit_price,gross_pnl,entry_fees,exit_fees,realized_pnl,
       opened_at,closed_at,strategy_decision_id,candidate_dedupe_key
-      from stage6_closed_trades order by closed_at,closed_trade_id""").fetchall()
+      from stage6_closed_trades""" + where_clause + """ order by closed_at,closed_trade_id""").fetchall()
    out=[]
    for r in rows:
     decision_id=r[16];candidate_key=r[17]

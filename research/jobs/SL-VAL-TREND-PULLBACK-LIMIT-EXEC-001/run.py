@@ -106,3 +106,4 @@ def main(out,job):
       limitations=['single asset first-pass','fixed hold without stop/target','bar-touch fill cannot prove queue position','no spread/slippage beyond fixed round-trip cost','no chase and no market fallback','candidate requires separate robustness and capital-survival gate'])
 if __name__=='__main__':
  a=argparse.ArgumentParser();a.add_argument('--job',required=True);a.add_argument('--output',required=True);q=a.parse_args();main(q.output,q.job)
+

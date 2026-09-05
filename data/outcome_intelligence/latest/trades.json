@@ -1,11 +1,11 @@
 {
-  "captured_at_utc": "2026-09-05T11:42:18.447672+00:00",
+  "captured_at_utc": "2026-09-05T12:20:18.864261+00:00",
   "source": "/research/trades",
-  "source_revision": "df3337bbdf72f1ccfe346f6a73444e17821f302a",
+  "source_revision": "9d979bc76e206dfd56131e0c308416810693104d",
   "total": 243,
   "trades": [
     {
-      "active_candles": 10,
+      "active_candles": 11,
       "close_reason": "LIVE_ENTRY_FILLED",
       "closed_at": null,
       "created_at": "2026-09-05T01:25:14.838856Z",
@@ -15,7 +15,7 @@
       "id": "f7cdf2a5-1060-44cd-b2a9-f3bd336ef6dd",
       "is_experimental": true,
       "is_profitable_expired": false,
-      "last_processed_candle_at": "2026-09-05T10:59:59.999000Z",
+      "last_processed_candle_at": "2026-09-05T11:59:59.999000Z",
       "market": "spot",
       "max_active_candles": 30,
       "max_drawdown_percent": -0.07432512783921988,
@@ -48,7 +48,7 @@
       "timeframe": "1h"
     },
     {
-      "active_candles": 22,
+      "active_candles": 23,
       "close_reason": "LIVE_SL_MOVED_BREAKEVEN",
       "closed_at": null,
       "created_at": "2026-09-04T13:25:11.580770Z",
@@ -58,7 +58,7 @@
       "id": "14ae54d2-80cc-4551-ac62-7c70943661b8",
       "is_experimental": false,
       "is_profitable_expired": false,
-      "last_processed_candle_at": "2026-09-05T10:59:59.999000Z",
+      "last_processed_candle_at": "2026-09-05T11:59:59.999000Z",
       "market": "futures",
       "max_active_candles": 30,
       "max_drawdown_percent": -1.6937350236549413,
@@ -138,7 +138,7 @@
       "timeframe": "1h"
     },
     {
-      "active_candles": 25,
+      "active_candles": 26,
       "close_reason": "LIVE_ENTRY_FILLED",
       "closed_at": null,
       "created_at": "2026-09-04T10:25:10.730501Z",
@@ -148,7 +148,7 @@
       "id": "d576b405-fbb4-4aee-ad32-eb645ac71729",
       "is_experimental": false,
       "is_profitable_expired": false,
-      "last_processed_candle_at": "2026-09-05T10:59:59.999000Z",
+      "last_processed_candle_at": "2026-09-05T11:59:59.999000Z",
       "market": "futures",
       "max_active_candles": 30,
       "max_drawdown_percent": -7.355485294994933,

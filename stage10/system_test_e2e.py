@@ -70,10 +70,11 @@ def run(db_path:Path,account:TradingAccount=TradingAccount.SPOT)->dict:
  binding=build_order_binding(p,c,d,instruction);obs=_obs(account)
  store5=Stage5ExecutionStore(db_path);store5.record_order(binding)
  env=binding_to_envelope(binding,campaign=SimulationCampaignReference(f"stage10-system-test-{s}",1),recorded_at=T0)
- evaluator=Stage5MechanicsEvaluator({c.source_id:binding},{c.source_id:obs},Stage5MechanicsPolicy("stage5-mechanics","1",Decimal("5"),Decimal("10"),Decimal("0.01"),True))
- with SimulationRuntime(db_path,Stage5CandidateSource((env,)),Stage5ObservationSource({c.source_id:obs}),evaluator) as runtime:
+ key=env.snapshot.candidate.source_id
+ evaluator=Stage5MechanicsEvaluator({key:binding},{key:obs},Stage5MechanicsPolicy("stage5-mechanics","1",Decimal("5"),Decimal("10"),Decimal("0.01"),True))
+ with SimulationRuntime(db_path,Stage5CandidateSource((env,)),Stage5ObservationSource({key:obs}),evaluator) as runtime:
   runtime.run_cycle();runtime.run_cycle()
- fill=evaluator.fill_details_for(c.source_id)
+ fill=evaluator.fill_details_for(key)
  if fill is None:raise RuntimeError("SYSTEM_TEST did not fill")
  store5.record_fill_and_position(binding,fill);store5.record_fill_and_position(binding,fill)
  position_id="sim-position:"+fill.fill_id.split(":",1)[-1]

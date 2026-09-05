@@ -29,6 +29,14 @@ OOS_WARMUP_BARS = 50
 
 
 @dataclass(frozen=True, slots=True)
+class _FloatCandle:
+    open: float
+    high: float
+    low: float
+    close: float
+
+
+@dataclass(frozen=True, slots=True)
 class ExitTradeEvidence:
     symbol: str
     signal_time: str
@@ -109,9 +117,18 @@ def simulate_filled_observations(
             raise ValueError("non-positive structural risk in filled BREAKOUT observation")
         target = entry + TARGET_R * risk
 
-        candles = bars[obs.fill_index :]
-        if not candles:
+        source_candles = bars[obs.fill_index :]
+        if not source_candles:
             raise ValueError("filled observation has no forward candles")
+        candles = tuple(
+            _FloatCandle(
+                open=float(bar.open),
+                high=float(bar.high),
+                low=float(bar.low),
+                close=float(bar.close),
+            )
+            for bar in source_candles
+        )
 
         position = Position(
             symbol=obs.symbol,

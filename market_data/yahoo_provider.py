@@ -59,8 +59,13 @@ class YahooChartDailyProvider(AsyncMarketDataProvider):
             raise ValueError("limit must be positive")
 
         symbol = urllib.parse.quote(instrument.symbol, safe="")
+        # Yahoo's chart endpoint caps the returned history by the requested
+        # range, independently of our local tail limit. Request enough source
+        # history for bounded research while preserving the existing caller
+        # contract: limit still controls how many parsed bars are returned.
+        source_range = "10y" if limit > 366 else "1y"
         params = urllib.parse.urlencode(
-            {"range": "1y", "interval": "1d", "events": "history", "includeAdjustedClose": "true"}
+            {"range": source_range, "interval": "1d", "events": "history", "includeAdjustedClose": "true"}
         )
         url = f"{self.BASE_URL}{symbol}?{params}"
         raw = await asyncio.to_thread(self._fetch_text, url)

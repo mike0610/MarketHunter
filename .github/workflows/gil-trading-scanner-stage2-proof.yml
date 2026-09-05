@@ -1,0 +1,135 @@
+name: GIL Trading Scanner Stage 2 Proof
+
+# One-shot live runtime proof only - not a recurring job. Matches this
+# repo's own established pattern for a bounded VPS proof (e.g.
+# active-trading-runtime-proof.yml, diagnose-active-trading-runtime.yml):
+# a push touching only this workflow file triggers exactly one run.
+# It does NOT enable the gil-trading-scanner-runtime.timer, does not
+# touch any trading/order/decision table, and never runs again on its
+# own after this push.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/gil-trading-scanner-stage2-proof.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VPS_HOST: 149.56.45.39
+      VPS_USER: ubuntu
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+      EXPECTED_SHA: 2cb2339a18fcb63ef6e7fa443dddff7ecce4aa64
+
+    steps:
+      - name: Fail closed when SSH secret is unavailable
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${SSH_PRIVATE_KEY}" ]; then
+            echo "MISSING SSH SECRET: MARKETHUNTER_VPS_SSH_PRIVATE_KEY"
+            exit 2
+          fi
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/markethunter_vps_ed25519
+          chmod 600 ~/.ssh/markethunter_vps_ed25519
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: One-shot Stage 2 scanner proof - real data, zero trading
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEY="$HOME/.ssh/markethunter_vps_ed25519"
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -i "$KEY" \
+            "${VPS_USER}@${VPS_HOST}" "EXPECTED_SHA='${EXPECTED_SHA}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          REPO=/home/ubuntu/MarketHunter
+          cd "$REPO"
+
+          echo '=== 1. DEPLOYED REPO SHA ==='
+          BEFORE_SHA="$(git rev-parse HEAD)"
+          echo "before_sha=$BEFORE_SHA"
+          echo "expected_sha=$EXPECTED_SHA"
+          if [ "$BEFORE_SHA" != "$EXPECTED_SHA" ]; then
+            echo 'repo not yet at expected baseline - syncing via the same fast-forward-only pattern deploy-experiment1-runtime.yml already uses'
+            git fetch origin master
+            git checkout master
+            git pull --ff-only origin master
+          fi
+          CURRENT_SHA="$(git rev-parse HEAD)"
+          echo "current_sha=$CURRENT_SHA"
+          if [ "$CURRENT_SHA" != "$EXPECTED_SHA" ]; then
+            echo 'PROOF=BLOCKED reason=repo-sha-mismatch-after-sync'
+            exit 9
+          fi
+
+          echo '=== 2. PRE-RUN data/ INTEGRITY BASELINE (trading-artifact proof, part 1) ==='
+          find data -maxdepth 1 -type f 2>/dev/null | sort | xargs -r sha256sum > /tmp/pre_data_hashes.txt || true
+          cat /tmp/pre_data_hashes.txt || echo '(no files under data/ yet)'
+
+          echo '=== 3. EXACT ONE-SHOT COMMAND ==='
+          echo 'TRADING_SCANNER_MARKET_DATA_PROVIDER=stooq TRADING_SCANNER_UNIVERSE_SYMBOLS=SPY,QQQ,AAPL,MSFT,NVDA TRADING_SCANNER_DB_PATH=/home/ubuntu/MarketHunter/data/trading_scanner.db /home/ubuntu/MarketHunter/.venv/bin/python -m tools.gil_trading_scanner_runtime.runtime'
+
+          echo '=== 4. RUNTIME EXIT/RESULT ==='
+          set +e
+          env TRADING_SCANNER_MARKET_DATA_PROVIDER=stooq \
+              TRADING_SCANNER_UNIVERSE_SYMBOLS=SPY,QQQ,AAPL,MSFT,NVDA \
+              TRADING_SCANNER_DB_PATH=/home/ubuntu/MarketHunter/data/trading_scanner.db \
+              "$REPO/.venv/bin/python" -m tools.gil_trading_scanner_runtime.runtime
+          RUNTIME_EXIT=$?
+          set -e
+          echo "runtime_exit=$RUNTIME_EXIT"
+
+          echo '=== 5. SQLITE PROOF: trading_scanner_candidates ==='
+          "$REPO/.venv/bin/python" - <<'PY'
+          import sqlite3
+          from pathlib import Path
+
+          db = Path('/home/ubuntu/MarketHunter/data/trading_scanner.db')
+          print('db_exists=', db.exists())
+          if db.exists():
+              con = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
+              total = con.execute('SELECT COUNT(*) FROM trading_scanner_candidates').fetchone()[0]
+              print('total_rows=', total)
+              rows = con.execute(
+                  'SELECT queue_state, setup_family, symbol, COUNT(*) '
+                  'FROM trading_scanner_candidates '
+                  'GROUP BY queue_state, setup_family, symbol '
+                  'ORDER BY queue_state, setup_family, symbol'
+              ).fetchall()
+              for r in rows:
+                  print('row:', r)
+              con.close()
+          PY
+
+          echo '=== 6. POST-RUN data/ INTEGRITY CHECK (trading-artifact proof, part 2) ==='
+          find data -maxdepth 1 -type f 2>/dev/null | sort | xargs -r sha256sum > /tmp/post_data_hashes.txt || true
+          cat /tmp/post_data_hashes.txt || echo '(no files under data/)'
+          echo '--- diff excluding trading_scanner.db itself, which this proof intentionally writes to ---'
+          grep -v 'trading_scanner\.db' /tmp/pre_data_hashes.txt > /tmp/pre_filtered.txt || true
+          grep -v 'trading_scanner\.db' /tmp/post_data_hashes.txt > /tmp/post_filtered.txt || true
+          if diff -u /tmp/pre_filtered.txt /tmp/post_filtered.txt; then
+            echo 'NO_TRADING_ARTIFACT_CHANGE=true'
+          else
+            echo 'NO_TRADING_ARTIFACT_CHANGE=false'
+          fi
+
+          echo '=== 7. VERDICT ==='
+          if [ "$RUNTIME_EXIT" -eq 0 ]; then
+            echo 'PROOF=PASS'
+          else
+            echo "PROOF=BLOCKED reason=runtime-exit-${RUNTIME_EXIT}"
+          fi
+          REMOTE

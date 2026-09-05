@@ -64,7 +64,7 @@ class Stage9ControlPlaneTests(unittest.TestCase):
  def test_default_cadences_match_stage9_boundary(self):
   specs={s.pipeline_id:s for s in DEFAULT_PIPELINES}
   self.assertEqual(specs["trading_scanner"].cadence,timedelta(minutes=30))
-  self.assertLess(specs["execution_position_monitor"].cadence,specs["trading_scanner"].cadence)
+  self.assertLess(specs["execution_monitor"].cadence,specs["trading_scanner"].cadence)
   self.assertGreater(specs["investment_discovery"].cadence,specs["trading_scanner"].cadence)
 
 if __name__=="__main__":unittest.main()

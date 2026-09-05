@@ -1,0 +1,42 @@
+name: Research Historical Validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  breakout-long:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run bounded BREAKOUT LONG validation
+        run: |
+          set -euo pipefail
+          mkdir -p research-artifacts
+          python -m research.run_breakout_validation | tee research-artifacts/breakout-long.txt
+      - name: Record immutable run context
+        run: |
+          set -euo pipefail
+          echo "commit=$(git rev-parse HEAD)" > research-artifacts/context.txt
+          echo "workflow_run_id=$GITHUB_RUN_ID" >> research-artifacts/context.txt
+          echo "workflow_run_attempt=$GITHUB_RUN_ATTEMPT" >> research-artifacts/context.txt
+          echo "universe=SPY,QQQ,AAPL,MSFT,NVDA" >> research-artifacts/context.txt
+          echo "history_bars=1300" >> research-artifacts/context.txt
+          echo "split=70/30" >> research-artifacts/context.txt
+          echo "purpose=research-validation-only" >> research-artifacts/context.txt
+          echo "broker=forbidden" >> research-artifacts/context.txt
+          echo "live_money=forbidden" >> research-artifacts/context.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: breakout-long-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: research-artifacts/*.txt
+          if-no-files-found: error
+          retention-days: 30

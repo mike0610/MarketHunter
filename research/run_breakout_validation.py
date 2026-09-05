@@ -11,11 +11,12 @@ from decimal import Decimal
 
 from market_data.yahoo_provider import YahooChartDailyProvider
 from research.breakout_validation import BreakoutValidationSummary, validate_breakout_entries
+from research.validation_core import ValidationSpec, validate_chronologically
 
 
 UNIVERSE = ("SPY", "QQQ", "AAPL", "MSFT", "NVDA")
 HISTORY_BARS = 1300
-DEVELOPMENT_FRACTION = Decimal("0.70")
+VALIDATION_SPEC = ValidationSpec(development_fraction=Decimal("0.70"), minimum_bars=250, warmup_bars=50)\nDEVELOPMENT_FRACTION = VALIDATION_SPEC.development_fraction
 
 
 @dataclass(frozen=True, slots=True)

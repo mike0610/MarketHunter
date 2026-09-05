@@ -1,0 +1,1 @@
+{"object_id":"STAGE10-AUTOMATION-RUNTIME-DIAG-001","executor":"vps","timeout_minutes":5,"terminal_states":["EVIDENCE_READY","BLOCKED-RUNTIME"],"execution_revision":"2026-09-05-stage10-automation-diag-1"}

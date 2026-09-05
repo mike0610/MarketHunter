@@ -4,9 +4,16 @@ from datetime import datetime,timedelta,timezone
 from pathlib import Path
 from stage9.health import health_snapshot
 from stage9.policy import DEFAULT_PIPELINES
+from stage9.runtime_adapters import RuntimeAdapters
 from stage9.wiring import build_registry,run_pipeline
 T=datetime(2026,9,5,15,tzinfo=timezone.utc)
 class Stage9AdapterTests(unittest.TestCase):
+ def test_trading_scanner_adapter_uses_existing_no_slack_cycle(self):
+  calls=[]
+  adapters=RuntimeAdapters(None,None,lambda:calls.append("scan"))
+  adapters.trading_scanner_cycle()
+  self.assertEqual(calls,["scan"])
+
  def test_operational_pipelines_have_independent_leases(self):
   with tempfile.TemporaryDirectory() as td:
    r=build_registry(Path(td)/"o.db",T);calls=[]

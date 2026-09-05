@@ -83,29 +83,58 @@ def main(out,job):
   v=close_to_close_return(row_now,row_prev)
   if v is None:record_invalid(sym,ts_now,ts_prev,context,numer,denom)
   return v
- residual={s:{} for s in ASSETS}
+ residual={s:[None]*len(common) for s in ASSETS}
  for s in ASSETS:
-  for i in range(ROLL,len(common)):
-   t=common[i]
-   xs=[];ys=[]
-   for j in range(i-ROLL,i):
-    if j<=0:continue
-    h=common[j];rv=checked_return(s,h,common[j-1],'residual_history')
-    if rv is not None:
-     xs.append(rv);ys.append(data[s][h][3])
-   if len(xs)!=len(ys) or len(xs)<20 or i==0:continue
-   x=checked_return(s,t,common[i-1],'residual_current');y=data[s][t][3]
-   if x is None:continue
-   z=lin_resid(xs,ys,x,y)
-   if z is not None:residual[s][t]=z
+  n_common=len(common)
+  xvals=[None]*n_common
+  for j in range(1,n_common):
+   row_now=data[s][common[j]];row_prev=data[s][common[j-1]]
+   numer=row_now[1];denom=row_prev[1]
+   rv=safe_ratio_return(numer,denom)
+   xvals[j]=rv
+   if rv is None:
+    if j>=ROLL:record_invalid(s,common[j],common[j-1],'residual_current',numer,denom)
+    if j<n_common-1:record_invalid(s,common[j],common[j-1],'residual_history',numer,denom)
+  n=sx=sy=sxx=sxy=0.0
+  def add_pair(j,sign):
+   nonlocal_dummy=None
+   x=xvals[j]
+   if x is None:return
+   y=data[s][common[j]][3]
+   return x,y
+  for j in range(1,ROLL):
+   pair=add_pair(j,1)
+   if pair is not None:
+    x,y=pair;n+=1;sx+=x;sy+=y;sxx+=x*x;sxy+=x*y
+  for i in range(ROLL,n_common):
+   history_checks=ROLL if i-ROLL>0 else ROLL-1
+   price_ratio_checks+=history_checks+1
+   x=xvals[i];y=data[s][common[i]][3]
+   if n>=20 and x is not None:
+    mx=sx/n;my=sy/n;vx=sxx-(sx*sx/n)
+    b=(sxy-(sx*sy/n))/vx if vx>0 else 0.0
+    a=my-b*mx
+    residual[s][i]=y-(a+b*x)
+   old=i-ROLL
+   if old>0:
+    pair=add_pair(old,-1)
+    if pair is not None:
+     ox,oy=pair;n-=1;sx-=ox;sy-=oy;sxx-=ox*ox;sxy-=ox*oy
+   pair=add_pair(i,1)
+   if pair is not None:
+    nx,ny=pair;n+=1;sx+=nx;sy+=ny;sxx+=nx*nx;sxy+=nx*ny
+  del xvals
  ts_events=[];xs_events=[];last_ts={s:-10**9 for s in ASSETS};last_x=-10**9
  for i,t in enumerate(common):
   if t<int(START.timestamp()) or t>=int(END.timestamp()) or i+HOLD+1>=len(common) or i<THRESH:continue
   period='IS' if t<int(SPLIT.timestamp()) else 'OOS'
   for s in ASSETS:
-   z=residual[s].get(t)
+   z=residual[s][i]
    if z is None or i-last_ts[s]<HOLD:continue
-   hist=[residual[s].get(common[j]) for j in range(max(ROLL,i-THRESH),i)];hist=[v for v in hist if v is not None]
+   hist=[]
+   for j in range(max(ROLL,i-THRESH),i):
+    v=residual[s][j]
+    if v is not None:hist.append(v)
    if len(hist)<200:continue
    lo=pct(hist,.10);hi=pct(hist,.90);side=1 if z>=hi else (-1 if z<=lo else 0)
    if not side:continue
@@ -115,7 +144,10 @@ def main(out,job):
     record_invalid(s,common[i+HOLD+1],common[i+1],'time_series_execution',exitp,entry);continue
    gross=side*gross0
    ts_events.append({'ts':t,'symbol':s,'side':side,'residual':z,'net10':gross-COST10,'net20':gross-COST20,'period':period});last_ts[s]=i
-  avail=[(residual[s].get(t),s) for s in ASSETS if residual[s].get(t) is not None]
+  avail=[]
+  for s in ASSETS:
+   v=residual[s][i]
+   if v is not None:avail.append((v,s))
   if len(avail)==len(ASSETS) and i-last_x>=HOLD:
    q=sorted(avail);shorts=[x[1] for x in q[:2]];longs=[x[1] for x in q[-2:]]
    long_returns=[];short_returns=[];bad_xs=False

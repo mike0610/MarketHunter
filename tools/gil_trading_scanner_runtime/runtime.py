@@ -47,33 +47,38 @@ def _build_market_data_source() -> MarketDataScannerAdapter | None:
     return MarketDataScannerAdapter(provider)
 
 
+def run_once():
+    """Run one real-data scanner cycle without process-exit side effects.
+
+    This is the reusable no-Slack seam consumed by Stage 9 orchestration.
+    It preserves the scanner's existing fail-closed configuration rules.
+    """
+    source = _build_market_data_source()
+    if source is None:
+        logger.info("scanner cycle skipped - no real market-data provider configured")
+        return None
+
+    store = TradingScannerStore(_resolve_db_path())
+    result = asyncio.run(run_scan_cycle(source, store, session_state=SessionState.REGULAR))
+    logger.info(
+        "scanner cycle complete - contracts_seen=%d candidates_recorded=%d",
+        result.contracts_seen,
+        len(result.candidates_recorded),
+    )
+    return result
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="gil-trading-scanner-runtime")
     parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     try:
-        source = _build_market_data_source()
-    except Exception:
-        logger.exception("scanner source configuration invalid")
-        sys.exit(EXIT_FAILURE)
-
-    if source is None:
-        logger.info("scanner cycle skipped - no real market-data provider configured")
-        sys.exit(EXIT_OK)
-
-    store = TradingScannerStore(_resolve_db_path())
-    try:
-        result = asyncio.run(run_scan_cycle(source, store, session_state=SessionState.REGULAR))
+        run_once()
     except Exception:
         logger.exception("scanner cycle failed closed")
         sys.exit(EXIT_FAILURE)
 
-    logger.info(
-        "scanner cycle complete - contracts_seen=%d candidates_recorded=%d",
-        result.contracts_seen,
-        len(result.candidates_recorded),
-    )
     sys.exit(EXIT_OK)
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 
 from trading_scanner.models import SetupFamily
@@ -29,6 +30,9 @@ class StrategyDecisionRecord:
     candidate_discovered_at: datetime
     candidate_evidence_status: str
     candidate_freshness_note: str | None
+    reference_price: Decimal | None = None
+    structural_stop_price: Decimal | None = None
+    structural_stop_source: str | None = None
 
     def __post_init__(self) -> None:
         for value, name in (

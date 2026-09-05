@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 from strategy_engine.models import StrategyDecisionOutcome, StrategyDecisionRecord
@@ -30,6 +31,14 @@ class StrategyDecisionStore:
                     candidate_freshness_note TEXT
                 )"""
             )
+            columns={row[1] for row in conn.execute("PRAGMA table_info(strategy_decisions)").fetchall()}
+            for name,ddl in (
+                ("reference_price","TEXT"),
+                ("structural_stop_price","TEXT"),
+                ("structural_stop_source","TEXT"),
+            ):
+                if name not in columns:
+                    conn.execute(f"ALTER TABLE strategy_decisions ADD COLUMN {name} {ddl}")
             conn.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS uq_strategy_decision_candidate_version "
                 "ON strategy_decisions(candidate_dedupe_key, strategy_id, strategy_version)"
@@ -49,13 +58,20 @@ class StrategyDecisionStore:
                     return existing
                 raise ValueError("decision_id collision")
             conn.execute(
-                "INSERT INTO strategy_decisions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                """INSERT INTO strategy_decisions (
+                    decision_id,candidate_dedupe_key,symbol,setup_family,strategy_id,strategy_version,outcome,
+                    decided_at,reason_stack,candidate_scan_cycle_id,candidate_discovered_at,candidate_evidence_status,
+                    candidate_freshness_note,reference_price,structural_stop_price,structural_stop_source
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    item.decision_id, item.candidate_dedupe_key, item.symbol, item.setup_family.value,
-                    item.strategy_id, item.strategy_version, item.outcome.value, item.decided_at.isoformat(),
-                    "\x1f".join(item.reason_stack), item.candidate_scan_cycle_id,
-                    item.candidate_discovered_at.isoformat(), item.candidate_evidence_status,
+                    item.decision_id,item.candidate_dedupe_key,item.symbol,item.setup_family.value,
+                    item.strategy_id,item.strategy_version,item.outcome.value,item.decided_at.isoformat(),
+                    "\x1f".join(item.reason_stack),item.candidate_scan_cycle_id,
+                    item.candidate_discovered_at.isoformat(),item.candidate_evidence_status,
                     item.candidate_freshness_note,
+                    None if item.reference_price is None else str(item.reference_price),
+                    None if item.structural_stop_price is None else str(item.structural_stop_price),
+                    item.structural_stop_source,
                 ),
             )
         return item
@@ -81,4 +97,7 @@ class StrategyDecisionStore:
             candidate_discovered_at=datetime.fromisoformat(row["candidate_discovered_at"]),
             candidate_evidence_status=row["candidate_evidence_status"],
             candidate_freshness_note=row["candidate_freshness_note"],
+            reference_price=None if "reference_price" not in row.keys() or row["reference_price"] is None else Decimal(row["reference_price"]),
+            structural_stop_price=None if "structural_stop_price" not in row.keys() or row["structural_stop_price"] is None else Decimal(row["structural_stop_price"]),
+            structural_stop_source=None if "structural_stop_source" not in row.keys() else row["structural_stop_source"],
         )

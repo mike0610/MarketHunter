@@ -1,0 +1,1 @@
+{"object_id":"MH-STAGE4-RISK-MM-LIVE-PROOF-001","executor":"vps","timeout_minutes":10,"terminal_states":["PASS","BLOCKED-EVIDENCE","BLOCKED-RUNTIME"],"execution_revision":"2026-09-05-stage4-proof-1"}

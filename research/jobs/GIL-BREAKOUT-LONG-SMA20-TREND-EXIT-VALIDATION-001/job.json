@@ -1,0 +1,1 @@
+{"object_id":"GIL-BREAKOUT-LONG-SMA20-TREND-EXIT-VALIDATION-001","executor":"vps","timeout_minutes":10,"terminal_states":["EVIDENCE_READY","BLOCKED-RUNTIME"],"execution_revision":"2026-09-05-gil-breakout-sma20-exit-1"}

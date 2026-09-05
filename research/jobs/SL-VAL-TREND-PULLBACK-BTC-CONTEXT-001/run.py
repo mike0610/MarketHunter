@@ -103,3 +103,4 @@ def main(out,job):
       limitations=['ETH signals with contemporaneous strictly-prior BTC context only','fixed hold without stop/target','no spread/slippage beyond fixed round-trip cost','support does not imply promotion eligibility'])
 if __name__=='__main__':
  a=argparse.ArgumentParser();a.add_argument('--job',required=True);a.add_argument('--output',required=True);q=a.parse_args();main(q.output,q.job)
+

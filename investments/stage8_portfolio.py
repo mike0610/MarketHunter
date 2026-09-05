@@ -19,7 +19,7 @@ def portfolio_gate(engine:Experiment1Engine,decision:Stage8InvestmentDecision,*,
  if decision.action in (DecisionAction.WAIT,DecisionAction.HOLD):
   return PortfolioGateResult(False,decision.action.value,None)
  state=engine.account_state(decision.account)
- position=engine.position(decision.account,decision.symbol)
+ position=next((p for p in engine.positions(decision.account) if p.symbol==decision.symbol),None)
  held_notional=Decimal("0") if position is None else position.notional
  requested_notional=execution_price*decision.quantity
  if decision.action is DecisionAction.BUY:

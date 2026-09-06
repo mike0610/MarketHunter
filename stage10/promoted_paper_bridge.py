@@ -6,6 +6,7 @@ from datetime import datetime,timedelta
 from decimal import Decimal
 
 from experiment1.models import AccountState
+from research.autonomous_loop.models import ResearchTrack
 from research.autonomous_loop.repository import AutonomousResearchRepository
 from risk_mm.models import RiskPolicy,TradingAccount
 from risk_mm.open_risk_ledger import OpenRiskLedger
@@ -48,6 +49,7 @@ class PaperStrategyContract:
 @dataclass(frozen=True,slots=True)
 class PromotedPaperAdmission:
     object_id:str
+    research_track:ResearchTrack
     hypothesis_id:str
     promoted_at:datetime
     contract:PaperStrategyContract
@@ -76,7 +78,7 @@ def load_paper_admission(repo:AutonomousResearchRepository,object_id:str)->Promo
     evidence=json.loads(row["evidence_json"])
     raw=evidence.get("paper_contract")
     if not isinstance(raw,dict): raise PaperAdmissionError("PROMOTION-ELIGIBLE evidence has no runtime-compatible paper_contract")
-    return PromotedPaperAdmission(object_id,row["hypothesis_id"],datetime.fromisoformat(row["created_at"]),_contract(raw))
+    return PromotedPaperAdmission(object_id,ResearchTrack(row["research_track"]),row["hypothesis_id"],datetime.fromisoformat(row["created_at"]),_contract(raw))
 
 def build_promoted_paper_binding(
     *,

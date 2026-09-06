@@ -1,0 +1,1 @@
+{"object_id":"PAPER-STRATEGY-AUTO-REVIEW-E2E-001","executor":"vps","timeout_minutes":10,"terminal_states":["PASS","BLOCKED-RUNTIME"],"execution_revision":"2026-09-06-paper-review-e2e-1"}

@@ -32,6 +32,7 @@ def validate_candidate(
     strategy_assessment: StrategyVersionAssessment,
     strategy_id: str = APPROVED_STAGE3_STRATEGY_ID,
     strategy_version: str = APPROVED_STAGE3_VERSION,
+    approved_direction: StrategyDecisionOutcome | None = None,
     decided_at: datetime | None = None,
 ) -> StrategyDecisionRecord:
     """Stage 3 only: deterministic decision, never sizing or execution."""
@@ -48,6 +49,9 @@ def validate_candidate(
     elif not candidate.eligible or candidate.evidence_status != "OK":
         outcome = StrategyDecisionOutcome.REJECTED
         reasons = ("candidate evidence/eligibility gate failed",)
+    elif approved_direction in (StrategyDecisionOutcome.LONG, StrategyDecisionOutcome.SHORT):
+        outcome = approved_direction
+        reasons = (f"paper-approved frozen direction={approved_direction.value}",) + candidate.reason_stack
     elif candidate.setup_family in (
         SetupFamily.MOMENTUM_RELATIVE_STRENGTH,
         SetupFamily.BREAKOUT_OR_PULLBACK_IN_TREND,

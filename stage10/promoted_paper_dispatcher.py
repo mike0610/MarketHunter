@@ -34,15 +34,28 @@ class PromotedPaperDispatchStore:
               object_id TEXT NOT NULL,candidate_dedupe_key TEXT NOT NULL,
               decision_id TEXT NOT NULL,strategy_id TEXT NOT NULL,strategy_version TEXT NOT NULL,
               hypothesis_id TEXT NOT NULL,created_at TEXT NOT NULL,
+              research_track TEXT,strategy_decision_id TEXT,risk_plan_id TEXT,risk_amount TEXT,
               PRIMARY KEY(object_id,candidate_dedupe_key),UNIQUE(decision_id))""")
+            columns={row[1] for row in c.execute("PRAGMA table_info(promoted_paper_dispatches)")}
+            for name in ("research_track","strategy_decision_id","risk_plan_id","risk_amount"):
+                if name not in columns:
+                    c.execute(f"ALTER TABLE promoted_paper_dispatches ADD COLUMN {name} TEXT")
     def exists(self,object_id:str,dedupe:str)->bool:
         with sqlite3.connect(self.path) as c:
             return c.execute("select 1 from promoted_paper_dispatches where object_id=? and candidate_dedupe_key=?",(object_id,dedupe)).fetchone() is not None
-    def record(self,*,object_id,dedupe,decision_id,strategy_id,version,hypothesis_id)->None:
+    def record(self,*,object_id,dedupe,decision_id,strategy_id,version,hypothesis_id,
+               research_track=None,strategy_decision_id=None,risk_plan_id=None,risk_amount=None)->None:
         with sqlite3.connect(self.path) as c:
             c.execute("""INSERT OR IGNORE INTO promoted_paper_dispatches
-              (object_id,candidate_dedupe_key,decision_id,strategy_id,strategy_version,hypothesis_id,created_at)
-              VALUES(?,?,?,?,?,?,?)""",(object_id,dedupe,decision_id,strategy_id,version,hypothesis_id,datetime.now(timezone.utc).isoformat()))
+              (object_id,candidate_dedupe_key,decision_id,strategy_id,strategy_version,hypothesis_id,created_at,
+               research_track,strategy_decision_id,risk_plan_id,risk_amount)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+              (object_id,dedupe,decision_id,strategy_id,version,hypothesis_id,datetime.now(timezone.utc).isoformat(),
+               research_track,strategy_decision_id,risk_plan_id,None if risk_amount is None else str(risk_amount)))
+    def list_rows(self):
+        with sqlite3.connect(self.path) as c:
+            c.row_factory=sqlite3.Row
+            return tuple(c.execute("SELECT * FROM promoted_paper_dispatches ORDER BY created_at,decision_id").fetchall())
 
 def _account(kind:TradingAccount)->AccountKind:
     return AccountKind.SPOT if kind is TradingAccount.SPOT else AccountKind.FUTURES
@@ -74,6 +87,7 @@ def dispatch_promoted_candidates(
     open_risk_ledger:OpenRiskLedger,
     risk_policy:RiskPolicy,
     research_track:ResearchTrack|None=None,
+    review_store=None,
 )->tuple[DispatchResult,...]:
     out=[]
     candidates=scanner_store.list_candidates(queue_state=QueueState.CANDIDATE)
@@ -88,6 +102,8 @@ def dispatch_promoted_candidates(
         contract=admission.contract
         if admission.research_track is not release_track:
             out.append(DispatchResult(oid,"",None,"BLOCKED-PAPER-ADMISSION","release/admission research_track mismatch"));continue
+        if review_store is not None and review_store.is_paused(oid,contract.strategy_id,contract.version):
+            out.append(DispatchResult(oid,"",None,"PAUSED","paper review status=PAUSE"));continue
         evidence=__import__("json").loads(release["evidence_json"])
         pc=evidence.get("paper_contract") or {}
         r_multiple=None if pc.get("take_profit_r") is None else Decimal(str(pc["take_profit_r"]))
@@ -132,6 +148,9 @@ def dispatch_promoted_candidates(
             raw=decision_to_json(decision)
             engine.receive_trading_decision(decision_id,raw)
             dispatch_store.record(object_id=oid,dedupe=candidate.dedupe_key,decision_id=decision_id,
-                                  strategy_id=contract.strategy_id,version=contract.version,hypothesis_id=admission.hypothesis_id)
+                                  strategy_id=contract.strategy_id,version=contract.version,hypothesis_id=admission.hypothesis_id,
+                                  research_track=release_track.value,
+                                  strategy_decision_id=built.risk.strategy_decision.decision_id,
+                                  risk_plan_id=plan.plan_id,risk_amount=plan.risk_amount)
             out.append(DispatchResult(oid,candidate.dedupe_key,decision_id,"QUEUED"))
     return tuple(out)

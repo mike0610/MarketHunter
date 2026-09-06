@@ -9,6 +9,7 @@ from research.autonomous_loop.repository import AutonomousResearchRepository
 from risk_mm.models import RiskPolicy
 from risk_mm.open_risk_ledger import OpenRiskLedger
 from risk_mm.store import RiskPlanStore
+from stage10.paper_strategy_review import PaperStrategyReviewStore
 from stage10.promoted_paper_dispatcher import PromotedPaperDispatchStore,dispatch_promoted_candidates
 from strategy_engine.store import StrategyDecisionStore
 from trading_scanner.store import TradingScannerStore
@@ -36,6 +37,7 @@ def run_once():
       open_risk_ledger=OpenRiskLedger(_p("PROMOTED_PAPER_OPEN_RISK_DB_PATH",str(root/"promoted_paper_open_risk.db"))),
       risk_policy=risk,
       research_track=track,
+      review_store=PaperStrategyReviewStore(_p("PAPER_STRATEGY_REVIEW_DB_PATH",str(root/"paper_strategy_review.db"))),
     )
 def main(argv=None):
     argparse.ArgumentParser(prog="promoted-paper-runtime").parse_args(argv)

@@ -76,10 +76,17 @@ class TradingScannerStore:
                     catalyst_observed_at TEXT,
                     freshness_note TEXT,
                     invalidation_reference TEXT,
+                    signal_bar_high TEXT,
+                    signal_bar_low TEXT,
                     reject_reason TEXT
                 );
                 """
             )
+            columns={row["name"] for row in conn.execute("PRAGMA table_info(trading_scanner_candidates)")}
+            if "signal_bar_high" not in columns:
+                conn.execute("ALTER TABLE trading_scanner_candidates ADD COLUMN signal_bar_high TEXT")
+            if "signal_bar_low" not in columns:
+                conn.execute("ALTER TABLE trading_scanner_candidates ADD COLUMN signal_bar_low TEXT")
 
     def record_candidate(self, candidate: TradingCandidate) -> TradingCandidate:
         """
@@ -106,8 +113,8 @@ class TradingScannerStore:
                     liquidity_last_price, volatility_realized_range_pct, evidence_status, eligible,
                     discovered_at, scan_cycle_id, queue_state, catalyst_description, catalyst_source,
                     catalyst_source_reference, catalyst_observed_at, freshness_note,
-                    invalidation_reference, reject_reason
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    invalidation_reference, signal_bar_high, signal_bar_low, reject_reason
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     candidate.dedupe_key,
                     candidate.conid,
@@ -132,6 +139,8 @@ class TradingScannerStore:
                     None if candidate.catalyst is None else candidate.catalyst.observed_at.isoformat(),
                     candidate.freshness_note,
                     candidate.invalidation_reference,
+                    None if candidate.signal_bar_high is None else str(candidate.signal_bar_high),
+                    None if candidate.signal_bar_low is None else str(candidate.signal_bar_low),
                     candidate.reject_reason,
                 ),
             )
@@ -189,5 +198,7 @@ class TradingScannerStore:
             catalyst=catalyst,
             freshness_note=row["freshness_note"],
             invalidation_reference=row["invalidation_reference"],
+            signal_bar_high=None if row["signal_bar_high"] is None else Decimal(row["signal_bar_high"]),
+            signal_bar_low=None if row["signal_bar_low"] is None else Decimal(row["signal_bar_low"]),
             reject_reason=row["reject_reason"],
         )

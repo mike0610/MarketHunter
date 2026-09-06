@@ -76,6 +76,10 @@ class AutonomousResearchRepository:
         with self._connect() as c:
             c.row_factory=sqlite3.Row
             return c.execute("SELECT * FROM research_loop_objects WHERE object_id=?",(object_id,)).fetchone()
+    def release_candidate(self,object_id:str):
+        with self._connect() as c:
+            c.row_factory=sqlite3.Row
+            return c.execute("SELECT * FROM research_release_candidates WHERE object_id=?",(object_id,)).fetchone()
     def counts(self)->dict:
         with self._connect() as c:
             return dict(c.execute("SELECT status,count(*) FROM research_loop_objects GROUP BY status").fetchall())

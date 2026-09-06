@@ -116,4 +116,7 @@ jobs:
             tests/test_outcome_intelligence_runtime.py \
             tests/test_outcome_trade_snapshot_workflow_contract.py \
             tests/test_autonomous_strategy_research_loop.py \
+            tests/test_promoted_paper_bridge.py \
+            tests/test_stage5_simulation_execution.py \
+            tests/test_stage10_candidate_risk_wiring.py \
             -v

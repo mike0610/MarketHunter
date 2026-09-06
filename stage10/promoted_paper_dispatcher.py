@@ -98,7 +98,9 @@ def dispatch_promoted_candidates(
             continue
         try: admission=load_paper_admission(research_repo,oid)
         except PaperAdmissionError as exc:
-            out.append(DispatchResult(oid,"",None,"BLOCKED-PAPER-ADMISSION",str(exc)));continue
+            detail=str(exc)
+            status="BLOCKED_STRATEGY_CONTRACT" if "no runtime-compatible paper_contract" in detail else "BLOCKED-PAPER-ADMISSION"
+            out.append(DispatchResult(oid,"",None,status,detail));continue
         contract=admission.contract
         if admission.research_track is not release_track:
             out.append(DispatchResult(oid,"",None,"BLOCKED-PAPER-ADMISSION","release/admission research_track mismatch"));continue

@@ -113,7 +113,7 @@ async def main():
   assert life[0].outcome=="TAKE_PROFIT"
   closed=engine.closed_trades(AccountKind.SPOT)
   assert len(closed)==1
-  return {"track":"SL","entry_source":live_fill.source,"paper_fill_price":str(live_fill.price),
+  return {"track":"SL","entry_source":live_fill.source,"paper_fill_price":str(live_fill.fill_price),
           "closed_trades":len(closed),"realized_pnl":str(closed[0].realized_pnl),
           "decision_id":decision_id,"broker":"ZERO","live_money":"ZERO"}
 print(json.dumps(asyncio.run(main()),sort_keys=True))

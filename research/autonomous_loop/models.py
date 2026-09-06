@@ -27,13 +27,13 @@ class ResearchObject:
     object_id:str
     market:str
     direction:str
-    research_track:ResearchTrack=ResearchTrack.GIL
     hypothesis_id:str|None=None
     data_handler:str|None=None
     hypothesis_handler:str|None=None
     validation_handler:str|None=None
     product_owner_decision_required:bool=False
     priority:int=100
+    research_track:ResearchTrack=ResearchTrack.GIL
 
     def __post_init__(self):
         if not isinstance(self.research_track,ResearchTrack):

@@ -2,7 +2,7 @@ from __future__ import annotations
 import json,sqlite3
 from datetime import datetime,timezone
 from pathlib import Path
-from .models import ResearchObject,Stage
+from .models import ResearchObject,ResearchTrack,Stage
 
 def _now()->str:return datetime.now(timezone.utc).isoformat()
 
@@ -15,6 +15,7 @@ class AutonomousResearchRepository:
             c.executescript("""
             CREATE TABLE IF NOT EXISTS research_loop_objects(
               object_id TEXT PRIMARY KEY, market TEXT NOT NULL, direction TEXT NOT NULL,
+              research_track TEXT NOT NULL DEFAULT 'GIL',
               hypothesis_id TEXT, data_handler TEXT, hypothesis_handler TEXT, validation_handler TEXT,
               product_owner_decision_required INTEGER NOT NULL DEFAULT 0,
               priority INTEGER NOT NULL, stage TEXT NOT NULL, status TEXT NOT NULL,
@@ -29,17 +30,24 @@ class AutonomousResearchRepository:
               object_id TEXT PRIMARY KEY, payload_json TEXT NOT NULL, created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS research_release_candidates(
-              object_id TEXT PRIMARY KEY, hypothesis_id TEXT NOT NULL, evidence_json TEXT NOT NULL, created_at TEXT NOT NULL
+              object_id TEXT PRIMARY KEY, research_track TEXT NOT NULL DEFAULT 'GIL',
+              hypothesis_id TEXT NOT NULL, evidence_json TEXT NOT NULL, created_at TEXT NOT NULL
             );
             """)
+            object_columns={row[1] for row in c.execute("PRAGMA table_info(research_loop_objects)")}
+            if "research_track" not in object_columns:
+                c.execute("ALTER TABLE research_loop_objects ADD COLUMN research_track TEXT NOT NULL DEFAULT 'GIL'")
+            release_columns={row[1] for row in c.execute("PRAGMA table_info(research_release_candidates)")}
+            if "research_track" not in release_columns:
+                c.execute("ALTER TABLE research_release_candidates ADD COLUMN research_track TEXT NOT NULL DEFAULT 'GIL'")
     def enqueue(self,obj:ResearchObject)->None:
         now=_now()
         with self._connect() as c:
             c.execute("""INSERT OR IGNORE INTO research_loop_objects
-              (object_id,market,direction,hypothesis_id,data_handler,hypothesis_handler,validation_handler,
+              (object_id,market,direction,research_track,hypothesis_id,data_handler,hypothesis_handler,validation_handler,
                product_owner_decision_required,priority,stage,status,created_at,updated_at)
-              VALUES(?,?,?,?,?,?,?,?,?,?,?, ?,?)""",
-              (obj.object_id,obj.market,obj.direction,obj.hypothesis_id,obj.data_handler,obj.hypothesis_handler,
+              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+              (obj.object_id,obj.market,obj.direction,obj.research_track.value,obj.hypothesis_id,obj.data_handler,obj.hypothesis_handler,
                obj.validation_handler,int(obj.product_owner_decision_required),obj.priority,Stage.DATA_FEASIBILITY.value,
                "PENDING",now,now))
     def next_object(self):
@@ -65,7 +73,10 @@ class AutonomousResearchRepository:
                 c.execute("INSERT OR REPLACE INTO research_negative_knowledge(object_id,payload_json,created_at) VALUES(?,?,?)",(object_id,json.dumps(negative,sort_keys=True),now))
             if verdict=="PROMOTION-ELIGIBLE":
                 if not hypothesis_id: raise ValueError("promotion eligible requires hypothesis_id")
-                c.execute("INSERT OR REPLACE INTO research_release_candidates(object_id,hypothesis_id,evidence_json,created_at) VALUES(?,?,?,?)",(object_id,hypothesis_id,payload,now))
+                track_row=c.execute("SELECT research_track FROM research_loop_objects WHERE object_id=?",(object_id,)).fetchone()
+                if track_row is None: raise ValueError("promotion object missing")
+                track=ResearchTrack(track_row[0]).value
+                c.execute("INSERT OR REPLACE INTO research_release_candidates(object_id,research_track,hypothesis_id,evidence_json,created_at) VALUES(?,?,?,?,?)",(object_id,track,hypothesis_id,payload,now))
     def technical_failure(self,object_id:str,status:str,evidence:dict)->None:
         # Fail closed but keep the object resumable. Technical failure is never a strategy verdict.
         now=_now(); payload=json.dumps(evidence,sort_keys=True)

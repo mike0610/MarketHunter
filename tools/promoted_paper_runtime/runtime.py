@@ -4,6 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from experiment1.engine import Experiment1Engine
+from research.autonomous_loop.models import ResearchTrack
 from research.autonomous_loop.repository import AutonomousResearchRepository
 from risk_mm.models import RiskPolicy
 from risk_mm.open_risk_ledger import OpenRiskLedger
@@ -14,6 +15,7 @@ from trading_scanner.store import TradingScannerStore
 
 def _p(name,default):return Path(os.getenv(name,default))
 def run_once():
+    track=ResearchTrack(os.getenv("PROMOTED_PAPER_RESEARCH_TRACK","GIL"))
     risk=RiskPolicy(
       os.getenv("PROMOTED_PAPER_RISK_POLICY_ID","MH-RISK"),
       os.getenv("PROMOTED_PAPER_RISK_POLICY_VERSION","1"),
@@ -33,6 +35,7 @@ def run_once():
       risk_store=RiskPlanStore(_p("PROMOTED_PAPER_RISK_DB_PATH",str(root/"promoted_paper_risk.db"))),
       open_risk_ledger=OpenRiskLedger(_p("PROMOTED_PAPER_OPEN_RISK_DB_PATH",str(root/"promoted_paper_open_risk.db"))),
       risk_policy=risk,
+      research_track=track,
     )
 def main(argv=None):
     argparse.ArgumentParser(prog="promoted-paper-runtime").parse_args(argv)

@@ -52,6 +52,8 @@ def evaluate_liquidity_gate(
     liquidity: LiquidityContext,
     session_state: SessionState,
     thresholds: LiquidityThresholds = DEFAULT_LIQUIDITY_THRESHOLDS,
+    *,
+    require_regular_session: bool = True,
 ) -> GateResult:
     """
     Pure, deterministic eligibility check. Every failing condition is
@@ -66,8 +68,8 @@ def evaluate_liquidity_gate(
 
     if contract.restricted:
         reasons.append("contract is flagged restricted by its source")
-    if session_state is not SessionState.REGULAR:
-        reasons.append(f"session_state={session_state.value} - regular session only in v1")
+    if require_regular_session and session_state is not SessionState.REGULAR:
+        reasons.append(f"session_state={session_state.value} - regular session required by this market policy")
     if liquidity.last_price < thresholds.min_last_price:
         reasons.append(
             f"last_price={liquidity.last_price} < minimum {thresholds.min_last_price} (penny-stock/microcap floor)"
@@ -80,4 +82,5 @@ def evaluate_liquidity_gate(
 
     if reasons:
         return GateResult(eligible=False, reasons=tuple(reasons))
-    return GateResult(eligible=True, reasons=("session=REGULAR", "price/liquidity floors satisfied", "not restricted"))
+    session_reason = "session=REGULAR" if require_regular_session else "session gate not applicable for this 24/7 market"
+    return GateResult(eligible=True, reasons=(session_reason, "price/liquidity floors satisfied", "not restricted"))

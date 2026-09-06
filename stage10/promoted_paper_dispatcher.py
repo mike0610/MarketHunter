@@ -8,6 +8,7 @@ from pathlib import Path
 from experiment1.engine import Experiment1Engine
 from experiment1.models import AccountKind,DecisionAction,ExecutionTrigger,TriggerType
 from experiment1.trading_decision import TradingDecision,decision_to_json
+from research.autonomous_loop.models import ResearchTrack
 from research.autonomous_loop.repository import AutonomousResearchRepository
 from risk_mm.models import RiskPolicy,TradingAccount
 from risk_mm.open_risk_ledger import OpenRiskLedger
@@ -72,19 +73,35 @@ def dispatch_promoted_candidates(
     risk_store:RiskPlanStore,
     open_risk_ledger:OpenRiskLedger,
     risk_policy:RiskPolicy,
+    research_track:ResearchTrack|None=None,
 )->tuple[DispatchResult,...]:
     out=[]
     candidates=scanner_store.list_candidates(queue_state=QueueState.CANDIDATE)
     for release in research_repo.release_candidates():
         oid=release["object_id"]
+        release_track=ResearchTrack(release["research_track"])
+        if research_track is not None and release_track is not research_track:
+            continue
         try: admission=load_paper_admission(research_repo,oid)
         except PaperAdmissionError as exc:
             out.append(DispatchResult(oid,"",None,"BLOCKED-PAPER-ADMISSION",str(exc)));continue
         contract=admission.contract
+        if admission.research_track is not release_track:
+            out.append(DispatchResult(oid,"",None,"BLOCKED-PAPER-ADMISSION","release/admission research_track mismatch"));continue
         evidence=__import__("json").loads(release["evidence_json"])
         pc=evidence.get("paper_contract") or {}
         r_multiple=None if pc.get("take_profit_r") is None else Decimal(str(pc["take_profit_r"]))
         for candidate in candidates:
+            is_crypto = candidate.sec_type in ("CRYPTO","CRYPTO_SPOT","CRYPTO_FUTURES")
+            if release_track is ResearchTrack.SL and (not is_crypto or not candidate.symbol.upper().endswith("USDT")):
+                continue
+            if release_track is ResearchTrack.GIL and is_crypto:
+                continue
+            if release_track is ResearchTrack.SL:
+                if contract.account is TradingAccount.SPOT and candidate.sec_type not in ("CRYPTO","CRYPTO_SPOT"):
+                    continue
+                if contract.account is TradingAccount.FUTURES and candidate.sec_type not in ("CRYPTO","CRYPTO_FUTURES"):
+                    continue
             if candidate.setup_family is not contract.setup_family or candidate.discovered_at<=admission.promoted_at:continue
             if dispatch_store.exists(oid,candidate.dedupe_key):continue
             try:
@@ -106,7 +123,7 @@ def dispatch_promoted_candidates(
             decision=TradingDecision(
                 decision_id=decision_id,decided_at=candidate.discovered_at,account=_account(contract.account),
                 action=_action(contract.account,contract.direction.value),symbol=candidate.symbol,
-                thesis=f"PROMOTION-ELIGIBLE {contract.strategy_id}@{contract.version} object={oid} hypothesis={admission.hypothesis_id}",
+                thesis=f"{release_track.value} PROMOTION-ELIGIBLE {contract.strategy_id}@{contract.version} object={oid} hypothesis={admission.hypothesis_id}",
                 quantity=plan.quantity,leverage=contract.requested_leverage,
                 stop_loss=plan.stop_price,
                 take_profit=_take_profit(trigger,plan.stop_price,contract.direction.value,r_multiple),

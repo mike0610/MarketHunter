@@ -1,0 +1,15 @@
+[Unit]
+Description=MarketHunter SL crypto promoted-strategy paper dispatcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/MarketHunter
+Environment=PROMOTED_PAPER_RESEARCH_TRACK=SL
+EnvironmentFile=-/home/ubuntu/MarketHunter/deploy/systemd/promoted-paper-runtime.env
+ExecStart=/home/ubuntu/MarketHunter/.venv/bin/python -m tools.promoted_paper_runtime.runtime
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full

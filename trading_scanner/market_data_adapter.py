@@ -32,11 +32,16 @@ class MarketDataScannerAdapter(AsyncIbkrUniverseSource):
         for instrument in instruments:
             scanner_id = self._synthetic_scanner_id(instrument)
             self._instruments[scanner_id] = instrument
+            sec_type = {
+                "CRYPTO_SPOT": "CRYPTO_SPOT",
+                "CRYPTO_FUTURES": "CRYPTO_FUTURES",
+                "US_STOCK_OR_ETF": "STK",
+            }.get(instrument.asset_class, instrument.asset_class)
             contracts.append(
                 IbkrContract(
                     conid=scanner_id,
                     symbol=instrument.symbol,
-                    sec_type="STK",
+                    sec_type=sec_type,
                     exchange=instrument.exchange or "MARKET_DATA",
                     currency=instrument.currency,
                     primary_exchange=instrument.exchange,

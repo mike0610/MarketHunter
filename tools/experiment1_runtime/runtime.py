@@ -25,6 +25,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from experiment1.alpaca_sip_evidence import build_alpaca_sip_evidence_source
+from experiment1.twelve_data_evidence import build_twelve_data_evidence_source
 from experiment1.engine import Experiment1Engine, Experiment1Error, STARTING_CASH
 from experiment1.gil_decision import GilIngestionResult, drain_gil_decision_inbox
 from experiment1.lifecycle import LifecycleResult, run_protective_exit_cycle
@@ -130,6 +131,21 @@ def build_quote_source(*, freshness_max_age: timedelta = DEFAULT_FRESHNESS_MAX_A
         logger.info("Alpaca SIP paper execution evidence: enabled for scanner-classified STK/ETF")
     else:
         logger.info("Alpaca SIP paper execution evidence: unavailable (credentials not configured)")
+        twelve = build_twelve_data_evidence_source()
+        if twelve is not None:
+            execution_age = timedelta(seconds=int(os.getenv("EXPERIMENT1_TWELVE_DATA_EXECUTION_MAX_AGE_SECONDS", "90")))
+            valuation_age = timedelta(seconds=int(os.getenv("EXPERIMENT1_TWELVE_DATA_VALUATION_MAX_AGE_SECONDS", "300")))
+            twelve_quotes = EvidenceGuardedQuoteSource(
+                twelve, EvidenceGrade.EXECUTION, expected_currency="USD", expected_exchange=None,
+                execution_max_age=execution_age, valuation_max_age=valuation_age,
+                fee_bps=Decimal(os.getenv("EXPERIMENT1_TWELVE_DATA_PAPER_FEE_BPS", "0")),
+                slippage_bps=Decimal(os.getenv("EXPERIMENT1_TWELVE_DATA_PAPER_SLIPPAGE_BPS", "0")),
+            )
+            providers[AssetClass.STOCK] = twelve_quotes
+            providers[AssetClass.ETF] = twelve_quotes
+            logger.info("Twelve Data paper execution evidence: enabled for scanner-classified STK/ETF")
+        else:
+            logger.info("Twelve Data paper execution evidence: unavailable (credential not configured)")
 
     return MultiAssetQuoteSource(providers=providers, classify=_classify)
 

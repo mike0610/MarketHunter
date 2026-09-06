@@ -98,6 +98,7 @@ jobs:
             tests/test_binance_market_data_provider.py \
             tests/test_research_track_routing.py \
             tests/test_paper_strategy_auto_review.py \
+            tests/test_paper_strategy_api.py \
             tests/test_experiment1_cost_provenance.py \
             tests/test_experiment1_runtime.py \
             tests/test_experiment1_mtm.py \

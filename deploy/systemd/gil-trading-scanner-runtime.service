@@ -24,6 +24,7 @@ Type=oneshot
 User=ubuntu
 WorkingDirectory=/home/ubuntu/MarketHunter
 EnvironmentFile=-/home/ubuntu/MarketHunter/deploy/systemd/gil-trading-scanner-runtime.env
+EnvironmentFile=-/home/ubuntu/MarketHunter/deploy/systemd/twelve-data.env
 ExecStart=/home/ubuntu/MarketHunter/.venv/bin/python -m tools.gil_trading_scanner_runtime.runtime
 
 # Hardening - safe defaults for a short-lived, read-only-market-data,

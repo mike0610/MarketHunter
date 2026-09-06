@@ -1,7 +1,7 @@
 {
-  "captured_at_utc": "2026-09-06T05:17:27.871238+00:00",
+  "captured_at_utc": "2026-09-06T05:58:36.094257+00:00",
   "source": "/research/trades",
-  "source_revision": "5071bc73de4a55998facfbc539c8ce504c5b0e83",
+  "source_revision": "a712105f8fa62d074bfaae30fba5c4e1b24eb8f1",
   "total": 253,
   "trades": [
     {
@@ -197,7 +197,7 @@
       "market": "spot",
       "max_active_candles": 30,
       "max_drawdown_percent": -0.5873715124816455,
-      "max_profit_percent": 0.45182424037051305,
+      "max_profit_percent": 0.5873715124816455,
       "mtf": null,
       "notional": 100.0,
       "opened_at": "2026-09-05T18:26:04.717392Z",
@@ -283,7 +283,7 @@
       "market": "futures",
       "max_active_candles": 30,
       "max_drawdown_percent": -1.1122404869557068,
-      "max_profit_percent": 1.4533898800135523,
+      "max_profit_percent": 1.981470447349664,
       "mtf": null,
       "notional": 100.0,
       "opened_at": "2026-09-05T16:25:59.465609Z",
@@ -458,7 +458,7 @@
       "market": "spot",
       "max_active_candles": 30,
       "max_drawdown_percent": -0.07432512783921988,
-      "max_profit_percent": 1.2308241170174772,
+      "max_profit_percent": 1.4815475482617761,
       "mtf": null,
       "notional": 100.0,
       "opened_at": "2026-09-05T01:25:22.645719Z",

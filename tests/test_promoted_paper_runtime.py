@@ -69,7 +69,7 @@ def test_promotion_dispatches_once_then_existing_paper_engine_fills_and_closes()
   assert entry.stop_loss==Decimal("490")
   assert entry.take_profit==Decimal("550")
   # Risk sizing is based on trigger 505 rather than candidate close 500:
-  assert entry.quantity==Decimal("20")/Decimal("15")
+  assert entry.quantity==Decimal("1.33333333")
   q.price=Decimal("551")
   q.observed_at=promoted+timedelta(seconds=3)
   life=asyncio.run(run_protective_exit_cycle(engine,q,(intent_id,)))

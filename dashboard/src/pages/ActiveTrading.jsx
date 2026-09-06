@@ -15,7 +15,7 @@ import {
 
 import PageHeader from "../components/layout/PageHeader";
 import MetricCard from "../components/layout/MetricCard";
-import { getExperiment1State } from "../api/experiment1Api";
+import { getExperiment1State, getPaperStrategyReviews } from "../api/experiment1Api";
 
 const ACCOUNT_TYPES = [
     { key: "spot", label: "Spot" },
@@ -68,6 +68,70 @@ function formatUsd(value) {
         currency: "USD",
         maximumFractionDigits: 0,
     }).format(value);
+}
+
+function reviewChipColor(status) {
+    if (status === "KEEP") return "success";
+    if (status === "PAUSE") return "error";
+    if (status === "REVIEW_REQUIRED") return "warning";
+    return "default";
+}
+
+function fmt(value, digits = 2) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n.toFixed(digits) : "—";
+}
+
+function StrategyReviews({ reviews }) {
+    return (
+        <Box sx={{ mb: 4 }}>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ justifyContent: "space-between", alignItems: { xs: "flex-start", sm: "center" }, mb: 2 }}>
+                <Box>
+                    <Typography variant="h5" sx={{ fontWeight: 700 }}>Paper strategy lifecycle</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                        GIL = traditional Active Trading · SL = Crypto. PAUSE блокує лише нові paper entries.
+                    </Typography>
+                </Box>
+                <Chip label={`${reviews.length} strategy versions`} size="small" variant="outlined" />
+            </Stack>
+            {!reviews.length ? (
+                <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3 }}>
+                    <Typography variant="body2" color="text.secondary">
+                        Ще немає strategy/version з достатньою paper attribution. Після promoted paper trades вони зʼявляться тут автоматично.
+                    </Typography>
+                </Paper>
+            ) : (
+                <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "repeat(2, minmax(0, 1fr))" }, gap: 2 }}>
+                    {reviews.map((item) => (
+                        <Paper key={`${item.object_id}:${item.strategy_id}:${item.strategy_version}`} variant="outlined" sx={{ p: 2.5, borderRadius: 3 }}>
+                            <Stack spacing={1.5}>
+                                <Stack direction="row" spacing={1} sx={{ justifyContent: "space-between", alignItems: "center" }}>
+                                    <Box sx={{ minWidth: 0 }}>
+                                        <Typography variant="h6" sx={{ fontWeight: 700 }} noWrap>{item.strategy_id}</Typography>
+                                        <Typography variant="caption" color="text.secondary">
+                                            {item.research_track || "UNKNOWN"} · v{item.strategy_version} · {item.object_id}
+                                        </Typography>
+                                    </Box>
+                                    <Chip label={item.status} color={reviewChipColor(item.status)} size="small" variant={item.status === "PAPER_ACTIVE" ? "outlined" : "filled"} />
+                                </Stack>
+                                <Box sx={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 1 }}>
+                                    <MetricCard label="Trades" value={item.closed_trades} caption={`R: ${item.r_covered_trades}/${item.closed_trades}`} />
+                                    <MetricCard label="Avg R" value={fmt(item.average_net_r)} caption={`W/L ${item.wins}/${item.losses}`} />
+                                    <MetricCard label="PF" value={fmt(item.profit_factor_r)} caption="R-based" />
+                                    <MetricCard label="Max DD" value={item.max_cumulative_r_drawdown == null ? "—" : `${fmt(item.max_cumulative_r_drawdown)}R`} caption="Cumulative R" />
+                                </Box>
+                                <Stack direction="row" spacing={2} sx={{ flexWrap: "wrap" }}>
+                                    <Typography variant="body2">Net P&L: <strong>{usd(item.net_pnl)}</strong></Typography>
+                                    <Typography variant="body2">Fees: <strong>{usd(item.fees_paid)}</strong></Typography>
+                                </Stack>
+                                <Typography variant="body2" color="text.secondary">{item.reason}</Typography>
+                            </Stack>
+                        </Paper>
+                    ))}
+                </Box>
+            )}
+        </Box>
+    );
 }
 
 function EmptyTradeState({ message }) {
@@ -132,11 +196,18 @@ export default function ActiveTrading() {
     const [assetClass, setAssetClass] = useState("all");
     const [tradeView, setTradeView] = useState("active");
     const [state, setState] = useState(null);
+    const [reviews, setReviews] = useState([]);
     const [error, setError] = useState("");
 
     useEffect(() => {
         let active = true;
-        getExperiment1State().then((data) => { if (active) setState(data); }).catch((err) => { if (active) setError(err?.message || "Не вдалося завантажити runtime state"); });
+        Promise.all([getExperiment1State(), getPaperStrategyReviews()])
+            .then(([runtime, strategyReviews]) => {
+                if (!active) return;
+                setState(runtime);
+                setReviews(strategyReviews?.reviews || []);
+            })
+            .catch((err) => { if (active) setError(err?.message || "Не вдалося завантажити runtime state"); });
         return () => { active = false; };
     }, []);
 
@@ -172,7 +243,7 @@ export default function ActiveTrading() {
         <Box sx={{ width: "100%", minWidth: 0 }}>
             <PageHeader
                 title="Active Trading"
-                subtitle="Experiment 1: два незалежні paper-trading рахунки Spot і Futures, окремо від Investments та crypto statistics."
+                subtitle="Autonomous paper runtime: GIL traditional Active Trading та SL Crypto з окремими strategy lifecycle і Risk/MM."
             />
 
             {error && <Alert severity="error" sx={{ mb: 3, borderRadius: 3 }}>{error}</Alert>}
@@ -234,6 +305,8 @@ export default function ActiveTrading() {
                     </Stack>
                 </Paper>
             </Box>
+
+            <StrategyReviews reviews={reviews} />
 
             <Typography variant="h5" sx={{ mb: 2, fontWeight: 700 }}>
                 Ринки

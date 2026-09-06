@@ -1,0 +1,23 @@
+[
+  {
+    "object_id":"AUTO-MCL-WTI-DATA-001",
+    "market":"MCL/WTI",
+    "direction":"LONG+SHORT",
+    "data_handler":"research.autonomous_loop.builtin_handlers:futures_roll_data_feasibility",
+    "priority":10
+  },
+  {
+    "object_id":"AUTO-MES-DATA-001",
+    "market":"MES",
+    "direction":"LONG+SHORT",
+    "data_handler":"research.autonomous_loop.builtin_handlers:futures_roll_data_feasibility",
+    "priority":20
+  },
+  {
+    "object_id":"AUTO-MNQ-DATA-001",
+    "market":"MNQ",
+    "direction":"LONG+SHORT",
+    "data_handler":"research.autonomous_loop.builtin_handlers:futures_roll_data_feasibility",
+    "priority":30
+  }
+]

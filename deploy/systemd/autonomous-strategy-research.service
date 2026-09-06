@@ -1,0 +1,14 @@
+[Unit]
+Description=MarketHunter autonomous strategy research cycle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/MarketHunter
+EnvironmentFile=-/home/ubuntu/MarketHunter/deploy/systemd/autonomous-strategy-research.env
+ExecStart=/home/ubuntu/MarketHunter/.venv/bin/python -m research.autonomous_loop.runtime --max-objects 3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full

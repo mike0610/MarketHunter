@@ -2,6 +2,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+class ResearchTrack(str, Enum):
+    GIL="GIL"
+    SL="SL"
+
 class Stage(str, Enum):
     DATA_FEASIBILITY="DATA_FEASIBILITY"
     HYPOTHESIS_FREEZE="HYPOTHESIS_FREEZE"
@@ -23,6 +27,7 @@ class ResearchObject:
     object_id:str
     market:str
     direction:str
+    research_track:ResearchTrack=ResearchTrack.GIL
     hypothesis_id:str|None=None
     data_handler:str|None=None
     hypothesis_handler:str|None=None
@@ -31,6 +36,8 @@ class ResearchObject:
     priority:int=100
 
     def __post_init__(self):
+        if not isinstance(self.research_track,ResearchTrack):
+            raise TypeError("research_track must be a ResearchTrack")
         for name in ("object_id","market","direction"):
             v=getattr(self,name)
             if not isinstance(v,str) or not v.strip(): raise ValueError(f"{name} must be nonblank")

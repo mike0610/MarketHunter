@@ -1,0 +1,9 @@
+{
+  "object_id": "SL-DATA-BTC-AGGFLOW-4H-2026-04",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "terminal_states": [
+    "EVIDENCE_READY",
+    "PROVIDER-BLOCKED"
+  ]
+}

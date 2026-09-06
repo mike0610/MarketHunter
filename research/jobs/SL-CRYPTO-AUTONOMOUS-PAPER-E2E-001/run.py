@@ -126,7 +126,11 @@ print(json.dumps(asyncio.run(main()),sort_keys=True))
   scanner_ok=ev["live_scanner"]["rc"]==0 and spot>0 and fut>0
   timer_ok=all("ActiveState=active" in ev[k]["stdout"] and "UnitFileState=enabled" in ev[k]["stdout"] for k in ("scanner_timer","dispatcher_timer"))
   paper_ok=ev["paper_e2e"]["rc"]==0 and '"track": "SL"' in ev["paper_e2e"]["stdout"] and '"entry_source": "binance-public-rest"' in ev["paper_e2e"]["stdout"]
-  master_ok=ev["sha"]=="a712105f8fa62d074bfaae30fba5c4e1b24eb8f1"
+  required_sl_commit="a712105f8fa62d074bfaae30fba5c4e1b24eb8f1"
+  ancestor=cmd(["git","merge-base","--is-ancestor",required_sl_commit,"HEAD"],cwd=REPO)
+  ev["required_sl_commit"]=required_sl_commit
+  ev["required_sl_commit_is_ancestor"]=ancestor["rc"]==0
+  master_ok=ancestor["rc"]==0
   if all((scanner_ok,timer_ok,paper_ok,master_ok)):
    emit(out,"PASS",verdict="SL_CRYPTO_AUTONOMOUS_PAPER_LOOP_PASS",checks={"scanner":scanner_ok,"timers":timer_ok,"paper_e2e":paper_ok,"master":master_ok},evidence=ev,broker="ZERO",ibkr="ZERO",live_money="ZERO")
   else:

@@ -1,0 +1,35 @@
+name: Research PULLBACK Entry Validation
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pullback-long:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run bounded PULLBACK LONG entry validation
+        run: |
+          set -euo pipefail
+          mkdir -p research-artifacts
+          python -m research.run_pullback_validation | tee research-artifacts/pullback-long.txt
+      - name: Record immutable context
+        run: |
+          echo "commit=$(git rev-parse HEAD)" > research-artifacts/context.txt
+          echo "universe=SPY,QQQ,AAPL,MSFT,NVDA" >> research-artifacts/context.txt
+          echo "history_bars=1300" >> research-artifacts/context.txt
+          echo "split=70/30" >> research-artifacts/context.txt
+          echo "entry=signal_bar_high_upward_cross_after_signal" >> research-artifacts/context.txt
+          echo "invalidation=signal_time_SMA50_close_below" >> research-artifacts/context.txt
+          echo "expiry=none_structural_only_censor_at_evidence_end" >> research-artifacts/context.txt
+          echo "broker=forbidden" >> research-artifacts/context.txt
+          echo "live_money=forbidden" >> research-artifacts/context.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pullback-long-entry-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: research-artifacts/*.txt
+          if-no-files-found: error

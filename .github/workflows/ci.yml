@@ -98,6 +98,7 @@ jobs:
             tests/test_experiment1_twelve_data_evidence.py \
             tests/test_binance_market_data_provider.py \
             tests/test_twelve_data_market_data_provider.py \
+            tests/test_gil_breakout_contract_proof.py \
             tests/test_research_track_routing.py \
             tests/test_paper_strategy_auto_review.py \
             tests/test_paper_strategy_api.py \

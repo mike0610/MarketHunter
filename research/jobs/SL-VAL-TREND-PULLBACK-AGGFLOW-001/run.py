@@ -1,4 +1,4 @@
-import argparse,csv,hashlib,io,json,math,urllib.request,zipfile
+import argparse,csv,hashlib,io,json,math,urllib.request,zipfile,tempfile,os
 from datetime import datetime,timezone
 from pathlib import Path
 
@@ -61,17 +61,30 @@ def main(out,job):
  flow={}
  def flowmon(y,m):
   n=f'BTCUSDT-aggTrades-{y}-{m:02d}.zip';u=f'https://data.binance.vision/data/futures/um/monthly/aggTrades/BTCUSDT/{n}'
-  z=get(u);e=get(u+'.CHECKSUM').decode().split()[0].lower();a=hashlib.sha256(z).hexdigest()
-  if e!=a:raise ValueError('checksum '+n)
-  with zipfile.ZipFile(io.BytesIO(z)) as q:
-   rd=csv.DictReader(io.TextIOWrapper(q.open([v for v in q.namelist() if not v.endswith('/')][0])))
-   for x in rd:
-    try:
-     ts=int(x.get('transact_time') or x.get('T') or x.get('timestamp'));qty=float(x.get('quantity') or x.get('q'));maker=str(x.get('is_buyer_maker') or x.get('m')).lower()=='true'
-    except:continue
-    sec=ts/1e6 if ts>10**14 else ts/1e3;bucket=int(sec//14400*14400);d=flow.setdefault(bucket,[0.,0.])
-    if maker:d[1]+=qty
-    else:d[0]+=qty
+  e=get(u+'.CHECKSUM').decode().split()[0].lower()
+  req=urllib.request.Request(u,headers={'User-Agent':'MarketHunter-Research/1.0'})
+  h=hashlib.sha256()
+  with tempfile.NamedTemporaryFile(suffix='.zip',delete=False) as t:
+   tmp=t.name
+   with urllib.request.urlopen(req,timeout=30) as resp:
+    while True:
+     chunk=resp.read(1024*1024)
+     if not chunk:break
+     h.update(chunk);t.write(chunk)
+  a=h.hexdigest()
+  if e!=a:
+   os.unlink(tmp);raise ValueError('checksum '+n)
+  try:
+   with zipfile.ZipFile(tmp) as q:
+    rd=csv.DictReader(io.TextIOWrapper(q.open([v for v in q.namelist() if not v.endswith('/')][0])))
+    for x in rd:
+     try:
+      ts=int(x.get('transact_time') or x.get('T') or x.get('timestamp'));qty=float(x.get('quantity') or x.get('q'));maker=str(x.get('is_buyer_maker') or x.get('m')).lower()=='true'
+     except:continue
+     sec=ts/1e6 if ts>10**14 else ts/1e3;bucket=int(sec//14400*14400);d=flow.setdefault(bucket,[0.,0.])
+     if maker:d[1]+=qty
+     else:d[0]+=qty
+  finally:os.unlink(tmp)
   return {'url':u,'sha256':a}
  try:
   for y in range(2024,2027):

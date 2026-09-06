@@ -26,9 +26,10 @@ def find_pullback_signals(series:MarketSeries)->tuple[tuple[int,Decimal],...]:
    found.append((i,sma50))
  return tuple(found)
 
-def evaluate_entry(series:MarketSeries,signal_index:int,invalidation_price:Decimal)->PullbackObservation:
+def evaluate_entry(series:MarketSeries,signal_index:int,invalidation_price:Decimal,expiry_bars:int|None=None)->PullbackObservation:
  bars=series.bars; signal=bars[signal_index]; trigger=signal.high
- for i in range(signal_index+1,len(bars)):
+ end=len(bars) if expiry_bars is None else min(len(bars),signal_index+expiry_bars+1)
+ for i in range(signal_index+1,end):
   bar=bars[i]; crossed=bar.high>=trigger; invalid_close=bar.close<invalidation_price
   if crossed and invalid_close:
    return PullbackObservation(series.instrument.symbol,signal_index,signal.timestamp,trigger,invalidation_price,"AMBIGUOUS_NO_FILL",None,None,None)
@@ -37,8 +38,9 @@ def evaluate_entry(series:MarketSeries,signal_index:int,invalidation_price:Decim
   if crossed:
    raw_fill=max(trigger,bar.open)
    return PullbackObservation(series.instrument.symbol,signal_index,signal.timestamp,trigger,invalidation_price,"FILLED",raw_fill,i,i-signal_index)
- return PullbackObservation(series.instrument.symbol,signal_index,signal.timestamp,trigger,invalidation_price,"CENSORED",None,None,None)
+ status="EXPIRED" if expiry_bars is not None and signal_index+expiry_bars<len(bars) else "CENSORED"
+ return PullbackObservation(series.instrument.symbol,signal_index,signal.timestamp,trigger,invalidation_price,status,None,None,None)
 
-def validate_pullback_entries(series:MarketSeries)->PullbackValidationSummary:
- obs=tuple(evaluate_entry(series,i,level) for i,level in find_pullback_signals(series))
+def validate_pullback_entries(series:MarketSeries,expiry_bars:int|None=None)->PullbackValidationSummary:
+ obs=tuple(evaluate_entry(series,i,level,expiry_bars) for i,level in find_pullback_signals(series))
  return PullbackValidationSummary(len(obs),sum(o.status=="FILLED" for o in obs),sum(o.status=="INVALIDATED_BEFORE_FILL" for o in obs),sum(o.status=="AMBIGUOUS_NO_FILL" for o in obs),sum(o.status=="CENSORED" for o in obs),sum(o.status=="FILLED" and o.fill_price is not None and o.fill_price>o.trigger_price for o in obs),obs)

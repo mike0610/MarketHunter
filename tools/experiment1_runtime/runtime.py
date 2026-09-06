@@ -17,14 +17,18 @@ import argparse
 import asyncio
 import logging
 import os
+import sqlite3
 import sys
 from dataclasses import dataclass
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 
+from experiment1.alpaca_sip_evidence import build_alpaca_sip_evidence_source
 from experiment1.engine import Experiment1Engine, Experiment1Error, STARTING_CASH
 from experiment1.gil_decision import GilIngestionResult, drain_gil_decision_inbox
 from experiment1.lifecycle import LifecycleResult, run_protective_exit_cycle
+from experiment1.market_data_evidence import EvidenceGrade, EvidenceGuardedQuoteSource
 from experiment1.market_data_providers import (
     AssetClass,
     FreshnessGuardedQuoteSource,
@@ -52,6 +56,8 @@ from experiment1.trading_slack_transport import (
 ENV_DB_PATH = "EXPERIMENT1_DB_PATH"
 DEFAULT_DB_PATH = Path("data/experiment1.db")
 DEFAULT_FRESHNESS_MAX_AGE = timedelta(minutes=5)
+DEFAULT_SCANNER_DB_PATH = Path("data/trading_scanner.db")
+ENV_SCANNER_DB_PATH = "TRADING_SCANNER_DB_PATH"
 
 logger = logging.getLogger("experiment1_runtime.runtime")
 
@@ -64,15 +70,68 @@ def _resolve_db_path() -> Path:
     return Path(raw) if raw else DEFAULT_DB_PATH
 
 
+def _scanner_asset_class(symbol: str) -> AssetClass | None:
+    db_path = Path(os.getenv(ENV_SCANNER_DB_PATH, str(DEFAULT_SCANNER_DB_PATH)))
+    if not db_path.exists():
+        return None
+    try:
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT sec_type FROM trading_scanner_candidates "
+                "WHERE symbol=? ORDER BY discovered_at DESC, dedupe_key DESC LIMIT 1",
+                (symbol.upper(),),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None:
+        return None
+    sec_type = str(row[0]).upper()
+    if sec_type == "STK":
+        return AssetClass.STOCK
+    if sec_type == "ETF":
+        return AssetClass.ETF
+    return None
+
+
 def _classify(intent: OrderIntent) -> AssetClass | None:
-    return AssetClass.CRYPTO if intent.symbol.endswith("USDT") else None
+    if intent.symbol.endswith("USDT"):
+        return AssetClass.CRYPTO
+    return _scanner_asset_class(intent.symbol)
 
 
 def build_quote_source(*, freshness_max_age: timedelta = DEFAULT_FRESHNESS_MAX_AGE) -> AsyncQuoteSource:
     crypto_source = FreshnessGuardedQuoteSource(
         BinanceExperiment1QuoteSource(), max_age=freshness_max_age
     )
-    return MultiAssetQuoteSource(providers={AssetClass.CRYPTO: crypto_source}, classify=_classify)
+    providers = {AssetClass.CRYPTO: crypto_source}
+
+    alpaca = build_alpaca_sip_evidence_source()
+    if alpaca is not None:
+        execution_age = timedelta(
+            seconds=int(os.getenv("EXPERIMENT1_ALPACA_EXECUTION_MAX_AGE_SECONDS", "30"))
+        )
+        valuation_age = timedelta(
+            seconds=int(os.getenv("EXPERIMENT1_ALPACA_VALUATION_MAX_AGE_SECONDS", "300"))
+        )
+        fee_bps = Decimal(os.getenv("EXPERIMENT1_ALPACA_PAPER_FEE_BPS", "0"))
+        slippage_bps = Decimal(os.getenv("EXPERIMENT1_ALPACA_PAPER_SLIPPAGE_BPS", "0"))
+        alpaca_quotes = EvidenceGuardedQuoteSource(
+            alpaca,
+            EvidenceGrade.EXECUTION,
+            expected_currency="USD",
+            expected_exchange=None,
+            execution_max_age=execution_age,
+            valuation_max_age=valuation_age,
+            fee_bps=fee_bps,
+            slippage_bps=slippage_bps,
+        )
+        providers[AssetClass.STOCK] = alpaca_quotes
+        providers[AssetClass.ETF] = alpaca_quotes
+        logger.info("Alpaca SIP paper execution evidence: enabled for scanner-classified STK/ETF")
+    else:
+        logger.info("Alpaca SIP paper execution evidence: unavailable (credentials not configured)")
+
+    return MultiAssetQuoteSource(providers=providers, classify=_classify)
 
 
 def _protective_exit_candidates(engine: Experiment1Engine) -> tuple[str, ...]:

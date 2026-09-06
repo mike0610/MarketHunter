@@ -22,10 +22,10 @@ from trading_scanner.store import TradingScannerStore
 POLICY=RiskPolicy("MH-RISK","1",Decimal("1"),Decimal("3"),Decimal("2"),Decimal("3"),4*24*3600)
 
 class QuoteSource:
- def __init__(self,price):self.price=Decimal(price);self.n=0
+ def __init__(self,price,observed_at):self.price=Decimal(price);self.observed_at=observed_at;self.n=0
  async def quote_for(self,intent):
   self.n+=1
-  return MarketQuote(intent.symbol,self.price,datetime.now(timezone.utc),"TEST","quote-"+str(self.n),Decimal("4"),Decimal("6"))
+  return MarketQuote(intent.symbol,self.price,self.observed_at,"TEST","quote-"+str(self.n),Decimal("4"),Decimal("6"))
 
 def promote(repo):
  repo.enqueue(ResearchObject("P","SPY","LONG","H-P"))
@@ -59,7 +59,7 @@ def test_promotion_dispatches_once_then_existing_paper_engine_fills_and_closes()
   decision_id=first[0].decision_id
   inbox=engine.trading_decision_inbox_status(decision_id)
   assert inbox is not None
-  q=QuoteSource("506")
+  q=QuoteSource("506",promoted+timedelta(seconds=2))
   ing=asyncio.run(drain_trading_decision_inbox(engine,q))
   assert ing[0].outcome=="PENDING"
   fills=asyncio.run(run_market_cycle(engine,q))
@@ -71,6 +71,7 @@ def test_promotion_dispatches_once_then_existing_paper_engine_fills_and_closes()
   # Risk sizing is based on trigger 505 rather than candidate close 500:
   assert entry.quantity==Decimal("20")/Decimal("15")
   q.price=Decimal("551")
+  q.observed_at=promoted+timedelta(seconds=3)
   life=asyncio.run(run_protective_exit_cycle(engine,q,(intent_id,)))
   assert life[0].outcome=="TAKE_PROFIT"
   closed=engine.closed_trades(AccountKind.SPOT)

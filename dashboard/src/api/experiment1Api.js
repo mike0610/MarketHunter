@@ -9,4 +9,9 @@ export async function getExperiment1State() {
     return response.data;
 }
 
+export async function getPaperStrategyReviews() {
+    const response = await api.get("/paper-strategies/reviews");
+    return response.data;
+}
+
 export default api;

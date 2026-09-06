@@ -128,4 +128,6 @@ jobs:
             tests/test_promoted_paper_runtime.py \
             tests/test_stage5_simulation_execution.py \
             tests/test_stage10_candidate_risk_wiring.py \
+            tests/test_investments_research_agent_contract.py \
+            tests/test_investments_research_worker.py \
             -v

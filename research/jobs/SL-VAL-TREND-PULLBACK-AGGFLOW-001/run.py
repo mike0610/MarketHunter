@@ -87,10 +87,12 @@ def main(out,job):
   finally:os.unlink(tmp)
   return {'url':u,'sha256':a}
  try:
-  for y in range(2024,2027):
+  # Outcome-blind complexity reduction: only months that can contain OOS signal context.
+  # Frozen market verdict is OOS-only (split 2025-01-01); 3 prior 4h buckets need no 2024 archive.
+  for y in range(2025,2027):
    for m in range(1,13):
     d=datetime(y,m,1,tzinfo=timezone.utc)
-    if d>=END or d<datetime(2024,1,1,tzinfo=timezone.utc):continue
+    if d>=END or d<datetime(2025,1,1,tzinfo=timezone.utc):continue
     files.append(flowmon(y,m))
  except Exception as e:emit(out,'PROVIDER-BLOCKED',reason='aggflow '+repr(e),parameter_tuning=False);return
  events=[];last=-10**9

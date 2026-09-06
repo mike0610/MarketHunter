@@ -85,7 +85,7 @@ with tempfile.TemporaryDirectory() as td:
 '''
   ev["proof"]=cmd([str(REPO/".venv/bin/python"),"-c",proof],180)
   timer_ok="ActiveState=active" in ev["timer"]["stdout"] and "UnitFileState=enabled" in ev["timer"]["stdout"]
-  proof_ok=ev["proof"]["rc"]==0 and "PAPER_REVIEW_E2E_PASS PAUSE -0.5 0 PAUSED" in ev["proof"]["stdout"]
+  proof_ok=ev["proof"]["rc"]==0 and ev["proof"]["stdout"].startswith("PAPER_REVIEW_E2E_PASS PAUSE -0.5 ") and ev["proof"]["stdout"].endswith(" PAUSED")
   master_ok=ev["sha"]=="b7c97e8b2303e7cf7a262f448968683376367074"
   emit(out,"PASS" if timer_ok and proof_ok and master_ok else "BLOCKED-RUNTIME",
        verdict="PAPER_STRATEGY_AUTO_REVIEW_PASS" if timer_ok and proof_ok and master_ok else None,

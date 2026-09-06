@@ -30,7 +30,7 @@ def candidate(symbol,sec_type,when,key,stop,high,low):
     return TradingCandidate(
         1,symbol,sec_type,"BINANCE" if sec_type.startswith("CRYPTO") else "SMART","USDT" if sec_type.startswith("CRYPTO") else "USD",
         SetupFamily.BREAKOUT_OR_PULLBACK_IN_TREND,("setup",),
-        LiquidityContext(Decimal("1000000"),Decimal("100000000"),Decimal(str((high+low)/2))),
+        LiquidityContext(Decimal("1000000"),Decimal("100000000"),(Decimal(str(high))+Decimal(str(low)))/Decimal("2")),
         VolatilityContext(Decimal("2")),"OK",True,when,"scan",key,QueueState.CANDIDATE,
         invalidation_reference=f"structural stop ({stop})",signal_bar_high=Decimal(str(high)),signal_bar_low=Decimal(str(low))
     )

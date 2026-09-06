@@ -1,0 +1,1 @@
+{"object_id":"ALPACA-PAPER-RUNTIME-WIRING-001","executor":"vps","timeout_minutes":10,"terminal_states":["PASS","NEEDS-CREDENTIALS","BLOCKED-RUNTIME"],"execution_revision":"2026-09-06-alpaca-paper-wiring-1"}

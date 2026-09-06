@@ -90,6 +90,7 @@ async def run_scan_cycle(
     now: datetime | None = None,
     liquidity_thresholds: LiquidityThresholds = DEFAULT_LIQUIDITY_THRESHOLDS,
     benchmark_contract: IbkrContract | None = None,
+    require_regular_session: bool = True,
 ) -> ScanCycleResult:
     """
     One bounded pass: resolve the IBKR universe, gate each contract for
@@ -128,7 +129,7 @@ async def run_scan_cycle(
             )
             continue
 
-        gate = evaluate_liquidity_gate(contract, liquidity, session_state, liquidity_thresholds)
+        gate = evaluate_liquidity_gate(contract, liquidity, session_state, liquidity_thresholds, require_regular_session=require_regular_session)
         if not gate.eligible:
             recorded.append(_record_ineligible(store, contract, liquidity, cycle_id, moment, gate.reasons))
             continue

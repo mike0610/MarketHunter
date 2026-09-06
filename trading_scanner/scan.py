@@ -226,6 +226,8 @@ def _record_setup_outcome(
             queue_state=queue_state,
             freshness_note=freshness_note,
             invalidation_reference=classification.invalidation_reference,
+            signal_bar_high=market_data.highs[-1],
+            signal_bar_low=market_data.lows[-1],
         )
     return store.record_candidate(candidate)
 

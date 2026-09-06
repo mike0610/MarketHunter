@@ -148,6 +148,7 @@ async def run_scan_cycle(
             _record_setup_outcome(
                 store, contract, liquidity, volatility, cycle_id, moment, freshness_note,
                 SetupFamily.MOMENTUM_RELATIVE_STRENGTH, momentum,
+                signal_bar_high=market_data.highs[-1], signal_bar_low=market_data.lows[-1],
             )
         )
 
@@ -157,6 +158,7 @@ async def run_scan_cycle(
             _record_setup_outcome(
                 store, contract, liquidity, volatility, cycle_id, moment, freshness_note,
                 SetupFamily.ABNORMAL_VOLUME_CATALYST, volume_catalyst, catalyst=catalyst,
+                signal_bar_high=market_data.highs[-1], signal_bar_low=market_data.lows[-1],
             )
         )
 
@@ -165,6 +167,7 @@ async def run_scan_cycle(
             _record_setup_outcome(
                 store, contract, liquidity, volatility, cycle_id, moment, freshness_note,
                 SetupFamily.BREAKOUT_OR_PULLBACK_IN_TREND, breakout_pullback,
+                signal_bar_high=market_data.highs[-1], signal_bar_low=market_data.lows[-1],
             )
         )
 
@@ -183,6 +186,8 @@ def _record_setup_outcome(
     classification: SetupClassification | None,
     *,
     catalyst=None,
+    signal_bar_high: Decimal | None = None,
+    signal_bar_low: Decimal | None = None,
 ) -> TradingCandidate:
     dedupe_key = _dedupe_key(contract.conid, setup_family, cycle_id)
     if classification is None:
@@ -226,8 +231,8 @@ def _record_setup_outcome(
             queue_state=queue_state,
             freshness_note=freshness_note,
             invalidation_reference=classification.invalidation_reference,
-            signal_bar_high=market_data.highs[-1],
-            signal_bar_low=market_data.lows[-1],
+            signal_bar_high=signal_bar_high,
+            signal_bar_low=signal_bar_low,
         )
     return store.record_candidate(candidate)
 

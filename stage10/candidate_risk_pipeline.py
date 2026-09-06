@@ -34,6 +34,9 @@ def process_candidate_to_risk(
     cluster_key: str,
     requested_leverage: Decimal,
     risk_policy: RiskPolicy,
+    strategy_id: str | None = None,
+    strategy_version: str | None = None,
+    approved_direction: StrategyDecisionOutcome | None = None,
 ) -> CandidateRiskResult:
     """Stage 10 integration only: Candidate -> Strategy -> Risk/MM.
 
@@ -45,6 +48,9 @@ def process_candidate_to_risk(
         validate_candidate(
             candidate,
             strategy_assessment=strategy_assessment,
+            **({} if strategy_id is None else {"strategy_id": strategy_id}),
+            **({} if strategy_version is None else {"strategy_version": strategy_version}),
+            approved_direction=approved_direction,
         )
     )
 

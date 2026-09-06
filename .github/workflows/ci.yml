@@ -130,4 +130,5 @@ jobs:
             tests/test_stage10_candidate_risk_wiring.py \
             tests/test_investments_research_agent_contract.py \
             tests/test_investments_research_worker.py \
+            tests/test_investments_research_provider.py \
             -v

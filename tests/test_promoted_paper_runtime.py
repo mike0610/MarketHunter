@@ -76,3 +76,24 @@ def test_promotion_dispatches_once_then_existing_paper_engine_fills_and_closes()
   assert life[0].outcome=="TAKE_PROFIT"
   closed=engine.closed_trades(AccountKind.SPOT)
   assert len(closed)==1 and closed[0].realized_pnl>0
+
+
+def test_breakout_candidate_without_complete_promoted_contract_stops_at_zero_order():
+ with tempfile.TemporaryDirectory() as td:
+  root=Path(td)
+  research=AutonomousResearchRepository(root/"research.db")
+  research.enqueue(ResearchObject("P-NO-EXIT","SPY","LONG","H-NO-EXIT"))
+  research.terminal("P-NO-EXIT","PROMOTION-ELIGIBLE",{"oos":{"avg_r":"0.2"}},hypothesis_id="H-NO-EXIT")
+  promoted=datetime.fromisoformat(research.release_candidate("P-NO-EXIT")["created_at"])
+  scanner=TradingScannerStore(root/"scanner.db")
+  scanner.record_candidate(candidate(promoted+timedelta(seconds=1)))
+  engine=Experiment1Engine(root/"experiment1.db")
+  dispatch=PromotedPaperDispatchStore(root/"dispatch.db")
+  result=dispatch_promoted_candidates(
+   research_repo=research,scanner_store=scanner,engine=engine,dispatch_store=dispatch,
+   strategy_store=StrategyDecisionStore(root/"strategy.db"),risk_store=RiskPlanStore(root/"risk.db"),
+   open_risk_ledger=OpenRiskLedger(root/"openrisk.db"),risk_policy=POLICY)
+  assert len(result)==1
+  assert result[0].status=="BLOCKED_STRATEGY_CONTRACT"
+  assert result[0].decision_id is None
+  assert dispatch.list_rows()==()

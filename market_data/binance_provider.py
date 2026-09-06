@@ -50,13 +50,15 @@ class BinanceDailyProvider(AsyncMarketDataProvider):
     async def history(self,instrument:MarketInstrument,*,timeframe:str="1d",limit:int=120)->MarketSeries:
         if timeframe!="1d": raise MarketDataUnavailable("SL Binance scanner currently supports 1d only")
         if limit<=0: raise ValueError("limit must be positive")
-        candles=await self._client.get_klines(instrument.symbol,interval="1d",limit=limit,futures=self._futures)
-        if not candles: raise MarketDataUnavailable(f"no Binance history for {instrument.symbol}")
+        candles=await self._client.get_klines(instrument.symbol,interval="1d",limit=limit+1,futures=self._futures)
+        now=datetime.now(timezone.utc)
+        closed=[x for x in candles if x.close_time<=now]
+        if not closed: raise MarketDataUnavailable(f"no closed Binance history for {instrument.symbol}")
         bars=tuple(MarketBar(
             timestamp=x.close_time,open=Decimal(str(x.open)),high=Decimal(str(x.high)),
             low=Decimal(str(x.low)),close=Decimal(str(x.close)),volume=Decimal(str(x.volume))
-        ) for x in candles)
-        newest=bars[-1].timestamp;now=datetime.now(timezone.utc);age=(now-newest).total_seconds()
+        ) for x in closed[-limit:])
+        newest=bars[-1].timestamp;age=(now-newest).total_seconds()
         if age<0 or age>self._max_age_seconds:
             raise MarketDataStale(f"{instrument.symbol} Binance daily evidence age={int(age)}s exceeds max={self._max_age_seconds}s")
         market="futures" if self._futures else "spot"

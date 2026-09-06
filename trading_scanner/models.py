@@ -189,6 +189,8 @@ class TradingCandidate:
     catalyst: CatalystEvidence | None = None
     freshness_note: str | None = None
     invalidation_reference: str | None = None
+    signal_bar_high: Decimal | None = None
+    signal_bar_low: Decimal | None = None
     reject_reason: str | None = None
 
     def __post_init__(self) -> None:
@@ -209,5 +211,11 @@ class TradingCandidate:
             QueueState.REJECTED,
         ) and not self.reject_reason:
             raise ValueError(f"{self.queue_state.value} requires reject_reason")
+        if self.signal_bar_high is not None and self.signal_bar_high <= 0:
+            raise ValueError("signal_bar_high must be positive when present")
+        if self.signal_bar_low is not None and self.signal_bar_low <= 0:
+            raise ValueError("signal_bar_low must be positive when present")
+        if self.signal_bar_high is not None and self.signal_bar_low is not None and self.signal_bar_low > self.signal_bar_high:
+            raise ValueError("signal_bar_low cannot exceed signal_bar_high")
         if self.queue_state in (QueueState.CANDIDATE, QueueState.WATCH) and self.reject_reason:
             raise ValueError(f"{self.queue_state.value} must not carry a reject_reason")

@@ -37,6 +37,7 @@ def process_candidate_to_risk(
     strategy_id: str | None = None,
     strategy_version: str | None = None,
     approved_direction: StrategyDecisionOutcome | None = None,
+    reference_price_override: Decimal | None = None,
 ) -> CandidateRiskResult:
     """Stage 10 integration only: Candidate -> Strategy -> Risk/MM.
 
@@ -69,7 +70,7 @@ def process_candidate_to_risk(
         direction=decision.outcome.value,
         decided_at=decision.decided_at,
         evidence_status=decision.candidate_evidence_status,
-        reference_price=decision.reference_price,
+        reference_price=decision.reference_price if reference_price_override is None else reference_price_override,
         stop_price=decision.structural_stop_price,
         cluster_key=cluster_key,
     )

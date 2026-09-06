@@ -105,6 +105,7 @@ def build_promoted_paper_binding(
         open_risk_ledger=open_risk_ledger,account=c.account,cluster_key=c.cluster_key,
         requested_leverage=c.requested_leverage,risk_policy=risk_policy,
         strategy_id=c.strategy_id,strategy_version=c.version,approved_direction=c.direction,
+        reference_price_override=trigger,
     )
     if risk.risk_plan is None or risk.risk_plan.decision.value!="APPROVED":
         return PaperBindingResult(admission,risk,None)

@@ -11,7 +11,8 @@ from experiment1.mtm import MtmCompleteness
 from tools.experiment1_runtime.runtime import (
     _classify,
     build_quote_source,
-    run_experiment1_cycle,\n    run_optional_investment_research,
+    run_experiment1_cycle,
+    run_optional_investment_research,
 )
 
 

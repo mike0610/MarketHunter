@@ -73,7 +73,7 @@ class USInvestmentResearchExecutor:
         evidence = (
             GILResearchEvidence(reference=str(source["reference"]), observed_at=observed),
         )
-        completed = datetime.now(observed.tzinfo)
+        completed = max(datetime.now(observed.tzinfo), observed)
         outcome = str(raw.get("outcome") or "").upper()
         if outcome == GILResearchOutcome.BLOCKED_EVIDENCE.value:
             return GILResearchResult(

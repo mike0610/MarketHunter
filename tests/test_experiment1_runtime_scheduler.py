@@ -11,7 +11,7 @@ from experiment1.mtm import MtmCompleteness
 from tools.experiment1_runtime.runtime import (
     _classify,
     build_quote_source,
-    run_experiment1_cycle,
+    run_experiment1_cycle,\n    run_optional_investment_research,
 )
 
 
@@ -388,3 +388,15 @@ def test_run_experiment1_cycle_trading_decision_is_restart_safe(tmp_path):
     assert second.trading_ingestion_results == ()
     assert second_engine.account_state(AccountKind.SPOT) == state
     assert len(second_engine.positions(AccountKind.SPOT)) == 1
+
+
+
+def test_investment_research_runtime_is_disabled_without_sec_identity(monkeypatch):
+    monkeypatch.delenv("GIL_SEC_USER_AGENT", raising=False)
+    assert run_optional_investment_research() == "DISABLED_NO_SEC_IDENTITY"
+
+
+def test_investment_research_runtime_is_idle_without_queue_objects(monkeypatch, tmp_path):
+    monkeypatch.setenv("GIL_SEC_USER_AGENT", "MarketHunter test contact@example.invalid")
+    monkeypatch.setenv("INVESTMENT_RESEARCH_DB_PATH", str(tmp_path / "research.db"))
+    assert run_optional_investment_research() == "IDLE"

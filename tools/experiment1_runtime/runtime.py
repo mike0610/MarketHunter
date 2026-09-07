@@ -22,7 +22,15 @@ import sys
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
-from pathlib import Path\n\nfrom investments.autonomous_loop import AutonomousInvestmentStore\nfrom investments.research_executor import USInvestmentResearchExecutor\nfrom investments.research_provider import LocalGILResearchProvider\nfrom investments.research_queue import InvestmentResearchQueue\nfrom investments.research_worker import InvestmentResearchWorker\nfrom investments.sec_evidence import SECCompanyFactsProvider\nfrom investments.sec_identity import SECCompanyTickerResolver
+from pathlib import Path
+
+from investments.autonomous_loop import AutonomousInvestmentStore
+from investments.research_executor import USInvestmentResearchExecutor
+from investments.research_provider import LocalGILResearchProvider
+from investments.research_queue import InvestmentResearchQueue
+from investments.research_worker import InvestmentResearchWorker
+from investments.sec_evidence import SECCompanyFactsProvider
+from investments.sec_identity import SECCompanyTickerResolver
 
 from experiment1.alpaca_sip_evidence import build_alpaca_sip_evidence_source
 from experiment1.twelve_data_evidence import build_twelve_data_evidence_source
@@ -58,7 +66,10 @@ ENV_DB_PATH = "EXPERIMENT1_DB_PATH"
 DEFAULT_DB_PATH = Path("data/experiment1.db")
 DEFAULT_FRESHNESS_MAX_AGE = timedelta(minutes=5)
 DEFAULT_SCANNER_DB_PATH = Path("data/trading_scanner.db")
-ENV_SCANNER_DB_PATH = "TRADING_SCANNER_DB_PATH"\nENV_INVESTMENT_RESEARCH_DB_PATH = "INVESTMENT_RESEARCH_DB_PATH"\nDEFAULT_INVESTMENT_RESEARCH_DB_PATH = Path("data/investment_research.db")\nENV_SEC_USER_AGENT = "GIL_SEC_USER_AGENT"
+ENV_SCANNER_DB_PATH = "TRADING_SCANNER_DB_PATH"
+ENV_INVESTMENT_RESEARCH_DB_PATH = "INVESTMENT_RESEARCH_DB_PATH"
+DEFAULT_INVESTMENT_RESEARCH_DB_PATH = Path("data/investment_research.db")
+ENV_SEC_USER_AGENT = "GIL_SEC_USER_AGENT"
 
 logger = logging.getLogger("experiment1_runtime.runtime")
 
@@ -286,6 +297,32 @@ def _poll_optional_trading_slack_transport(engine: Experiment1Engine) -> None:
     )
 
 
+
+def run_optional_investment_research() -> str:
+    user_agent = os.getenv(ENV_SEC_USER_AGENT, "").strip()
+    if not user_agent:
+        return "DISABLED_NO_SEC_IDENTITY"
+    path = Path(os.getenv(ENV_INVESTMENT_RESEARCH_DB_PATH, str(DEFAULT_INVESTMENT_RESEARCH_DB_PATH)))
+    queue = InvestmentResearchQueue(path)
+    worker = InvestmentResearchWorker(queue)
+    if not queue.pending():
+        return "IDLE"
+    executor = USInvestmentResearchExecutor(
+        worker=worker,
+        store=AutonomousInvestmentStore(path),
+        identity=SECCompanyTickerResolver(user_agent=user_agent),
+        fundamentals=SECCompanyFactsProvider(user_agent=user_agent),
+        reasoner=LocalGILResearchProvider(
+            base_url=os.getenv("GIL_LOCAL_LLM_BASE_URL", "http://127.0.0.1:8081")
+        ),
+    )
+    try:
+        record = executor.run_once()
+    except Exception as exc:
+        logger.warning("GIL investment research blocked - %s", exc)
+        return "BLOCKED_EVIDENCE"
+    return "DECIDED" if record is not None else "BLOCKED_EVIDENCE"
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="experiment1-runtime")
     parser.parse_args(argv)
@@ -303,6 +340,7 @@ def main(argv: list[str] | None = None) -> None:
 
     _poll_optional_slack_transport(engine)
     _poll_optional_trading_slack_transport(engine)
+    logger.info("GIL investment research: %s", run_optional_investment_research())
 
     try:
         summary = asyncio.run(run_experiment1_cycle(engine, quote_source))

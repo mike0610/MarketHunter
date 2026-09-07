@@ -22,7 +22,7 @@ import sys
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
-from pathlib import Path
+from pathlib import Path\n\nfrom investments.autonomous_loop import AutonomousInvestmentStore\nfrom investments.research_executor import USInvestmentResearchExecutor\nfrom investments.research_provider import LocalGILResearchProvider\nfrom investments.research_queue import InvestmentResearchQueue\nfrom investments.research_worker import InvestmentResearchWorker\nfrom investments.sec_evidence import SECCompanyFactsProvider\nfrom investments.sec_identity import SECCompanyTickerResolver
 
 from experiment1.alpaca_sip_evidence import build_alpaca_sip_evidence_source
 from experiment1.twelve_data_evidence import build_twelve_data_evidence_source
@@ -58,7 +58,7 @@ ENV_DB_PATH = "EXPERIMENT1_DB_PATH"
 DEFAULT_DB_PATH = Path("data/experiment1.db")
 DEFAULT_FRESHNESS_MAX_AGE = timedelta(minutes=5)
 DEFAULT_SCANNER_DB_PATH = Path("data/trading_scanner.db")
-ENV_SCANNER_DB_PATH = "TRADING_SCANNER_DB_PATH"
+ENV_SCANNER_DB_PATH = "TRADING_SCANNER_DB_PATH"\nENV_INVESTMENT_RESEARCH_DB_PATH = "INVESTMENT_RESEARCH_DB_PATH"\nDEFAULT_INVESTMENT_RESEARCH_DB_PATH = Path("data/investment_research.db")\nENV_SEC_USER_AGENT = "GIL_SEC_USER_AGENT"
 
 logger = logging.getLogger("experiment1_runtime.runtime")
 

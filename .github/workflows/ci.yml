@@ -132,4 +132,5 @@ jobs:
             tests/test_investments_research_worker.py \
             tests/test_investments_research_provider.py \
             tests/test_investments_sec_evidence.py \
+            tests/test_investments_sec_identity.py \
             -v

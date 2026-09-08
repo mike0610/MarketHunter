@@ -24,13 +24,13 @@ from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from investments.autonomous_loop import AutonomousInvestmentStore
+from investments.autonomous_loop import AutonomousInvestmentStore\nfrom investments.opportunity_discovery import InvestmentOpportunityDiscovery
 from investments.research_executor import USInvestmentResearchExecutor
 from investments.research_provider import LocalGILResearchProvider
 from investments.research_queue import InvestmentResearchQueue
 from investments.research_worker import InvestmentResearchWorker
 from investments.sec_evidence import SECCompanyFactsProvider
-from investments.sec_identity import SECCompanyTickerResolver
+from investments.sec_identity import SECCompanyTickerResolver\nfrom investments.stage8_store import Stage8InvestmentStore\nfrom market_data.twelve_data_provider import TwelveDataDailyProvider
 
 from experiment1.alpaca_sip_evidence import build_alpaca_sip_evidence_source
 from experiment1.twelve_data_evidence import build_twelve_data_evidence_source
@@ -69,7 +69,7 @@ DEFAULT_SCANNER_DB_PATH = Path("data/trading_scanner.db")
 ENV_SCANNER_DB_PATH = "TRADING_SCANNER_DB_PATH"
 ENV_INVESTMENT_RESEARCH_DB_PATH = "INVESTMENT_RESEARCH_DB_PATH"
 DEFAULT_INVESTMENT_RESEARCH_DB_PATH = Path("data/investment_research.db")
-ENV_SEC_USER_AGENT = "GIL_SEC_USER_AGENT"
+ENV_SEC_USER_AGENT = "GIL_SEC_USER_AGENT"\nENV_INVESTMENT_DISCOVERY_SYMBOLS = "INVESTMENT_DISCOVERY_SYMBOLS"
 
 logger = logging.getLogger("experiment1_runtime.runtime")
 
@@ -297,6 +297,25 @@ def _poll_optional_trading_slack_transport(engine: Experiment1Engine) -> None:
     )
 
 
+
+
+def run_optional_investment_discovery() -> str:
+    raw_symbols = os.getenv(ENV_INVESTMENT_DISCOVERY_SYMBOLS, "").strip()
+    if not raw_symbols:
+        return "DISABLED_NO_SYMBOLS"
+    symbols = tuple(s.strip().upper() for s in raw_symbols.split(",") if s.strip())
+    path = Path(os.getenv(ENV_INVESTMENT_RESEARCH_DB_PATH, str(DEFAULT_INVESTMENT_RESEARCH_DB_PATH)))
+    try:
+        provider = TwelveDataDailyProvider(symbols)
+        summary = asyncio.run(
+            InvestmentOpportunityDiscovery(provider=provider, db_path=path).run_once()
+        )
+    except Exception as exc:
+        logger.warning("GIL investment discovery blocked - %s", exc)
+        return "BLOCKED_EVIDENCE"
+    if summary.scanned == 0:
+        return "IDLE_DAILY"
+    return f"SCANNED={summary.scanned} ADMITTED={summary.admitted} REJECTED={summary.rejected} FAILED={summary.failed}"
 
 def run_optional_investment_research() -> str:
     user_agent = os.getenv(ENV_SEC_USER_AGENT, "").strip()

@@ -52,13 +52,23 @@ from strategies.choch import CHoCHStrategy
 from strategies.compression import CompressionStrategy
 from strategies.daily_levels import DailyLevelsStrategy
 from strategies.false_breakout import FalseBreakoutStrategy
+from strategies.failed_auction import FailedAuctionStrategy
 from strategies.fvg import FVGStrategy
 from strategies.liquidity_pool import LiquidityPoolStrategy
 from strategies.liquidity_sweep import LiquiditySweepStrategy
 from strategies.liquidity_sweep_reclaim import LiquiditySweepReclaimStrategy
 from strategies.mitigation import MitigationStrategy
+from strategies.momentum_acceleration import MomentumAccelerationStrategy
 from strategies.order_block import OrderBlockStrategy
 from strategies.premium_discount import PremiumDiscountStrategy
+from strategies.support_resistance_reclaim import SupportResistanceReclaimStrategy
+from strategies.taker_flow_absorption import TakerFlowAbsorptionStrategy
+from strategies.taker_flow_continuation import TakerFlowContinuationStrategy
+from strategies.statistical_mean_reversion import StatisticalMeanReversionStrategy
+from strategies.session_range import SessionRangeStrategy
+from strategies.volatility_expansion import VolatilityExpansionStrategy
+from strategies.volume_climax_reversal import VolumeClimaxReversalStrategy
+from strategies.volume_confirmed_breakout import VolumeConfirmedBreakoutStrategy
 from strategies.trend_pullback import TrendPullbackStrategy
 
 
@@ -150,6 +160,7 @@ def build_strategies(
         BreakoutStrategy(),
         BreakoutRetestStrategy(),
         FalseBreakoutStrategy(),
+        FailedAuctionStrategy(),
         CompressionStrategy(),
         CHoCHStrategy(),
         FVGStrategy(),
@@ -158,10 +169,23 @@ def build_strategies(
         LiquiditySweepStrategy(),
         LiquiditySweepReclaimStrategy(),
         MitigationStrategy(),
+        MomentumAccelerationStrategy(),
         BreakerStrategy(),
         PremiumDiscountStrategy(),
+        SupportResistanceReclaimStrategy(),
+        TakerFlowAbsorptionStrategy(),
+        TakerFlowContinuationStrategy(),
+        StatisticalMeanReversionStrategy(),
+        VolatilityExpansionStrategy(),
+        VolumeClimaxReversalStrategy(),
+        VolumeConfirmedBreakoutStrategy(),
         TrendPullbackStrategy(),
     ]
+
+    if normalized_timeframe == "1h":
+        strategies.append(
+            SessionRangeStrategy(),
+        )
 
     if normalized_timeframe == "1d":
         strategies.append(

@@ -7,8 +7,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from models.candle import Candle
+
+if TYPE_CHECKING:
+    from research.price_action.lines import StructuralLine
 
 
 class MarketRegime(str, Enum):
@@ -64,6 +68,7 @@ class PriceActionContext:
     structure_sequence: tuple[str, ...]
     structure_events: tuple[StructureEvent, ...]
     zone_behaviors: tuple[ZoneBehavior, ...]
+    structural_lines: tuple[StructuralLine, ...]
 
 
 class PriceActionContextEngine:
@@ -111,6 +116,14 @@ class PriceActionContextEngine:
             [*all_supports, *all_resistances],
         )
 
+        from research.price_action.lines import StructuralLineDetector
+
+        structural_lines = StructuralLineDetector().detect(
+            candles,
+            swing_highs=highs,
+            swing_lows=lows,
+        )
+
         return PriceActionContext(
             regime=regime,
             confidence=confidence,
@@ -121,6 +134,7 @@ class PriceActionContextEngine:
             structure_sequence=tuple(sequence),
             structure_events=tuple(events),
             zone_behaviors=tuple(behaviors),
+            structural_lines=tuple(structural_lines),
         )
 
     def _swings(

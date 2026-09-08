@@ -68,6 +68,7 @@ from strategies.statistical_mean_reversion import StatisticalMeanReversionStrate
 from strategies.session_range import SessionRangeStrategy
 from strategies.volatility_expansion import VolatilityExpansionStrategy
 from strategies.volume_climax_reversal import VolumeClimaxReversalStrategy
+from strategies.volume_confirmed_breakout import VolumeConfirmedBreakoutStrategy
 from strategies.trend_pullback import TrendPullbackStrategy
 
 
@@ -177,6 +178,7 @@ def build_strategies(
         StatisticalMeanReversionStrategy(),
         VolatilityExpansionStrategy(),
         VolumeClimaxReversalStrategy(),
+        VolumeConfirmedBreakoutStrategy(),
         TrendPullbackStrategy(),
     ]
 

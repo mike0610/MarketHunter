@@ -7,7 +7,7 @@ def main():
  job=json.loads(Path(a.job).read_text());out=Path(a.output);out.mkdir(parents=True,exist_ok=True);repo=Path("/home/ubuntu/MarketHunter")
  subprocess.run(["git","-C",str(repo),"fetch","origin",PINNED_SHA],check=True)
  raw=subprocess.check_output(["git","-C",str(repo),"show",f"{PINNED_SHA}:research/run_gil_breakout_promotion_gate.py"],text=True)
- script=out/"promotion_gate.py";script.write_text(raw)
+ script=(out/"promotion_gate.py").resolve();script.write_text(raw)
  proc=subprocess.run([str(repo/".venv/bin/python"),str(script)],cwd=repo,text=True,capture_output=True)
  (out/"runner_stdout.txt").write_text(proc.stdout);(out/"runner_stderr.txt").write_text(proc.stderr)
  if proc.returncode!=0: terminal={"object_id":job["object_id"],"terminal_state":"BLOCKED-EVIDENCE","reason":"promotion-gate-runner-failed","returncode":proc.returncode}

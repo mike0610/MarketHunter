@@ -8,7 +8,8 @@ def main():
  subprocess.run(["git","-C",str(repo),"fetch","origin",PINNED_SHA],check=True)
  raw=subprocess.check_output(["git","-C",str(repo),"show",f"{PINNED_SHA}:research/run_gil_breakout_promotion_gate.py"],text=True)
  script=(out/"promotion_gate.py").resolve();script.write_text(raw)
- env=dict(__import__("os").environ);env["PYTHONPATH"]=str(repo)\n proc=subprocess.run([str(repo/".venv/bin/python"),str(script)],cwd=repo,text=True,capture_output=True,env=env)
+ env=dict(__import__("os").environ);env["PYTHONPATH"]=str(repo)
+ proc=subprocess.run([str(repo/".venv/bin/python"),str(script)],cwd=repo,text=True,capture_output=True,env=env)
  (out/"runner_stdout.txt").write_text(proc.stdout);(out/"runner_stderr.txt").write_text(proc.stderr)
  if proc.returncode!=0: terminal={"object_id":job["object_id"],"terminal_state":"BLOCKED-EVIDENCE","reason":"promotion-gate-runner-failed","returncode":proc.returncode}
  else:

@@ -140,6 +140,14 @@ class RiskHandler(SignalHandler):
             )
             return
 
+        result = self._apply_strategy_risk_geometry(
+            context=context,
+            result=result,
+        )
+
+        if result is None:
+            return
+
         context.risk = result
 
         context.signal.metadata["risk"] = {
@@ -150,6 +158,60 @@ class RiskHandler(SignalHandler):
             "position_size": result.position_size,
             "risk_amount": result.risk_amount,
         }
+
+
+    def _apply_strategy_risk_geometry(
+        self,
+        *,
+        context: SignalContext,
+        result,
+    ):
+        """Honor an explicit strategy geometry without changing legacy signals."""
+        metadata = context.signal.metadata
+        required = ("entry", "stop_loss", "take_profit")
+
+        if not all(key in metadata for key in required):
+            return result
+
+        try:
+            entry = float(metadata["entry"])
+            stop_loss = float(metadata["stop_loss"])
+            take_profit = float(metadata["take_profit"])
+        except (TypeError, ValueError):
+            context.reject("Invalid strategy-defined risk geometry.")
+            return None
+
+        direction = context.signal.direction.upper()
+        if direction == "LONG":
+            valid = stop_loss < entry < take_profit
+        elif direction == "SHORT":
+            valid = take_profit < entry < stop_loss
+        else:
+            valid = False
+
+        if not valid:
+            context.reject("Invalid strategy-defined risk geometry.")
+            return None
+
+        distance = abs(entry - stop_loss)
+        risk_reward = abs(take_profit - entry) / distance
+        position_size = self.manager.position.calculate(
+            self.account_size,
+            self.risk_percent,
+            entry,
+            stop_loss,
+        )
+
+        result.entry = entry
+        result.stop_loss = stop_loss
+        result.take_profit = take_profit
+        result.risk_reward = risk_reward
+        result.position_size = position_size
+        result.risk_amount = self.account_size * self.risk_percent / 100
+        result.account_size = self.account_size
+        result.risk_percent = self.risk_percent
+        metadata["strategy_risk_geometry_applied"] = True
+        return result
 
 
 class ResearchTradeHandler(SignalHandler):

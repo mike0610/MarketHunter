@@ -47,6 +47,7 @@ from services.scanner import Scanner
 from telegram.elite_alerts import notify_elite_signals
 from strategies.breaker import BreakerStrategy
 from strategies.breakout import BreakoutStrategy
+from strategies.breakout_retest import BreakoutRetestStrategy
 from strategies.choch import CHoCHStrategy
 from strategies.compression import CompressionStrategy
 from strategies.daily_levels import DailyLevelsStrategy
@@ -54,9 +55,11 @@ from strategies.false_breakout import FalseBreakoutStrategy
 from strategies.fvg import FVGStrategy
 from strategies.liquidity_pool import LiquidityPoolStrategy
 from strategies.liquidity_sweep import LiquiditySweepStrategy
+from strategies.liquidity_sweep_reclaim import LiquiditySweepReclaimStrategy
 from strategies.mitigation import MitigationStrategy
 from strategies.order_block import OrderBlockStrategy
 from strategies.premium_discount import PremiumDiscountStrategy
+from strategies.trend_pullback import TrendPullbackStrategy
 
 
 DATABASE_PATH = "data/research.db"
@@ -145,6 +148,7 @@ def build_strategies(
 
     strategies = [
         BreakoutStrategy(),
+        BreakoutRetestStrategy(),
         FalseBreakoutStrategy(),
         CompressionStrategy(),
         CHoCHStrategy(),
@@ -152,9 +156,11 @@ def build_strategies(
         OrderBlockStrategy(),
         LiquidityPoolStrategy(),
         LiquiditySweepStrategy(),
+        LiquiditySweepReclaimStrategy(),
         MitigationStrategy(),
         BreakerStrategy(),
         PremiumDiscountStrategy(),
+        TrendPullbackStrategy(),
     ]
 
     if normalized_timeframe == "1d":

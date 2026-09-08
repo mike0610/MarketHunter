@@ -61,6 +61,7 @@ from strategies.mitigation import MitigationStrategy
 from strategies.order_block import OrderBlockStrategy
 from strategies.premium_discount import PremiumDiscountStrategy
 from strategies.support_resistance_reclaim import SupportResistanceReclaimStrategy
+from strategies.volatility_expansion import VolatilityExpansionStrategy
 from strategies.trend_pullback import TrendPullbackStrategy
 
 
@@ -164,6 +165,7 @@ def build_strategies(
         BreakerStrategy(),
         PremiumDiscountStrategy(),
         SupportResistanceReclaimStrategy(),
+        VolatilityExpansionStrategy(),
         TrendPullbackStrategy(),
     ]
 

@@ -299,3 +299,111 @@ jobs:
             '- artifact_id: `'$ARTIFACT_ID'`' \
             '- artifact: '$ARTIFACT_URL > /tmp/terminal-comment.md
           gh issue comment 40 --repo "$GITHUB_REPOSITORY" --body-file /tmp/terminal-comment.md
+
+      - name: Evaluate deterministic research transition
+        id: transition
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from research.transition_policy import decide_transition
+
+          object_id = os.environ['OBJECT_ID']
+          job = json.loads((Path('research/jobs') / object_id / 'job.json').read_text())
+          result = json.loads(Path('evidence/terminal_result.json').read_text())
+          decision = decide_transition(job, result)
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'action={decision.action}\n')
+              f.write(f'effective_state={decision.effective_state}\n')
+              f.write(f'next_object_id={decision.next_object_id or ""}\n')
+              f.write(f'reason={decision.reason or ""}\n')
+
+          print('TRANSITION_ACTION=' + decision.action)
+          print('EFFECTIVE_STATE=' + decision.effective_state)
+          if decision.next_object_id:
+              print('NEXT_OBJECT_ID=' + decision.next_object_id)
+          if decision.reason:
+              print('TRANSITION_REASON=' + decision.reason)
+          PY
+
+      - name: Dispatch predeclared successor exactly once
+        if: steps.transition.outputs.action == 'DISPATCH'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXT_OBJECT_ID: ${{ steps.transition.outputs.next_object_id }}
+          TERMINAL_RESULT_SHA256: ${{ steps.terminal.outputs.result_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "$NEXT_OBJECT_ID" ]; then
+            echo 'Transition policy returned DISPATCH without next object'
+            exit 10
+          fi
+
+          python - "$NEXT_OBJECT_ID" <<'PY'
+          import json, re, sys
+          from pathlib import Path
+
+          object_id = sys.argv[1]
+          if not re.fullmatch(r'[A-Z0-9][A-Z0-9._-]{1,127}', object_id):
+              raise SystemExit('invalid successor object id')
+          job = Path('research/jobs') / object_id / 'job.json'
+          runner = Path('research/jobs') / object_id / 'run.py'
+          if not job.is_file() or not runner.is_file():
+              raise SystemExit('predeclared successor is not a frozen executable object')
+          payload = json.loads(job.read_text())
+          if payload.get('object_id') != object_id:
+              raise SystemExit('successor object id mismatch')
+          if payload.get('status') != 'FROZEN':
+              raise SystemExit('successor object must be FROZEN')
+          PY
+
+          transition_key="<!-- MH_RESEARCH_TRANSITION source=$OBJECT_ID result_sha=$TERMINAL_RESULT_SHA256 next=$NEXT_OBJECT_ID -->"
+          comments="$(gh api "repos/$GITHUB_REPOSITORY/issues/40/comments?per_page=100" --paginate --jq '.[].body')"
+
+          if printf '%s\n' "$comments" | grep -Fq -- "$transition_key"; then
+            echo "Transition already dispatched for this immutable terminal"
+            exit 0
+          fi
+
+          terminal_marker="- object_id: \`$NEXT_OBJECT_ID\`"
+          if printf '%s\n' "$comments" | grep -Fq -- "$terminal_marker"; then
+            echo "Successor already has a durable terminal; skipping duplicate execution"
+            exit 0
+          fi
+
+          gh workflow run research-execution-harness.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref research-execution-queue \
+            -f object_id="$NEXT_OBJECT_ID"
+
+          printf '%s\n' \
+            "$transition_key" \
+            '**RESEARCH TRANSITION DISPATCHED**' \
+            '' \
+            '- source_object_id: \`'$OBJECT_ID'\`' \
+            '- terminal_result_sha256: \`'$TERMINAL_RESULT_SHA256'\`' \
+            '- next_object_id: \`'$NEXT_OBJECT_ID'\`' \
+            '- authority: deterministic predeclared transition only' \
+            '- live_trading_authority: \`NONE\`' > /tmp/transition-comment.md
+          gh issue comment 40 --repo "$GITHUB_REPOSITORY" --body-file /tmp/transition-comment.md
+
+      - name: Record fail-closed transition stop
+        if: steps.transition.outputs.action == 'STOP'
+        env:
+          EFFECTIVE_STATE: ${{ steps.transition.outputs.effective_state }}
+          TRANSITION_REASON: ${{ steps.transition.outputs.reason }}
+        shell: bash
+        run: |
+          echo "Research chain stopped fail-closed: state=$EFFECTIVE_STATE reason=$TRANSITION_REASON"
+
+      - name: Record promotion admission boundary
+        if: steps.transition.outputs.action == 'PAPER-MANIFEST-CANDIDATE'
+        shell: bash
+        run: |
+          echo 'PROMOTION-ELIGIBLE reached. Research workflow stops at governed paper-manifest admission boundary.'
+\n

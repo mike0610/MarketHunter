@@ -8,6 +8,7 @@ on:
       - ".github/workflows/deploy-experiment1-runtime.yml"
       - "experiment1/slack_transport.py"
       - "tools/experiment1_runtime/runtime.py"
+      - "tools/investment_research/**"
       - "deploy/systemd/experiment1-runtime.service"
       - "deploy/systemd/experiment1-runtime.timer"
       - "deploy/systemd/experiment1-runtime.env.example"

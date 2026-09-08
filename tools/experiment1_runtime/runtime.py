@@ -363,6 +363,7 @@ def main(argv: list[str] | None = None) -> None:
 
     _poll_optional_slack_transport(engine)
     _poll_optional_trading_slack_transport(engine)
+    logger.info("GIL investment discovery: %s", run_optional_investment_discovery())
     logger.info("GIL investment research: %s", run_optional_investment_research())
 
     try:

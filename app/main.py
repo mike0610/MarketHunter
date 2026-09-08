@@ -47,6 +47,7 @@ from services.scanner import Scanner
 from telegram.elite_alerts import notify_elite_signals
 from strategies.breaker import BreakerStrategy
 from strategies.breakout import BreakoutStrategy
+from strategies.breakout_retest import BreakoutRetestStrategy
 from strategies.choch import CHoCHStrategy
 from strategies.compression import CompressionStrategy
 from strategies.daily_levels import DailyLevelsStrategy
@@ -146,6 +147,7 @@ def build_strategies(
 
     strategies = [
         BreakoutStrategy(),
+        BreakoutRetestStrategy(),
         FalseBreakoutStrategy(),
         CompressionStrategy(),
         CHoCHStrategy(),

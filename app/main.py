@@ -64,6 +64,7 @@ from strategies.support_resistance_reclaim import SupportResistanceReclaimStrate
 from strategies.taker_flow_absorption import TakerFlowAbsorptionStrategy
 from strategies.taker_flow_continuation import TakerFlowContinuationStrategy
 from strategies.statistical_mean_reversion import StatisticalMeanReversionStrategy
+from strategies.session_range import SessionRangeStrategy
 from strategies.volatility_expansion import VolatilityExpansionStrategy
 from strategies.trend_pullback import TrendPullbackStrategy
 
@@ -174,6 +175,11 @@ def build_strategies(
         VolatilityExpansionStrategy(),
         TrendPullbackStrategy(),
     ]
+
+    if normalized_timeframe == "1h":
+        strategies.append(
+            SessionRangeStrategy(),
+        )
 
     if normalized_timeframe == "1d":
         strategies.append(

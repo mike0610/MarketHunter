@@ -114,3 +114,17 @@ Before creating or rerunning GIL Active Trading research, recover state in this 
 4. Slack for coordination/handoffs only, not as automatic source of truth.
 
 A failed or empty search in one source does **not** prove that state is absent. Continue through the durable sources before declaring `BLOCKED-EVIDENCE` or creating replacement work.
+
+## GIL Active Trading successor recovery map
+
+When recovering the next non-crypto GIL Active Trading lineage, do not assume master contains the complete historical research state.
+
+For the current `MOMENTUM_RELATIVE_STRENGTH -> LONG` recovery:
+
+- first inspect GIL-specific durable branches and historical research evidence;
+- the branch `fix/gil-blocked-strategy-contract-status` is a relevant GIL-specific recovery source because it contains the blocked-strategy-contract status work around GIL scanner / research / risk-mm / stage10;
+- do **not** use `research-cross-sectional-momentum-001` as GIL evidence: its research jobs are `SL-VAL-...` and belong to STRATEGY LAB, not GIL;
+- if a source name contains momentum/relative-strength but ownership is ambiguous, verify owner/domain before reusing any formation, universe, split, entry, exit, or terminal status;
+- a missing code-search hit on master is not evidence that the lineage never existed. Search relevant branches, research jobs, workflow runs/artifacts, then runtime/storage before declaring evidence absent.
+
+This recovery path exists specifically to prevent future successors from mixing GIL Active Trading with STRATEGY LAB or rebuilding already-completed work from zero.

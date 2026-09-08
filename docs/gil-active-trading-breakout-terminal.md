@@ -154,3 +154,13 @@ Searches already performed during recovery:
 - branch-level inspection that distinguished GIL evidence from STRATEGY LAB `SL-VAL-...` evidence.
 
 Do not repeat this archaeology unless a genuinely new durable source becomes available.
+
+## Momentum RS LONG v0.1 runtime-semantics blocker
+
+GIL froze `MOMENTUM_RELATIVE_STRENGTH LONG v0.1` with a newly pre-specified conditional entry: signal-bar high upward crossing, no same-signal-bar fill, expiry after 3 trading bars, and pre-fill invalidation only when a **completed daily close <= signal-time SMA20**. Post-fill structural exit is first completed daily close <= contemporaneous SMA20, executed at the next feasible forward price.
+
+Current Stage5 mechanics cannot honestly represent that contract. `Stage5MarketObservation` exposes one scalar `price`; `PRICE_AT_OR_ABOVE` trigger and LONG invalidation are both evaluated against that same scalar. Therefore Stage5 cannot distinguish an intraday-high trigger from a completed-close invalidation in one observation. Repository search found no alternate existing runtime mechanics path that provides this distinction.
+
+Status for this exact frozen contract: `BLOCKED-EVIDENCE / BLOCKED-RUNTIME-SEMANTICS` before OOS promotion testing. Do not silently substitute close-only trigger semantics, intraday invalidation, MARKET entry, or any other proxy. Research-only OHLC simulation can model the distinction, but that does not prove current Stage5 runtime representability.
+
+Next decision belongs to GIL/Control Tower routing: either GIL deliberately pre-specifies a different representable contract before outcome inspection, or Stage5 mechanics is explicitly extended to preserve high-trigger vs completed-close-invalidation semantics. This is not permission to tune the trading hypothesis.

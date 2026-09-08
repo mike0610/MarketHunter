@@ -63,6 +63,7 @@ from strategies.premium_discount import PremiumDiscountStrategy
 from strategies.support_resistance_reclaim import SupportResistanceReclaimStrategy
 from strategies.taker_flow_absorption import TakerFlowAbsorptionStrategy
 from strategies.taker_flow_continuation import TakerFlowContinuationStrategy
+from strategies.statistical_mean_reversion import StatisticalMeanReversionStrategy
 from strategies.volatility_expansion import VolatilityExpansionStrategy
 from strategies.trend_pullback import TrendPullbackStrategy
 
@@ -169,6 +170,7 @@ def build_strategies(
         SupportResistanceReclaimStrategy(),
         TakerFlowAbsorptionStrategy(),
         TakerFlowContinuationStrategy(),
+        StatisticalMeanReversionStrategy(),
         VolatilityExpansionStrategy(),
         TrendPullbackStrategy(),
     ]

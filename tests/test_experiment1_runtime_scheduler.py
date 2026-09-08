@@ -1,4 +1,7 @@
 import asyncio
+
+import pytest
+import tools.experiment1_runtime.runtime as runtime_module
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -401,3 +404,34 @@ def test_investment_research_runtime_is_idle_without_queue_objects(monkeypatch, 
     monkeypatch.setenv("GIL_SEC_USER_AGENT", "MarketHunter test contact@example.invalid")
     monkeypatch.setenv("INVESTMENT_RESEARCH_DB_PATH", str(tmp_path / "research.db"))
     assert run_optional_investment_research() == "IDLE"
+
+
+def test_main_invokes_discovery_before_research(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(runtime_module, "Experiment1Engine", lambda path: object())
+    monkeypatch.setattr(runtime_module, "build_quote_source", lambda: object())
+    monkeypatch.setattr(runtime_module, "_poll_optional_slack_transport", lambda engine: None)
+    monkeypatch.setattr(runtime_module, "_poll_optional_trading_slack_transport", lambda engine: None)
+    monkeypatch.setattr(
+        runtime_module,
+        "run_optional_investment_discovery",
+        lambda: calls.append("discovery") or "IDLE_DAILY",
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "run_optional_investment_research",
+        lambda: calls.append("research") or "IDLE",
+    )
+
+    async def fake_cycle(engine, source):
+        return object()
+
+    monkeypatch.setattr(runtime_module, "run_experiment1_cycle", fake_cycle)
+    monkeypatch.setattr(runtime_module, "_log_summary", lambda summary: None)
+
+    with pytest.raises(SystemExit) as exc:
+        runtime_module.main([])
+
+    assert exc.value.code == runtime_module.EXIT_OK
+    assert calls == ["discovery", "research"]

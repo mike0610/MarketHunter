@@ -52,6 +52,7 @@ from strategies.choch import CHoCHStrategy
 from strategies.compression import CompressionStrategy
 from strategies.daily_levels import DailyLevelsStrategy
 from strategies.false_breakout import FalseBreakoutStrategy
+from strategies.failed_auction import FailedAuctionStrategy
 from strategies.fvg import FVGStrategy
 from strategies.liquidity_pool import LiquidityPoolStrategy
 from strategies.liquidity_sweep import LiquiditySweepStrategy
@@ -151,6 +152,7 @@ def build_strategies(
         BreakoutStrategy(),
         BreakoutRetestStrategy(),
         FalseBreakoutStrategy(),
+        FailedAuctionStrategy(),
         CompressionStrategy(),
         CHoCHStrategy(),
         FVGStrategy(),

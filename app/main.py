@@ -57,6 +57,7 @@ from strategies.liquidity_sweep import LiquiditySweepStrategy
 from strategies.mitigation import MitigationStrategy
 from strategies.order_block import OrderBlockStrategy
 from strategies.premium_discount import PremiumDiscountStrategy
+from strategies.trend_pullback import TrendPullbackStrategy
 
 
 DATABASE_PATH = "data/research.db"
@@ -155,6 +156,7 @@ def build_strategies(
         MitigationStrategy(),
         BreakerStrategy(),
         PremiumDiscountStrategy(),
+        TrendPullbackStrategy(),
     ]
 
     if normalized_timeframe == "1d":

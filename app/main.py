@@ -55,6 +55,7 @@ from strategies.false_breakout import FalseBreakoutStrategy
 from strategies.fvg import FVGStrategy
 from strategies.liquidity_pool import LiquidityPoolStrategy
 from strategies.liquidity_sweep import LiquiditySweepStrategy
+from strategies.liquidity_sweep_reclaim import LiquiditySweepReclaimStrategy
 from strategies.mitigation import MitigationStrategy
 from strategies.order_block import OrderBlockStrategy
 from strategies.premium_discount import PremiumDiscountStrategy
@@ -155,6 +156,7 @@ def build_strategies(
         OrderBlockStrategy(),
         LiquidityPoolStrategy(),
         LiquiditySweepStrategy(),
+        LiquiditySweepReclaimStrategy(),
         MitigationStrategy(),
         BreakerStrategy(),
         PremiumDiscountStrategy(),

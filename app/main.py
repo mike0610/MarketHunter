@@ -66,6 +66,7 @@ from strategies.taker_flow_continuation import TakerFlowContinuationStrategy
 from strategies.statistical_mean_reversion import StatisticalMeanReversionStrategy
 from strategies.session_range import SessionRangeStrategy
 from strategies.volatility_expansion import VolatilityExpansionStrategy
+from strategies.volume_climax_reversal import VolumeClimaxReversalStrategy
 from strategies.trend_pullback import TrendPullbackStrategy
 
 
@@ -173,6 +174,7 @@ def build_strategies(
         TakerFlowContinuationStrategy(),
         StatisticalMeanReversionStrategy(),
         VolatilityExpansionStrategy(),
+        VolumeClimaxReversalStrategy(),
         TrendPullbackStrategy(),
     ]
 

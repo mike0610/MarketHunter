@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from investments.opportunity_discovery import InvestmentOpportunityDiscovery
 from investments.research_queue import InvestmentResearchQueue
-from market_data.foundation import LiquidityEvidence, MarketInstrument
+from market_data.foundation import LiquidityEvidence, MarketDataUnavailable, MarketInstrument
 
 
 NOW = datetime(2026, 9, 8, 2, 0, tzinfo=timezone.utc)
@@ -48,3 +48,21 @@ def test_discovery_runs_at_most_once_per_utc_day(tmp_path):
     assert first.scanned == 2
     assert second.scanned == 0
     assert len(InvestmentResearchQueue(tmp_path / "r.db").pending()) == 1
+
+
+class FailingProvider(Provider):
+    async def liquidity(self, instrument):
+        raise MarketDataUnavailable(f"evidence unavailable for {instrument.symbol}")
+
+
+def test_discovery_retries_after_total_evidence_failure(tmp_path):
+    path = tmp_path / "r.db"
+    x = InvestmentOpportunityDiscovery(provider=FailingProvider(), db_path=path)
+    first = asyncio.run(x.run_once(NOW))
+    second = asyncio.run(x.run_once(NOW))
+    assert first.scanned == 2
+    assert first.failed == 2
+    assert len(first.failure_reasons) == 2
+    assert second.scanned == 2
+    assert second.failed == 2
+    assert not x.already_ran_today(NOW)

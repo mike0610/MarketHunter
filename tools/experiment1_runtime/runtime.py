@@ -319,7 +319,10 @@ def run_optional_investment_discovery() -> str:
         return "BLOCKED_EVIDENCE"
     if summary.scanned == 0:
         return "IDLE_DAILY"
-    return f"SCANNED={summary.scanned} ADMITTED={summary.admitted} REJECTED={summary.rejected} FAILED={summary.failed}"
+    detail = ""
+    if summary.failure_reasons:
+        detail = " ERRORS=" + " | ".join(summary.failure_reasons)
+    return f"SCANNED={summary.scanned} ADMITTED={summary.admitted} REJECTED={summary.rejected} FAILED={summary.failed}{detail}"
 
 def run_optional_investment_research() -> str:
     user_agent = os.getenv(ENV_SEC_USER_AGENT, "").strip()

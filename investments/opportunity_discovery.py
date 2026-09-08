@@ -18,6 +18,7 @@ class DiscoverySummary:
     admitted: int
     rejected: int
     failed: int
+    failure_reasons: tuple[str, ...] = ()
 
 
 class InvestmentOpportunityDiscovery:
@@ -66,13 +67,15 @@ class InvestmentOpportunityDiscovery:
             return DiscoverySummary(0, 0, 0, 0)
 
         scanned = admitted = rejected = failed = 0
+        failure_reasons: list[str] = []
         instruments = await self.provider.universe()
         for instrument in instruments:
             scanned += 1
             try:
                 liquidity = await self.provider.liquidity(instrument)
-            except MarketDataError:
+            except MarketDataError as exc:
                 failed += 1
+                failure_reasons.append(f"{instrument.symbol}: {exc}")
                 continue
 
             liquid = liquidity.average_daily_dollar_volume >= self.min_dollar_volume
@@ -119,10 +122,13 @@ class InvestmentOpportunityDiscovery:
             else:
                 rejected += 1
 
-        day = moment.astimezone(timezone.utc).date().isoformat()
-        with sqlite3.connect(self.db_path) as c:
-            c.execute(
-                "INSERT OR IGNORE INTO investment_discovery_runs VALUES(?,?)",
-                (day, moment.isoformat()),
-            )
-        return DiscoverySummary(scanned, admitted, rejected, failed)
+        # A complete evidence outage is not a completed daily discovery run.
+        # Leave the daily marker absent so the existing runtime cadence retries.
+        if scanned > 0 and failed < scanned:
+            day = moment.astimezone(timezone.utc).date().isoformat()
+            with sqlite3.connect(self.db_path) as c:
+                c.execute(
+                    "INSERT OR IGNORE INTO investment_discovery_runs VALUES(?,?)",
+                    (day, moment.isoformat()),
+                )
+        return DiscoverySummary(scanned, admitted, rejected, failed, tuple(failure_reasons))

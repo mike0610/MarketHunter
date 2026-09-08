@@ -59,6 +59,7 @@ from strategies.liquidity_sweep_reclaim import LiquiditySweepReclaimStrategy
 from strategies.mitigation import MitigationStrategy
 from strategies.order_block import OrderBlockStrategy
 from strategies.premium_discount import PremiumDiscountStrategy
+from strategies.support_resistance_reclaim import SupportResistanceReclaimStrategy
 from strategies.trend_pullback import TrendPullbackStrategy
 
 
@@ -160,6 +161,7 @@ def build_strategies(
         MitigationStrategy(),
         BreakerStrategy(),
         PremiumDiscountStrategy(),
+        SupportResistanceReclaimStrategy(),
         TrendPullbackStrategy(),
     ]
 

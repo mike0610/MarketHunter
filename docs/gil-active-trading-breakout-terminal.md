@@ -128,3 +128,29 @@ For the current `MOMENTUM_RELATIVE_STRENGTH -> LONG` recovery:
 - a missing code-search hit on master is not evidence that the lineage never existed. Search relevant branches, research jobs, workflow runs/artifacts, then runtime/storage before declaring evidence absent.
 
 This recovery path exists specifically to prevent future successors from mixing GIL Active Trading with STRATEGY LAB or rebuilding already-completed work from zero.
+
+## Recovery gap: MOMENTUM_RELATIVE_STRENGTH -> LONG
+
+Current recovery finding for the next GIL Active Trading lineage:
+
+- `MOMENTUM_RELATIVE_STRENGTH` is durably implemented as a GIL non-crypto scanner setup-family.
+- Confirmed formation semantics: close > SMA20, SMA20 > SMA50, with an optional benchmark-relative-strength leg only when benchmark evidence exists.
+- The setup was designed for GIL review and explicitly did not create paper orders by itself.
+- No durable GitHub/Notion/Slack research object was recovered that proves a prior formal `BLOCKED-EVIDENCE` terminal specifically for this lineage.
+- No recoverable prior object currently proves a previously frozen trigger, expiry, complete exit contract, historical universe/split, or exact terminal reasoning for this lineage.
+- Therefore future successors must **not invent** those missing pieces and must **not claim** they were previously validated.
+
+Working interpretation:
+
+`MOMENTUM_RELATIVE_STRENGTH -> LONG` should be treated as an existing GIL idea/setup lineage with incomplete executable-strategy formalization. The missing part is the executable contract layer, especially conditional-entry semantics. Recovery should preserve the confirmed formation and ownership boundary, then pre-specify any new trigger/invalidation/expiry/exit logic before outcome inspection.
+
+Searches already performed during recovery:
+
+- master code search for `MOMENTUM_RELATIVE_STRENGTH`, `MOMENTUM-RS`, `BLOCKED-EVIDENCE`;
+- GIL-specific branch search;
+- commit history for `momentum`, `relative strength`, and blocked strategy contract work;
+- Notion searches for `SMA20 SMA50`, `relative strength`, `conditional entry`, `momentum LONG`;
+- Slack searches for exact-name and concept-level variants;
+- branch-level inspection that distinguished GIL evidence from STRATEGY LAB `SL-VAL-...` evidence.
+
+Do not repeat this archaeology unless a genuinely new durable source becomes available.

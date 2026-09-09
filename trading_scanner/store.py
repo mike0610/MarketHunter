@@ -78,9 +78,7 @@ class TradingScannerStore:
                     invalidation_reference TEXT,
                     signal_bar_high TEXT,
                     signal_bar_low TEXT,
-                    reject_reason TEXT,
-                    signal_direction TEXT,
-                    signal_score TEXT
+                    reject_reason TEXT
                 );
                 """
             )
@@ -89,10 +87,6 @@ class TradingScannerStore:
                 conn.execute("ALTER TABLE trading_scanner_candidates ADD COLUMN signal_bar_high TEXT")
             if "signal_bar_low" not in columns:
                 conn.execute("ALTER TABLE trading_scanner_candidates ADD COLUMN signal_bar_low TEXT")
-            if "signal_direction" not in columns:
-                conn.execute("ALTER TABLE trading_scanner_candidates ADD COLUMN signal_direction TEXT")
-            if "signal_score" not in columns:
-                conn.execute("ALTER TABLE trading_scanner_candidates ADD COLUMN signal_score TEXT")
 
     def record_candidate(self, candidate: TradingCandidate) -> TradingCandidate:
         """
@@ -119,9 +113,8 @@ class TradingScannerStore:
                     liquidity_last_price, volatility_realized_range_pct, evidence_status, eligible,
                     discovered_at, scan_cycle_id, queue_state, catalyst_description, catalyst_source,
                     catalyst_source_reference, catalyst_observed_at, freshness_note,
-                    invalidation_reference, signal_bar_high, signal_bar_low, reject_reason,
-                    signal_direction, signal_score
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    invalidation_reference, signal_bar_high, signal_bar_low, reject_reason
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     candidate.dedupe_key,
                     candidate.conid,
@@ -149,8 +142,6 @@ class TradingScannerStore:
                     None if candidate.signal_bar_high is None else str(candidate.signal_bar_high),
                     None if candidate.signal_bar_low is None else str(candidate.signal_bar_low),
                     candidate.reject_reason,
-                    candidate.signal_direction,
-                    None if candidate.signal_score is None else str(candidate.signal_score),
                 ),
             )
             return candidate
@@ -210,6 +201,4 @@ class TradingScannerStore:
             signal_bar_high=None if row["signal_bar_high"] is None else Decimal(row["signal_bar_high"]),
             signal_bar_low=None if row["signal_bar_low"] is None else Decimal(row["signal_bar_low"]),
             reject_reason=row["reject_reason"],
-            signal_direction=row["signal_direction"],
-            signal_score=None if row["signal_score"] is None else Decimal(row["signal_score"]),
         )

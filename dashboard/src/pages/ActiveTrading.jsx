@@ -15,7 +15,7 @@ import {
 
 import PageHeader from "../components/layout/PageHeader";
 import MetricCard from "../components/layout/MetricCard";
-import { getExperiment1State, getPaperStrategyReviews } from "../api/experiment1Api";
+import { getExperiment1State, getPaperStrategyReviews, getResearchStrategySignals } from "../api/experiment1Api";
 
 const ACCOUNT_TYPES = [
     { key: "spot", label: "Spot" },
@@ -134,6 +134,53 @@ function StrategyReviews({ reviews }) {
     );
 }
 
+
+function ResearchStrategyObservations({ signals }) {
+    const families = ["PremiumDiscount", "Breakout", "OrderBlock", "Compression", "LiquiditySweep"];
+    const grouped = families.map((strategy) => {
+        const rows = signals.filter((item) => item.strategy === strategy);
+        return { strategy, rows };
+    });
+    return (
+        <Box sx={{ mb: 4 }}>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ justifyContent: "space-between", alignItems: { xs: "flex-start", sm: "center" }, mb: 2 }}>
+                <Box>
+                    <Typography variant="h5" sx={{ fontWeight: 700 }}>Research strategies · live observations</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                        Незмінені 5 стратегій сканують інші активи. Це спостереження, не автоматичні входи.
+                    </Typography>
+                </Box>
+                <Chip label={`${signals.length} accumulated signals`} size="small" variant="outlined" />
+            </Stack>
+            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))", xl: "repeat(5, minmax(0, 1fr))" }, gap: 2 }}>
+                {grouped.map(({ strategy, rows }) => (
+                    <Paper key={strategy} variant="outlined" sx={{ p: 2, borderRadius: 3, minWidth: 0 }}>
+                        <Stack spacing={1.25}>
+                            <Stack direction="row" spacing={1} sx={{ justifyContent: "space-between", alignItems: "center" }}>
+                                <Typography variant="subtitle1" sx={{ fontWeight: 700 }} noWrap>{strategy}</Typography>
+                                <Chip label={rows.length} size="small" />
+                            </Stack>
+                            {!rows.length ? (
+                                <Typography variant="body2" color="text.secondary">Ще немає сигналів.</Typography>
+                            ) : rows.slice(0, 5).map((row) => (
+                                <Box key={`${row.symbol}:${row.direction}:${row.observed_at}`} sx={{ minWidth: 0 }}>
+                                    <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", mb: 0.25 }}>
+                                        <Typography variant="body2" sx={{ fontWeight: 700 }} noWrap>{row.symbol}</Typography>
+                                        <Chip size="small" label={row.direction} color={row.direction === "LONG" ? "success" : "error"} variant="outlined" />
+                                    </Stack>
+                                    <Typography variant="caption" color="text.secondary">
+                                        score {fmt(row.score)} · seen {row.observations ?? 1}×
+                                    </Typography>
+                                </Box>
+                            ))}
+                        </Stack>
+                    </Paper>
+                ))}
+            </Box>
+        </Box>
+    );
+}
+
 function EmptyTradeState({ message }) {
     return (
         <Paper variant="outlined" sx={{ p: 3, borderRadius: 3 }}>
@@ -197,15 +244,17 @@ export default function ActiveTrading() {
     const [tradeView, setTradeView] = useState("active");
     const [state, setState] = useState(null);
     const [reviews, setReviews] = useState([]);
+    const [strategySignals, setStrategySignals] = useState([]);
     const [error, setError] = useState("");
 
     useEffect(() => {
         let active = true;
-        Promise.all([getExperiment1State(), getPaperStrategyReviews()])
-            .then(([runtime, strategyReviews]) => {
+        Promise.all([getExperiment1State(), getPaperStrategyReviews(), getResearchStrategySignals()])
+            .then(([runtime, strategyReviews, signalData]) => {
                 if (!active) return;
                 setState(runtime);
                 setReviews(strategyReviews?.reviews || []);
+                setStrategySignals(signalData?.signals || []);
             })
             .catch((err) => { if (active) setError(err?.message || "Не вдалося завантажити runtime state"); });
         return () => { active = false; };
@@ -305,6 +354,8 @@ export default function ActiveTrading() {
                     </Stack>
                 </Paper>
             </Box>
+
+            <ResearchStrategyObservations signals={strategySignals} />
 
             <StrategyReviews reviews={reviews} />
 

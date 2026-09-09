@@ -18,6 +18,11 @@ class MarketDataScannerAdapter(AsyncIbkrUniverseSource):
         self._history_limit = history_limit
         self._instruments: dict[int, MarketInstrument] = {}
 
+    @property
+    def provider(self) -> AsyncMarketDataProvider:
+        """Underlying read-only provider for compatible scanner pipes."""
+        return self._provider
+
     @staticmethod
     def _synthetic_scanner_id(instrument: MarketInstrument) -> int:
         # Scanner identity only, never a broker conid. Stable across restarts.

@@ -97,12 +97,23 @@ jobs:
           sudo systemctl restart markethunter-api
           sudo systemctl is-active --quiet markethunter-api
           "$REPO/.venv/bin/python" - <<'PY'
-          import json, urllib.request
+          import json, time, urllib.request
+          from urllib.error import URLError
+
           url = "http://127.0.0.1:8000/trading-scanner/research-strategy-signals"
-          with urllib.request.urlopen(url, timeout=10) as response:
-              assert response.status == 200, response.status
-              payload = json.load(response)
-          print("research_strategy_signals_api=", len(payload.get("signals", [])))
+          last_error = None
+          for attempt in range(20):
+              try:
+                  with urllib.request.urlopen(url, timeout=5) as response:
+                      assert response.status == 200, response.status
+                      payload = json.load(response)
+                  print("research_strategy_signals_api=", len(payload.get("signals", [])))
+                  break
+              except URLError as exc:
+                  last_error = exc
+                  time.sleep(0.5)
+          else:
+              raise RuntimeError(f"API did not become ready: {last_error}")
           PY
 
           sudo systemctl restart experiment1-runtime.timer

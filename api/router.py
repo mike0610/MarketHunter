@@ -16,6 +16,7 @@ from api.backtest_api import router as backtest
 from api.config_api import router as config
 from api.experiment1_api import router as experiment1
 from api.health_api import router as health
+from api.observability_api import router as observability
 from api.portfolio_api import router as portfolio
 from api.paper_strategy_api import router as paper_strategies
 from api.research_api import router as research
@@ -27,6 +28,7 @@ from api.trading_scanner_api import router as trading_scanner
 router = APIRouter()
 
 router.include_router(health)
+router.include_router(observability)
 router.include_router(scanner)
 router.include_router(backtest)
 router.include_router(portfolio)

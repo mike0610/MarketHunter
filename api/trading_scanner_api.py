@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from trading_scanner.models import QueueState, SetupFamily
 from trading_scanner.store import TradingScannerStore
+from trading_scanner.research_strategy_signal_store import ResearchStrategySignalStore
 
 router = APIRouter(prefix="/trading-scanner", tags=["trading-scanner"])
 
@@ -96,3 +97,27 @@ def get_candidate(dedupe_key: str):
     if candidate is None:
         raise HTTPException(status_code=404, detail="unknown dedupe_key")
     return _candidate_response(candidate)
+
+
+@router.get("/research-strategy-signals")
+def list_research_strategy_signals(limit: int = Query(default=500, ge=1, le=5000)):
+    """Read-only observations emitted by the five unchanged Research strategies."""
+    path = Path(os.getenv("TRADING_SCANNER_RESEARCH_STRATEGY_DB_PATH", "data/research_strategy_signals.db"))
+    rows = ResearchStrategySignalStore(path).list(limit=limit)
+    return {
+        "signals": [
+            {
+                "symbol": row.symbol,
+                "strategy": row.strategy,
+                "direction": row.direction,
+                "score": row.score,
+                "reasons": list(row.reasons),
+                "observed_at": row.observed_at.isoformat(),
+                "first_seen_at": row.first_seen_at.isoformat(),
+                "last_seen_at": row.last_seen_at.isoformat(),
+                "observations": row.observations,
+            }
+            for row in rows
+        ],
+        "simulation_only": True,
+    }

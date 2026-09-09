@@ -1,0 +1,12 @@
+{
+  "object_id": "SL-VAL-TREND-PULLBACK-AGGFLOW-002",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "terminal_states": [
+    "ROBUSTNESS-SUPPORT",
+    "ROBUSTNESS-FAIL",
+    "DEPENDENCE-CONCENTRATED",
+    "BLOCKED-EVIDENCE",
+    "PROVIDER-BLOCKED"
+  ]
+}

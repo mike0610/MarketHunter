@@ -1,0 +1,24 @@
+{
+  "object_id": "SL-VAL-TREND-PULLBACK-AGGFLOW-002",
+  "question": "Does the previously observed WITH-FLOW versus COUNTER-FLOW OOS separation survive predeclared dependence and concentration checks without changing any strategy or flow parameter?",
+  "decision_impact": "Can retain aggregate flow only as a research-local context discriminator, or downgrade/freeze it if the separation is statistically weak, unstable, or concentrated in one side/time slice.",
+  "frozen_from": "SL-VAL-TREND-PULLBACK-AGGFLOW-001",
+  "rules": {
+    "signal_and_execution": "identical to AGGFLOW-001",
+    "oos_start": "2025-01-01",
+    "oos_end_exclusive": "2026-08-01",
+    "permutation_draws": 50000,
+    "permutation_seed": 20260909,
+    "two_sided_alpha": 0.05,
+    "minimum_cell_n": 5,
+    "leave_one_out_required_sign_retention": 0.9,
+    "side_concentration_threshold": 0.8,
+    "parameter_tuning": false
+  },
+  "do_not_infer": [
+    "COUNTER-FLOW is a new trading rule",
+    "aggressive flow creates predictive edge",
+    "profitability survives live execution",
+    "capital sizing or leverage safety"
+  ]
+}

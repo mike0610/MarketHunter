@@ -32,10 +32,13 @@ def _aware(value: datetime, field_name: str) -> None:
 
 class SetupFamily(str, Enum):
     """
-    The exact three v1 setup families the dispatch scoped - do not add
-    a fourth without a new dispatch. Each is a closed, deterministic
-    classification rule (see trading_scanner/setups.py), never a
-    learned/ranked score.
+    Candidate-family identity used by the Trading Candidate Queue.
+
+    The first three values are the original scanner v1 classifiers.
+    The additional five values identify unchanged Research strategy
+    implementations piped into this queue for cross-asset observation.
+    Their strategy rules remain owned by strategies/ and are not
+    reimplemented in trading_scanner.
     """
 
     MOMENTUM_RELATIVE_STRENGTH = "MOMENTUM_RELATIVE_STRENGTH"

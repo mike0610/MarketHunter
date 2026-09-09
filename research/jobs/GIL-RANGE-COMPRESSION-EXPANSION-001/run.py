@@ -320,9 +320,31 @@ def main() -> int:
         if not deterministic:
             raise RuntimeError("deterministic rerun mismatch")
 
+        def side_pass(side_result: dict) -> bool:
+            def summary_pass(s: dict) -> bool:
+                if not s["trades"] or s["net_expectancy"] is None or s["net_expectancy"] <= 0:
+                    return False
+                if s["losses"] == 0:
+                    return s["wins"] > 0
+                return s["profit_factor"] is not None and s["profit_factor"] > 1.0
+
+            if not summary_pass(side_result["oos"]):
+                return False
+            if any(not summary_pass(s) for s in side_result["leave_one_symbol_out"].values()):
+                return False
+            if any(not summary_pass(s) for s in side_result["leave_one_year_out"].values()):
+                return False
+            return True
+
+        long_pass = side_pass(core1["sides"]["LONG"])
+        short_pass = side_pass(core1["sides"]["SHORT"])
+        long_state = "PROMOTION" if long_pass else "REJECTED"
+        short_state = "PROMOTION" if short_pass else "REJECTED"
+        terminal_state = f"LONG-{long_state}__SHORT-{short_state}"
+
         payload = {
             "object_id": OBJECT_ID,
-            "terminal_state": "VALIDATION-EVIDENCE",
+            "terminal_state": terminal_state,
             "executed_at_utc": datetime.now(timezone.utc).isoformat(),
             "hypothesis": "RANGE_COMPRESSION_EXPANSION_v0.1",
             "frozen_universe": list(UNIVERSE),
@@ -352,7 +374,7 @@ def main() -> int:
         (out / "terminal_result.json").write_bytes(raw)
         (out / "validation_pretty.json").write_text(json.dumps(payload, indent=2, sort_keys=True))
         (out / "evidence.sha256").write_text(hashlib.sha256(raw).hexdigest() + "  terminal_result.json\n")
-        print("TERMINAL_STATE=VALIDATION-EVIDENCE")
+        print("TERMINAL_STATE=" + terminal_state)
         return 0
     except Exception as exc:
         payload = {

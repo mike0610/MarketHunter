@@ -56,6 +56,8 @@ class FakeStrategy:
     async def analyze(self, snapshot):
         return Signal(
             symbol=snapshot.symbol,
+            market="stock",
+            timeframe="1d",
             strategy="Compression",
             direction="LONG",
             score=87.0,

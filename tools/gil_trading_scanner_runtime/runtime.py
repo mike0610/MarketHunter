@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from datetime import datetime, timezone
 import logging
 import os
 import sys
@@ -17,6 +18,7 @@ from market_data.yahoo_provider import YahooChartDailyProvider
 from trading_scanner.market_data_adapter import MarketDataScannerAdapter
 from trading_scanner.scan import run_scan_cycle
 from trading_scanner.research_strategy_pipe import scan_existing_research_strategies
+from trading_scanner.research_strategy_signal_store import ResearchStrategySignalStore
 from trading_scanner.store import TradingScannerStore
 
 logger = logging.getLogger("gil_trading_scanner_runtime.runtime")
@@ -75,6 +77,11 @@ def run_once():
         return native, piped
 
     result, piped = asyncio.run(run_all())
+    piped_store_path = os.getenv("TRADING_SCANNER_RESEARCH_STRATEGY_DB_PATH", "data/research_strategy_signals.db")
+    ResearchStrategySignalStore(piped_store_path).record_many(
+        piped,
+        seen_at=datetime.now(timezone.utc),
+    )
     logger.info(
         "scanner cycle complete - contracts_seen=%d native_candidates=%d piped_research_strategy_candidates=%d",
         result.contracts_seen,

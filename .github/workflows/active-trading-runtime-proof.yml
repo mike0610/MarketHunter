@@ -1,6 +1,7 @@
 name: Active Trading Runtime Proof
 
 on:
+  workflow_dispatch:
   push:
     branches: [master]
     paths:

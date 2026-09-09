@@ -249,14 +249,14 @@ export default function ActiveTrading() {
 
     useEffect(() => {
         let active = true;
-        Promise.all([getExperiment1State(), getPaperStrategyReviews(), getResearchStrategySignals()])
-            .then(([runtime, strategyReviews, signalData]) => {
+        Promise.allSettled([getExperiment1State(), getPaperStrategyReviews(), getResearchStrategySignals()])
+            .then(([runtimeResult, reviewsResult, signalsResult]) => {
                 if (!active) return;
-                setState(runtime);
-                setReviews(strategyReviews?.reviews || []);
-                setStrategySignals(signalData?.signals || []);
-            })
-            .catch((err) => { if (active) setError(err?.message || "Не вдалося завантажити runtime state"); });
+                if (runtimeResult.status === "fulfilled") setState(runtimeResult.value);
+                else setError(runtimeResult.reason?.message || "Не вдалося завантажити runtime state");
+                if (reviewsResult.status === "fulfilled") setReviews(reviewsResult.value?.reviews || []);
+                if (signalsResult.status === "fulfilled") setStrategySignals(signalsResult.value?.signals || []);
+            });
         return () => { active = false; };
     }, []);
 

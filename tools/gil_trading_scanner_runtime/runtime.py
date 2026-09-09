@@ -16,7 +16,7 @@ from market_data.twelve_data_provider import TwelveDataDailyProvider
 from market_data.yahoo_provider import YahooChartDailyProvider
 from trading_scanner.market_data_adapter import MarketDataScannerAdapter
 from trading_scanner.scan import run_scan_cycle
-from trading_scanner.research_strategy_pipe import run_research_strategy_pipe
+from trading_scanner.research_strategy_pipe import scan_existing_research_strategies
 from trading_scanner.store import TradingScannerStore
 
 logger = logging.getLogger("gil_trading_scanner_runtime.runtime")
@@ -68,9 +68,8 @@ def run_once():
     store = TradingScannerStore(_resolve_db_path())
     async def run_all():
         native = await run_scan_cycle(source, store, session_state=SessionState.REGULAR)
-        piped = await run_research_strategy_pipe(
+        piped = await scan_existing_research_strategies(
             source.provider,
-            store,
             history_limit=int(os.getenv("TRADING_SCANNER_RESEARCH_STRATEGY_HISTORY_LIMIT", "500")),
         )
         return native, piped

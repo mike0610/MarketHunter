@@ -48,7 +48,7 @@ def st(a):
 
 def evaluate(symbol):
  rows=[];files=[]
-  for y in range(2020,2027):
+ for y in range(2020,2027):
    for m in range(1,13):
     d=datetime(y,m,1,tzinfo=timezone.utc)
     if d<WARM or d>=END:continue

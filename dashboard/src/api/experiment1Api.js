@@ -14,4 +14,9 @@ export async function getPaperStrategyReviews() {
     return response.data;
 }
 
+export async function getResearchStrategySignals() {
+    const response = await api.get("/trading-scanner/research-strategy-signals");
+    return response.data;
+}
+
 export default api;

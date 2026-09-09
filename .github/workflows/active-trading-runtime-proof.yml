@@ -49,8 +49,9 @@ jobs:
           echo '=== LATEST RUNTIME ==='
           journalctl -u experiment1-runtime.service -n 100 --no-pager
 
-          journalctl -u experiment1-runtime.service -n 100 --no-pager | grep -q 'Trading Slack transport:'
-          if journalctl -u experiment1-runtime.service -n 100 --no-pager | grep -q 'not_in_channel'; then
+          journal="$(journalctl -u experiment1-runtime.service -n 100 --no-pager)"
+          grep -q 'Trading Slack transport:' <<<"$journal"
+          if grep -q 'not_in_channel' <<<"$journal"; then
             exit 4
           fi
 

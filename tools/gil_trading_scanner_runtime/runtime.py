@@ -16,6 +16,7 @@ from market_data.twelve_data_provider import TwelveDataDailyProvider
 from market_data.yahoo_provider import YahooChartDailyProvider
 from trading_scanner.market_data_adapter import MarketDataScannerAdapter
 from trading_scanner.scan import run_scan_cycle
+from trading_scanner.research_strategy_pipe import run_research_strategy_pipe
 from trading_scanner.store import TradingScannerStore
 
 logger = logging.getLogger("gil_trading_scanner_runtime.runtime")
@@ -65,11 +66,21 @@ def run_once():
         return None
 
     store = TradingScannerStore(_resolve_db_path())
-    result = asyncio.run(run_scan_cycle(source, store, session_state=SessionState.REGULAR))
+    async def run_all():
+        native = await run_scan_cycle(source, store, session_state=SessionState.REGULAR)
+        piped = await run_research_strategy_pipe(
+            source.provider,
+            store,
+            history_limit=int(os.getenv("TRADING_SCANNER_RESEARCH_STRATEGY_HISTORY_LIMIT", "500")),
+        )
+        return native, piped
+
+    result, piped = asyncio.run(run_all())
     logger.info(
-        "scanner cycle complete - contracts_seen=%d candidates_recorded=%d",
+        "scanner cycle complete - contracts_seen=%d native_candidates=%d piped_research_strategy_candidates=%d",
         result.contracts_seen,
         len(result.candidates_recorded),
+        len(piped),
     )
     return result
 

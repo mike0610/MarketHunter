@@ -32,23 +32,15 @@ def _aware(value: datetime, field_name: str) -> None:
 
 class SetupFamily(str, Enum):
     """
-    Candidate-family identity used by the Trading Candidate Queue.
-
-    The first three values are the original scanner v1 classifiers.
-    The additional five values identify unchanged Research strategy
-    implementations piped into this queue for cross-asset observation.
-    Their strategy rules remain owned by strategies/ and are not
-    reimplemented in trading_scanner.
+    The exact three v1 setup families the dispatch scoped - do not add
+    a fourth without a new dispatch. Each is a closed, deterministic
+    classification rule (see trading_scanner/setups.py), never a
+    learned/ranked score.
     """
 
     MOMENTUM_RELATIVE_STRENGTH = "MOMENTUM_RELATIVE_STRENGTH"
     ABNORMAL_VOLUME_CATALYST = "ABNORMAL_VOLUME_CATALYST"
     BREAKOUT_OR_PULLBACK_IN_TREND = "BREAKOUT_OR_PULLBACK_IN_TREND"
-    PREMIUM_DISCOUNT = "PremiumDiscount"
-    BREAKOUT = "Breakout"
-    ORDER_BLOCK = "OrderBlock"
-    COMPRESSION = "Compression"
-    LIQUIDITY_SWEEP = "LiquiditySweep"
 
 
 class QueueState(str, Enum):
@@ -200,8 +192,6 @@ class TradingCandidate:
     signal_bar_high: Decimal | None = None
     signal_bar_low: Decimal | None = None
     reject_reason: str | None = None
-    signal_direction: str | None = None
-    signal_score: Decimal | None = None
 
     def __post_init__(self) -> None:
         _nonblank(self.symbol, "symbol")
@@ -229,9 +219,3 @@ class TradingCandidate:
             raise ValueError("signal_bar_low cannot exceed signal_bar_high")
         if self.queue_state in (QueueState.CANDIDATE, QueueState.WATCH) and self.reject_reason:
             raise ValueError(f"{self.queue_state.value} must not carry a reject_reason")
-        if self.signal_direction is not None:
-            normalized_direction = self.signal_direction.strip().upper()
-            if normalized_direction not in {"LONG", "SHORT"}:
-                raise ValueError("signal_direction must be LONG or SHORT when present")
-        if self.signal_score is not None and self.signal_score < 0:
-            raise ValueError("signal_score must be non-negative when present")

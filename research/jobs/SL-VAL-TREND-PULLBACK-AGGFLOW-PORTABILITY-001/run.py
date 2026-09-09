@@ -1,4 +1,4 @@
-import argparse,csv,hashlib,io,json,math,urllib.request,zipfile
+import argparse,csv,hashlib,io,json,math,urllib.request,urllib.error,zipfile
 from datetime import datetime,timezone
 from pathlib import Path
 
@@ -47,14 +47,17 @@ def st(a):
  return {'n':len(a),'mean':sum(a)/len(a),'median':med,'hit':sum(x>0 for x in a)/len(a),'pf':g/l if l else None,'cum':eq-1,'max_dd':dd}
 
 def evaluate(symbol):
- try:
-  rows=[];files=[]
+ rows=[];files=[]
   for y in range(2020,2027):
    for m in range(1,13):
     d=datetime(y,m,1,tzinfo=timezone.utc)
     if d<WARM or d>=END:continue
-    a,b=mon(symbol,y,m);rows+=a;files.append(b)
- except Exception as e: emit(out,'PROVIDER-BLOCKED',reason=repr(e),parameter_tuning=False);return
+    try:a,b=mon(symbol,y,m)
+    except urllib.error.HTTPError as e:
+     if e.code==404:continue
+     raise
+    rows+=a;files.append(b)
+ if not rows:raise ValueError('no spot history '+symbol)
  rows.sort(key=lambda x:x['ts'])
  # Historical USD-M futures 4h klines expose total base volume and taker-buy base volume.
  # This is the same bucket-level aggressive-flow quantity needed by the frozen test,

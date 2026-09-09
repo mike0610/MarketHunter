@@ -38,6 +38,7 @@ from market_data.twelve_data_provider import TwelveDataDailyProvider
 from experiment1.alpaca_sip_evidence import build_alpaca_sip_evidence_source
 from experiment1.twelve_data_evidence import build_twelve_data_evidence_source
 from experiment1.engine import Experiment1Engine, Experiment1Error, STARTING_CASH
+from experiment1.direct_positive_strategy_bridge import run_direct_positive_strategy_bridge
 from experiment1.gil_decision import GilIngestionResult, drain_gil_decision_inbox
 from experiment1.lifecycle import LifecycleResult, run_protective_exit_cycle
 from experiment1.market_data_evidence import EvidenceGrade, EvidenceGuardedQuoteSource
@@ -366,6 +367,16 @@ def main(argv: list[str] | None = None) -> None:
 
     _poll_optional_slack_transport(engine)
     _poll_optional_trading_slack_transport(engine)
+    direct_bridge = run_direct_positive_strategy_bridge(engine)
+    logger.info(
+        "direct positive-strategy bridge: enabled=%s bootstrapped=%s eligible=%d queued=%d existing=%d unsupported=%d",
+        direct_bridge.enabled,
+        direct_bridge.bootstrapped,
+        direct_bridge.eligible,
+        direct_bridge.queued,
+        direct_bridge.skipped_existing,
+        direct_bridge.skipped_unsupported,
+    )
     logger.info("GIL investment discovery: %s", run_optional_investment_discovery())
     logger.info("GIL investment research: %s", run_optional_investment_research())
 

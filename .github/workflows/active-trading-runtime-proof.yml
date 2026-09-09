@@ -64,6 +64,12 @@ jobs:
           print("intents=", con.execute("select count(*) from experiment1_intents").fetchone()[0])
           print("fills=", con.execute("select count(*) from experiment1_fills").fetchone()[0])
           con.close()
+
+          strategy_con = sqlite3.connect("data/research_strategy_signals.db")
+          strategy_names = {row[0] for row in strategy_con.execute("select name from sqlite_master where type='table'")}
+          assert "research_strategy_signals" in strategy_names
+          print("research_strategy_signals=", strategy_con.execute("select count(*) from research_strategy_signals").fetchone()[0])
+          strategy_con.close()
           PY
 
           systemctl is-active --quiet experiment1-runtime.timer

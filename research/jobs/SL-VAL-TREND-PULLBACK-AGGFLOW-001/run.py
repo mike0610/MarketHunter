@@ -1,4 +1,4 @@
-import argparse,csv,hashlib,io,json,math,urllib.request,zipfile,tempfile,os
+import argparse,csv,hashlib,io,json,math,urllib.request,zipfile
 from datetime import datetime,timezone
 from pathlib import Path
 
@@ -57,44 +57,30 @@ def main(out,job):
     a,b=mon(y,m);rows+=a;files.append(b)
  except Exception as e: emit(out,'PROVIDER-BLOCKED',reason=repr(e),parameter_tuning=False);return
  rows.sort(key=lambda x:x['ts'])
- # Historical USD-M futures aggregate trades are reduced to 4h aggressive-flow buckets.
+ # Historical USD-M futures 4h klines expose total base volume and taker-buy base volume.
+ # This is the same bucket-level aggressive-flow quantity needed by the frozen test,
+ # without downloading and reconstructing every individual aggregate trade.
  flow={}
  def flowmon(y,m):
-  n=f'BTCUSDT-aggTrades-{y}-{m:02d}.zip';u=f'https://data.binance.vision/data/futures/um/monthly/aggTrades/BTCUSDT/{n}'
-  e=get(u+'.CHECKSUM').decode().split()[0].lower()
-  req=urllib.request.Request(u,headers={'User-Agent':'MarketHunter-Research/1.0'})
-  h=hashlib.sha256()
-  with tempfile.NamedTemporaryFile(suffix='.zip',delete=False) as t:
-   tmp=t.name
-   with urllib.request.urlopen(req,timeout=30) as resp:
-    while True:
-     chunk=resp.read(1024*1024)
-     if not chunk:break
-     h.update(chunk);t.write(chunk)
-  a=h.hexdigest()
-  if e!=a:
-   os.unlink(tmp);raise ValueError('checksum '+n)
-  try:
-   with zipfile.ZipFile(tmp) as q:
-    rd=csv.DictReader(io.TextIOWrapper(q.open([v for v in q.namelist() if not v.endswith('/')][0])))
-    for x in rd:
-     try:
-      ts=int(x.get('transact_time') or x.get('T') or x.get('timestamp'));qty=float(x.get('quantity') or x.get('q'));maker=str(x.get('is_buyer_maker') or x.get('m')).lower()=='true'
-     except:continue
-     sec=ts/1e6 if ts>10**14 else ts/1e3;bucket=int(sec//14400*14400);d=flow.setdefault(bucket,[0.,0.])
-     if maker:d[1]+=qty
-     else:d[0]+=qty
-  finally:os.unlink(tmp)
+  n=f'BTCUSDT-4h-{y}-{m:02d}.zip';u=f'https://data.binance.vision/data/futures/um/monthly/klines/BTCUSDT/4h/{n}'
+  z=get(u);e=get(u+'.CHECKSUM').decode().split()[0].lower();a=hashlib.sha256(z).hexdigest()
+  if e!=a: raise ValueError('checksum '+n)
+  with zipfile.ZipFile(io.BytesIO(z)) as q:
+   for x in csv.reader(io.TextIOWrapper(q.open([v for v in q.namelist() if not v.endswith('/')][0]))):
+    try:
+     raw=int(x[0]);vol=float(x[5]);taker_buy=float(x[9])
+    except:continue
+    sec=raw/1e6 if raw>10**14 else raw/1e3;bucket=int(sec)
+    if vol>0:flow[bucket]=[taker_buy,max(0.,vol-taker_buy)]
   return {'url':u,'sha256':a}
  try:
   # Outcome-blind complexity reduction: only months that can contain OOS signal context.
-  # Frozen market verdict is OOS-only (split 2025-01-01); 3 prior 4h buckets need no 2024 archive.
   for y in range(2025,2027):
    for m in range(1,13):
     d=datetime(y,m,1,tzinfo=timezone.utc)
     if d>=END or d<datetime(2025,1,1,tzinfo=timezone.utc):continue
     files.append(flowmon(y,m))
- except Exception as e:emit(out,'PROVIDER-BLOCKED',reason='aggflow '+repr(e),parameter_tuning=False);return
+ except Exception as e:emit(out,'PROVIDER-BLOCKED',reason='aggflow-kline '+repr(e),parameter_tuning=False);return
  events=[];last=-10**9
  for i in range(max(TREND,PULL,ROLL)+1,len(rows)-HOLD):
   b=rows[i]
@@ -132,7 +118,7 @@ def main(out,job):
  elif abs((wf['mean'] or 0)-(cf['mean'] or 0))>=.0025:v='AGGFLOW-CONTEXT-SUPPORTED'
  else:v='AGGFLOW-CONTEXT-NOT-SUPPORTED'
  emit(out,'OUTCOME-COMPLETE',
-      contract={'market':'BTCUSDT Spot','tf':'4h','trend':'strictly-prior 180-bar return sign','pullback':'3-bar counter-trend move whose absolute return exceeds strictly-prior 1080-bar 90th percentile','entry':'next_bar_open','hold_bars':12,'decluster_bars':18,'cost':.001,'cost_stress':.002,'split':'2025-01-01','no_sl_tp':True,'aggflow_context':'mean signed aggressive base-volume imbalance over three strictly-prior completed 4h USD-M futures aggTrade buckets','parameter_tuning':False},
+      contract={'market':'BTCUSDT Spot','tf':'4h','trend':'strictly-prior 180-bar return sign','pullback':'3-bar counter-trend move whose absolute return exceeds strictly-prior 1080-bar 90th percentile','entry':'next_bar_open','hold_bars':12,'decluster_bars':18,'cost':.001,'cost_stress':.002,'split':'2025-01-01','no_sl_tp':True,'aggflow_context':'mean signed aggressive base-volume imbalance over three strictly-prior completed 4h USD-M futures kline buckets using taker-buy base volume versus total base volume','parameter_tuning':False},
       is_stats=st([x['net'] for x in events if x['period']=='IS']),
       oos_stats_10bps=s,oos_stats_20bps=s20,
       oos_long=st([x['net'] for x in o if x['side']=='LONG']),
@@ -140,7 +126,7 @@ def main(out,job):
       oos_with_flow=wf,oos_counter_flow=cf,
       oos_top_positive_trade_share=top,terminal_verdict=v,event_count=len(events),source_files=files,
       parameter_tuning=False,
-      limitations=['single BTC structural strategy + BTC USD-M futures aggregate-trade context','fixed hold without stop/target','no spread/slippage beyond fixed round-trip cost','candidate requires separate robustness and capital-survival gate'])
+      limitations=['single BTC structural strategy + BTC USD-M futures aggressive-flow context','fixed hold without stop/target','no spread/slippage beyond fixed round-trip cost','candidate requires separate robustness and capital-survival gate'])
 if __name__=='__main__':
  a=argparse.ArgumentParser();a.add_argument('--job',required=True);a.add_argument('--output',required=True);q=a.parse_args();main(q.output,q.job)
 

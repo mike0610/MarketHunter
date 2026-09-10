@@ -1,0 +1,11 @@
+{
+  "object_id": "SL-STATS-MFE-GIVEBACK-BARPATH-001",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "terminal_states": [
+    "BARPATH-ADEQUATE",
+    "BARPATH-INCONSISTENT",
+    "BLOCKED-EVIDENCE",
+    "PROVIDER-BLOCKED"
+  ]
+}

@@ -35,3 +35,30 @@ def test_paper_strategy_reviews_api_is_read_only_and_serializes_metrics():
             assert row["average_net_r"]=="-0.2"
             assert row["profit_factor_r"]=="0.6"
             assert row["reason"]=="negative evidence"
+
+def test_strategy_lab_statistics_is_one_read_only_sl_view():
+    with tempfile.TemporaryDirectory() as td:
+        path=Path(td)/"reviews.db"
+        with mock.patch.dict("os.environ",{"PAPER_STRATEGY_REVIEW_DB_PATH":str(path)}):
+            store=PaperStrategyReviewStore(path)
+            store.upsert(PaperStrategyReview(
+                "SL1","SL","Sweep","1","H1",12,12,7,5,0,Decimal("0.25"),Decimal("1.4"),
+                Decimal("-2"),Decimal("18"),Decimal("2"),PaperReviewStatus.PAPER_ACTIVE,
+                "collecting evidence",NOW))
+            store.upsert(PaperStrategyReview(
+                "G1","GIL","Trend","1","H2",20,20,12,8,0,Decimal("0.15"),Decimal("1.2"),
+                Decimal("-1"),Decimal("30"),Decimal("3"),PaperReviewStatus.PAPER_ACTIVE,
+                "collecting evidence",NOW))
+            response=TestClient(app).get("/strategy-lab/statistics")
+            assert response.status_code==200
+            payload=response.json()
+            assert payload["simulation_only"] is True
+            assert payload["research_track"]=="SL"
+            assert payload["summary"]["strategies"]==1
+            assert payload["summary"]["closed_trades"]==12
+            assert payload["summary"]["wins"]==7
+            assert payload["summary"]["losses"]==5
+            assert payload["summary"]["net_pnl"]=="18"
+            assert len(payload["strategies"])==1
+            assert payload["strategies"][0]["strategy_id"]=="Sweep"
+            assert payload["strategies"][0]["research_track"]=="SL"

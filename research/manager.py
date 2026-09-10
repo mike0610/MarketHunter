@@ -205,10 +205,17 @@ class ResearchManager:
         signal.metadata["research_group"] = research_group
         signal.metadata["experiment_tag"] = experiment_tag
 
+        # `mtf_context` is the existing structured JSON column carried by
+        # ResearchTrade. Preserve MTF keys and breaker lifecycle keys here so
+        # the monitor can consume exact machine-readable invalidation geometry
+        # without parsing rounded human-readable reasons.
         mtf_context = {
             key: value
             for key, value in signal.metadata.items()
-            if key.startswith("mtf_")
+            if (
+                key.startswith("mtf_")
+                or key.startswith("breaker_")
+            )
         }
 
         trade = ResearchTrade(

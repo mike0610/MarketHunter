@@ -36,11 +36,19 @@ class BreakerStrategy(BaseStrategy):
         if block is None:
             return None
 
+        inside = self.breaker.inside(snapshot)
+
+        # A bullish breaker setup is actionable only while price is actually
+        # trading inside the detected breaker block. Previously the presence
+        # of any historical bullish block was enough to emit a LONG signal,
+        # which allowed stale zones to trigger entries far below the zone.
+        if not inside:
+            return None
+
         score = 80
 
         trend = self.trend.bullish(snapshot)
         volume = self.volume.bullish(snapshot)
-        inside = self.breaker.inside(snapshot)
 
         if trend:
             score += 10
@@ -71,11 +79,9 @@ class BreakerStrategy(BaseStrategy):
                 "Breaker retest confirmed"
             )
 
-        if inside:
-
-            signal.add_reason(
-                "Price inside breaker"
-            )
+        signal.add_reason(
+            "Price inside breaker"
+        )
 
         if trend:
 

@@ -1,0 +1,91 @@
+name: Deploy Strategy Lab Statistics
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/deploy-strategy-lab-statistics.yml"
+      - "api/**"
+      - "trading_scanner/paper_strategy_review.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: strategy-lab-statistics-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy-and-prove:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VPS_HOST: 149.56.45.39
+      VPS_USER: ubuntu
+      VPS_REPO: /home/ubuntu/MarketHunter
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+      EXPECTED_SHA: ${{ github.sha }}
+
+    steps:
+      - name: Fail closed when SSH secret is unavailable
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}" || { echo "missing SSH secret"; exit 2; }
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/markethunter_vps_ed25519
+          chmod 600 ~/.ssh/markethunter_vps_ed25519
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Deploy API and prove Strategy Lab statistics
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEY="$HOME/.ssh/markethunter_vps_ed25519"
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -i "$KEY" \
+            "${VPS_USER}@${VPS_HOST}" "EXPECTED_SHA='${EXPECTED_SHA}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          REPO=/home/ubuntu/MarketHunter
+          cd "$REPO"
+          git fetch origin master
+          git checkout master
+          git pull --ff-only origin master
+          DEPLOYED_SHA=$(git rev-parse HEAD)
+          echo "DEPLOYED_SHA=$DEPLOYED_SHA"
+          test "$DEPLOYED_SHA" = "$EXPECTED_SHA"
+
+          sudo systemctl restart markethunter-api
+          sudo systemctl is-active --quiet markethunter-api
+
+          "$REPO/.venv/bin/python" - <<'PY'
+          import json
+          import time
+          import urllib.request
+
+          url = "http://127.0.0.1:8000/strategy-lab/statistics"
+          last_error = None
+          for _ in range(30):
+              try:
+                  with urllib.request.urlopen(url, timeout=5) as response:
+                      assert response.status == 200, response.status
+                      payload = json.load(response)
+                  assert "summary" in payload, payload
+                  assert "strategies" in payload, payload
+                  print("strategy_lab_statistics_api=PASS")
+                  print("strategy_count=", len(payload.get("strategies", [])))
+                  break
+              except Exception as exc:
+                  last_error = exc
+                  time.sleep(1)
+          else:
+              raise RuntimeError(f"Strategy Lab statistics endpoint not ready: {last_error}")
+          PY
+
+          echo 'STRATEGY_LAB_STATISTICS_DEPLOY_PROOF=PASS'
+          REMOTE

@@ -1,0 +1,11 @@
+{
+  "object_id": "SL-RISK-LOSS-DEPENDENCE-001",
+  "executor": "vps",
+  "timeout_minutes": 10,
+  "terminal_states": [
+    "COMMON-MODE-LOSS-SIGNAL",
+    "NO-BROAD-LOSS-DEPENDENCE",
+    "INCONCLUSIVE-LOSS-DEPENDENCE",
+    "BLOCKED-EVIDENCE"
+  ]
+}

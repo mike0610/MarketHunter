@@ -96,6 +96,7 @@ jobs:
 
           sudo systemctl restart markethunter-api
           sudo systemctl is-active --quiet markethunter-api
+          sleep 5
           "$REPO/.venv/bin/python" - <<'PY'
           import json, urllib.request
           url = "http://127.0.0.1:8000/trading-scanner/research-strategy-signals"

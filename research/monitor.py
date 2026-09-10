@@ -7,7 +7,7 @@ Trade Monitor
 Responsibilities:
 - Activate virtual trades after entry is touched.
 - Track favorable and adverse price movement.
-- Close virtual trades by TP, SL or expiry.
+- Close virtual trades by setup invalidation, TP, SL or expiry.
 - Prevent duplicate processing of the same candle.
 """
 
@@ -25,9 +25,14 @@ class TradeMonitor:
     """
     Updates ResearchTrade records using completed market candles.
 
-    Conservative rule:
-    when one candle reaches both TP and SL, Stop Loss is considered
-    to trigger first. This avoids optimistic backtest bias.
+    Breaker trades use thesis invalidation as their primary managed exit:
+    a completed candle must close through the machine-readable breaker
+    invalidation boundary. The ordinary Stop Loss remains a fail-safe for
+    adverse intrabar movement when the setup has not closed invalid yet.
+
+    For non-Breaker trades, the conservative legacy rule remains unchanged:
+    when one candle reaches both TP and SL, Stop Loss is considered to
+    trigger first. This avoids optimistic backtest bias.
     """
 
     def __init__(
@@ -114,7 +119,17 @@ class TradeMonitor:
         trade.active_candles += 1
         trade.last_processed_candle_at = candle.close_time
 
-        if self._stop_hit(
+        if self._breaker_invalidated(
+            trade=trade,
+            candle=candle,
+        ):
+            trade.close(
+                price=candle.close,
+                reason="BREAKER_INVALIDATED",
+                closed_at=candle.close_time,
+            )
+
+        elif self._stop_hit(
             trade=trade,
             candle=candle,
         ):
@@ -146,6 +161,44 @@ class TradeMonitor:
         self.repository.save(trade)
 
         return trade
+
+    def _breaker_invalidated(
+        self,
+        trade: ResearchTrade,
+        candle: Candle,
+    ) -> bool:
+        """
+        Return True when a Breaker thesis is invalidated on candle close.
+
+        New Breaker trades carry exact structured geometry in mtf_context.
+        Legacy Breaker trades without those keys keep the old lifecycle and
+        therefore cannot be silently reinterpreted after the fact.
+        """
+
+        if trade.strategy.strip().lower() != "breaker":
+            return False
+
+        context = trade.mtf_context or {}
+        price = context.get("breaker_invalidation_price")
+        rule = str(
+            context.get("breaker_invalidation_rule") or ""
+        ).strip().lower()
+
+        try:
+            boundary = float(price)
+        except (
+            TypeError,
+            ValueError,
+        ):
+            return False
+
+        if rule == "close_below":
+            return candle.close < boundary
+
+        if rule == "close_above":
+            return candle.close > boundary
+
+        return False
 
     def _already_processed(
         self,

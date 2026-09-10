@@ -1,0 +1,12 @@
+{
+  "object_id": "SL-STATS-MFE-GIVEBACK-001",
+  "executor": "vps",
+  "timeout_minutes": 10,
+  "terminal_states": [
+    "BROAD-GIVEBACK-SIGNAL",
+    "CONCENTRATED-GIVEBACK-SIGNAL",
+    "WEAK-GIVEBACK-SIGNAL",
+    "BLOCKED-EVIDENCE",
+    "PROVIDER-BLOCKED"
+  ]
+}

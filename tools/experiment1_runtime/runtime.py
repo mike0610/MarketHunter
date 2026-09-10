@@ -287,7 +287,7 @@ def _poll_optional_trading_slack_transport(engine: Experiment1Engine) -> None:
             SlackWebApiHistoryClient(token),
             config=trading_config_from_env(),
         )
-    except TradingSlackTransportError as exc:
+    except (TradingSlackTransportError, SlackTransportError) as exc:
         logger.warning("Trading Slack transport unavailable - %s", exc)
         return
     logger.info(

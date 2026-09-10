@@ -19,6 +19,7 @@ from api.health_api import router as health
 from api.observability_api import router as observability
 from api.portfolio_api import router as portfolio
 from api.paper_strategy_api import router as paper_strategies
+from api.paper_strategy_api import strategy_lab_router as strategy_lab_statistics
 from api.research_api import router as research
 from api.scanner_api import router as scanner
 from api.signal_api import router as signals
@@ -33,6 +34,7 @@ router.include_router(scanner)
 router.include_router(backtest)
 router.include_router(portfolio)
 router.include_router(paper_strategies)
+router.include_router(strategy_lab_statistics)
 router.include_router(signals)
 router.include_router(config)
 router.include_router(research)

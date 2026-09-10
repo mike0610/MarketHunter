@@ -43,7 +43,7 @@ jobs:
           chmod 600 ~/.ssh/markethunter_vps_ed25519
           ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
 
-      - name: Deploy API and prove Strategy Lab statistics
+      - name: Deploy API and prove internal Strategy Lab statistics
         shell: bash
         run: |
           set -euo pipefail
@@ -62,6 +62,7 @@ jobs:
 
           sudo systemctl restart markethunter-api
           sudo systemctl is-active --quiet markethunter-api
+          sudo systemctl is-active --quiet nginx
 
           "$REPO/.venv/bin/python" - <<'PY'
           import json
@@ -77,8 +78,7 @@ jobs:
                       payload = json.load(response)
                   assert "summary" in payload, payload
                   assert "strategies" in payload, payload
-                  print("strategy_lab_statistics_api=PASS")
-                  print("strategy_count=", len(payload.get("strategies", [])))
+                  print("strategy_lab_statistics_internal=PASS")
                   break
               except Exception as exc:
                   last_error = exc
@@ -87,5 +87,27 @@ jobs:
               raise RuntimeError(f"Strategy Lab statistics endpoint not ready: {last_error}")
           PY
 
-          echo 'STRATEGY_LAB_STATISTICS_DEPLOY_PROOF=PASS'
+          echo '=== NGINX ROUTING SUMMARY ==='
+          sudo nginx -T 2>/dev/null | grep -E 'server_name|listen |location /api|proxy_pass' || true
           REMOTE
+
+      - name: Prove public Strategy Lab statistics URL
+        shell: bash
+        run: |
+          set -euo pipefail
+          PUBLIC_URL="http://${VPS_HOST}/api/strategy-lab/statistics"
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          url = f"http://{os.environ['VPS_HOST']}/api/strategy-lab/statistics"
+          with urllib.request.urlopen(url, timeout=15) as response:
+              assert response.status == 200, response.status
+              payload = json.load(response)
+          assert payload.get("research_track") == "SL", payload
+          assert isinstance(payload.get("summary"), dict), payload
+          assert isinstance(payload.get("strategies"), list), payload
+          print(f"STRATEGY_LAB_STATISTICS_PUBLIC_PROOF=PASS url={url}")
+          print("strategy_count=", len(payload["strategies"]))
+          PY

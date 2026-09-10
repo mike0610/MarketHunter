@@ -108,7 +108,12 @@ jobs:
 
           sudo systemctl restart experiment1-runtime.timer
           sudo systemctl is-active --quiet experiment1-runtime.timer
-          sudo systemctl start experiment1-runtime.service
+          if ! sudo systemctl start experiment1-runtime.service; then
+            echo '=== RUNTIME FAILURE EVIDENCE ==='
+            sudo systemctl status experiment1-runtime.service --no-pager || true
+            journalctl -u experiment1-runtime.service -n 120 --no-pager || true
+            exit 4
+          fi
           sudo systemctl is-failed experiment1-runtime.service >/dev/null && exit 4 || true
 
           echo '=== RUNTIME LOG ==='

@@ -65,6 +65,14 @@ class BreakerStrategy(BaseStrategy):
             score=score,
         )
 
+        # Keep exact machine-readable breaker geometry with the signal.
+        # This is intentionally separate from human-readable reasons so
+        # downstream exit logic never has to parse rounded text.
+        signal.metadata["breaker_zone_low"] = block.low
+        signal.metadata["breaker_zone_high"] = block.high
+        signal.metadata["breaker_invalidation_price"] = block.low
+        signal.metadata["breaker_invalidation_rule"] = "close_below"
+
         signal.add_reason(
             "Bullish Breaker Block"
         )

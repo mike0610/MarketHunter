@@ -1,0 +1,11 @@
+{
+  "object_id": "SL-RISK-LOSS-STREAK-CLUSTER-001",
+  "executor": "vps",
+  "timeout_minutes": 12,
+  "terminal_states": [
+    "STREAK-CLUSTER-SIGNAL",
+    "NO-MATERIAL-STREAK-CLUSTER",
+    "INCONCLUSIVE-STREAK-CLUSTER",
+    "BLOCKED-EVIDENCE"
+  ]
+}

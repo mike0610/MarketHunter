@@ -1,0 +1,10 @@
+{
+  "object_id": "SL-VAL-BREAKER-ZONE-STRATIFIED-RETEST-ELIGIBILITY-001",
+  "executor": "vps",
+  "timeout_minutes": 10,
+  "terminal_states": [
+    "RETEST-ELIGIBLE",
+    "COHORT-STILL-INSUFFICIENT",
+    "PROVIDER-BLOCKED"
+  ]
+}

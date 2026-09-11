@@ -49,7 +49,7 @@ class BreakerFilter:
             snapshot.candles,
         )
 
-    def inside(
+    def inside_bullish(
         self,
         snapshot: MarketSnapshot,
     ) -> bool:
@@ -62,3 +62,25 @@ class BreakerFilter:
         return block.contains(
             snapshot.candles[-1].close,
         )
+
+    def inside_bearish(
+        self,
+        snapshot: MarketSnapshot,
+    ) -> bool:
+
+        block = self.latest_bearish(snapshot)
+
+        if block is None:
+            return False
+
+        return block.contains(
+            snapshot.candles[-1].close,
+        )
+
+    def inside(
+        self,
+        snapshot: MarketSnapshot,
+    ) -> bool:
+        """Backward-compatible alias for bullish breaker membership."""
+
+        return self.inside_bullish(snapshot)

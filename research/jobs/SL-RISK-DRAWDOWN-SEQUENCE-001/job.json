@@ -1,0 +1,11 @@
+{
+  "object_id": "SL-RISK-DRAWDOWN-SEQUENCE-001",
+  "executor": "vps",
+  "timeout_minutes": 10,
+  "terminal_states": [
+    "DRAWDOWN-SEQUENCE-SIGNAL",
+    "NO-MATERIAL-DRAWDOWN-SEQUENCE",
+    "INCONCLUSIVE-DRAWDOWN-SEQUENCE",
+    "BLOCKED-EVIDENCE"
+  ]
+}

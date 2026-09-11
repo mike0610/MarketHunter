@@ -1,0 +1,10 @@
+{
+  "object_id": "SL-VAL-MARGINAL-EDGE-COHORT-SUFFICIENCY-001",
+  "executor": "vps",
+  "timeout_minutes": 10,
+  "terminal_states": [
+    "COHORT-SUFFICIENT",
+    "COHORT-STILL-INSUFFICIENT",
+    "BLOCKED-DATA"
+  ]
+}

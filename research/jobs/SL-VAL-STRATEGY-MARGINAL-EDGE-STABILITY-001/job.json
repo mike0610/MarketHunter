@@ -1,0 +1,11 @@
+{
+  "object_id": "SL-VAL-STRATEGY-MARGINAL-EDGE-STABILITY-001",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "terminal_states": [
+    "PERSISTENT-NEGATIVE-MARGINALS",
+    "NO-PERSISTENT-NEGATIVE-MARGINALS",
+    "MIXED-MARGINAL-STABILITY",
+    "BLOCKED-EVIDENCE"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "object_id": "SL-VAL-MARGINAL-EDGE-STABILITY-BLOCKED-ATTRIBUTION-001",
+  "executor": "vps",
+  "timeout_minutes": 10,
+  "terminal_states": [
+    "ATTRIBUTED-GATE-FAILURE",
+    "PARENT-BLOCK-NOT-REPRODUCED",
+    "ATTRIBUTION-BLOCKED-DATA"
+  ]
+}

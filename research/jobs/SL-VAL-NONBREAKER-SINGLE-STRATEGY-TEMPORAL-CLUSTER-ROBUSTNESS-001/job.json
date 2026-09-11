@@ -1,0 +1,11 @@
+{
+  "object_id": "SL-VAL-NONBREAKER-SINGLE-STRATEGY-TEMPORAL-CLUSTER-ROBUSTNESS-001",
+  "executor": "vps",
+  "timeout_minutes": 10,
+  "terminal_states": [
+    "TEMPORAL-ROBUST-MIXED",
+    "TEMPORAL-DEPENDENCE-SENSITIVE",
+    "TEMPORAL-DEPENDENCE-ADVERSE",
+    "BLOCKED-EVIDENCE"
+  ]
+}

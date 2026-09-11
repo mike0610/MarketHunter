@@ -1,0 +1,11 @@
+{
+  "object_id": "SL-RISK-LOSS-SEVERITY-TAIL-001",
+  "executor": "vps",
+  "timeout_minutes": 10,
+  "terminal_states": [
+    "TAIL-SEVERITY-SIGNAL",
+    "NO-MATERIAL-TAIL-SEVERITY",
+    "INCONCLUSIVE-TAIL-SEVERITY",
+    "BLOCKED-EVIDENCE"
+  ]
+}

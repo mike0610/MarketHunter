@@ -1,0 +1,11 @@
+{
+  "object_id": "SL-VAL-NONBREAKER-SECOND-STRATEGY-OUTCOME-BLIND-STABILITY-001",
+  "executor": "vps",
+  "timeout_minutes": 10,
+  "terminal_states": [
+    "DISCOVERY-SIGN-PERSISTS",
+    "DISCOVERY-SIGN-REVERSES",
+    "MIXED-SINGLE-STRATEGY-STABILITY",
+    "BLOCKED-EVIDENCE"
+  ]
+}

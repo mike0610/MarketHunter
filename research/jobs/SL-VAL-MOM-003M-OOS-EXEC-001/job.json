@@ -1,0 +1,11 @@
+{
+  "object_id": "SL-VAL-MOM-003M-OOS-EXEC-001",
+  "executor": "vps",
+  "timeout_minutes": 12,
+  "terminal_states": [
+    "OOS-BREADTH-SUPPORT",
+    "OOS-BREADTH-NOT-SUPPORT",
+    "INSUFFICIENT-EPISODES",
+    "BLOCKED-EVIDENCE"
+  ]
+}

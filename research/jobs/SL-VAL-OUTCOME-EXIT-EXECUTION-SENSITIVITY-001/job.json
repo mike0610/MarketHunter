@@ -1,0 +1,11 @@
+{
+  "object_id": "SL-VAL-OUTCOME-EXIT-EXECUTION-SENSITIVITY-001",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "terminal_states": [
+    "EXIT-CONFIRMED-SIGN-PERSISTS",
+    "EXIT-CONFIRMED-SIGN-REVERSES",
+    "EXIT-CONFIRMED-MIXED-STABILITY",
+    "BLOCKED-EVIDENCE"
+  ]
+}

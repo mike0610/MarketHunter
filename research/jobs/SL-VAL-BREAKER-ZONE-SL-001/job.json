@@ -1,0 +1,25 @@
+{
+  "object_id": "SL-VAL-BREAKER-ZONE-SL-001",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "terminal_states": [
+    "OUTCOME-COMPLETE",
+    "PROVIDER-BLOCKED"
+  ],
+  "contract": {
+    "strategy": "Breaker",
+    "stop_buffers_atr": [0.0, 0.25, 0.5],
+    "long_stop": "breaker_zone_low - buffer_atr * atr14",
+    "short_stop": "breaker_zone_high + buffer_atr * atr14",
+    "same_entries_across_variants": true,
+    "partial_exits": false,
+    "parameter_tuning": false,
+    "metrics": [
+      "stop_out_rate",
+      "mean_loss",
+      "stopped_then_recovered_rate",
+      "max_drawdown",
+      "final_return"
+    ]
+  }
+}

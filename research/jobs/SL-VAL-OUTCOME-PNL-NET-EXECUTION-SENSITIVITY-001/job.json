@@ -1,0 +1,11 @@
+{
+  "object_id": "SL-VAL-OUTCOME-PNL-NET-EXECUTION-SENSITIVITY-001",
+  "executor": "vps",
+  "timeout_minutes": 10,
+  "terminal_states": [
+    "COST-ADJUSTED-SIGN-PERSISTS",
+    "COST-ADJUSTED-SIGN-REVERSES",
+    "COST-ADJUSTED-MIXED-STABILITY",
+    "BLOCKED-EVIDENCE"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "object_id": "SL-VAL-TREND-PULLBACK-SIDE-ASYMMETRY-DEPENDENCE-001",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "terminal_states": [
+    "DEPENDENCE-BROAD",
+    "DEPENDENCE-CONCENTRATED",
+    "INSUFFICIENT-PARTITION-BREADTH",
+    "EVIDENCE-FAIL",
+    "PROVIDER-BLOCKED"
+  ]
+}

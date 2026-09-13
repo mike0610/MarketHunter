@@ -1,0 +1,10 @@
+{
+  "object_id": "SL-VAL-QUIET-RV-LIMIT-FIRST-CROSS-EXEC-001",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "terminal_states": [
+    "OUTCOME-COMPLETE",
+    "EVIDENCE-FAIL",
+    "PROVIDER-BLOCKED"
+  ]
+}

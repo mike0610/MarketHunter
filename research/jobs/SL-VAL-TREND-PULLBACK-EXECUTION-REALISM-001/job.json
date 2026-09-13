@@ -1,0 +1,12 @@
+{
+  "object_id": "SL-VAL-TREND-PULLBACK-EXECUTION-REALISM-001",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "terminal_states": [
+    "EXECUTION-MARGIN-SURVIVES",
+    "EXECUTION-MARGIN-ERASED",
+    "INSUFFICIENT-OOS-BREADTH",
+    "EVIDENCE-FAIL",
+    "PROVIDER-BLOCKED"
+  ]
+}

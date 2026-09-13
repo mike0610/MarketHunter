@@ -1,0 +1,60 @@
+{
+  "object_id": "SL-VAL-PROFIT-PROTECTION-001",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "terminal_states": ["OUTCOME-COMPLETE", "BLOCKED-EVIDENCE", "PROVIDER-BLOCKED"],
+  "purpose": "Counterfactual candle-path replay of profit protection without changing entries or production code.",
+  "scope": {
+    "strategies": ["TrendPullback", "VolumeConfirmedBreakout"],
+    "market": "futures",
+    "timeframe": "1h",
+    "completed_trades_only": true
+  },
+  "entry_contract": {
+    "same_entries_as_observed_trade": true,
+    "entry_timestamp_unchanged": true,
+    "entry_price_unchanged": true,
+    "direction_unchanged": true,
+    "no_entry_filter_changes": true
+  },
+  "exit_variants": {
+    "baseline": "observed lifecycle",
+    "profit_protection_ladder": [
+      {"trigger_mfe_pct": 2.0, "protected_return_pct": 0.0},
+      {"trigger_mfe_pct": 4.0, "protected_return_pct": 1.0},
+      {"trigger_mfe_pct": 6.0, "protected_return_pct": 3.0}
+    ]
+  },
+  "replay_contract": {
+    "source": "1h candle path covering each observed trade from entry until original close",
+    "causal": true,
+    "completed_candles_only": true,
+    "long_trigger": "candle high reaches ladder trigger",
+    "short_trigger": "candle low reaches ladder trigger",
+    "protected_exit": "after activation, exit when a later candle crosses the active protected-return price",
+    "same_candle_ambiguity": "if a candle can both activate a new protection level and cross its protected exit and intrabar order is unknowable, use conservative ordering against the protection rule",
+    "original_exit": "if no protected exit occurs first, preserve original observed exit",
+    "partial_exits": false,
+    "costs": "preserve observed trading-cost assumptions; do not improve costs for the candidate",
+    "parameter_tuning": false
+  },
+  "metrics": [
+    "trade_count",
+    "baseline_net_return",
+    "protected_net_return",
+    "delta_net_return",
+    "baseline_win_rate",
+    "protected_win_rate",
+    "large_loss_count",
+    "positive_mfe_to_negative_count",
+    "winner_truncation_count",
+    "mean_winner_change",
+    "mean_loser_change",
+    "max_drawdown"
+  ],
+  "decision_rule": {
+    "no_best_threshold_search": true,
+    "promotion_requires": "material reduction in severe giveback losses without materially destroying winners; result remains research-only until fresh post-fix observation",
+    "if_path_data_missing": "BLOCKED-EVIDENCE"
+  }
+}

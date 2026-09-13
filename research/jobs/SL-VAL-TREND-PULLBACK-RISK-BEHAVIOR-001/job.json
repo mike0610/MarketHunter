@@ -1,0 +1,12 @@
+{
+  "object_id": "SL-VAL-TREND-PULLBACK-RISK-BEHAVIOR-001",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "terminal_states": [
+    "RISK-BEHAVIOR-BROAD",
+    "RISK-BEHAVIOR-CONCENTRATED",
+    "INSUFFICIENT-OOS-BREADTH",
+    "EVIDENCE-FAIL",
+    "PROVIDER-BLOCKED"
+  ]
+}

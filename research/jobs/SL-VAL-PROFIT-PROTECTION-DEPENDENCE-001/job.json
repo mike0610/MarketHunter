@@ -1,0 +1,12 @@
+{
+  "object_id": "SL-VAL-PROFIT-PROTECTION-DEPENDENCE-001",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "terminal_states": [
+    "DEPENDENCE-BROAD",
+    "DEPENDENCE-CONCENTRATED",
+    "PREDECESSOR-NOT-REPRODUCED",
+    "BLOCKED-EVIDENCE",
+    "PROVIDER-BLOCKED"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "executor": "vps",
+  "expected_decluster_suppressions": 435,
+  "expected_event_count": 1391,
+  "expected_unknown_count": 4,
+  "legacy_parent_census_sha256": "9d767934ec1142b1c2b88920098a951bb11bac448ccd0baeacc6ea4545039c8b",
+  "object_id": "SL-VAL-LEVEL-SEMANTIC-SNAPSHOT-REBUILD-EXEC-001",
+  "outcomes_opened": false,
+  "terminal_states": [
+    "SEMANTIC-SNAPSHOT-REBUILT",
+    "REFERENCE-PARENT-MISMATCH",
+    "PROVIDER-BLOCKED"
+  ],
+  "timeout_minutes": 15
+}

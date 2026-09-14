@@ -1,0 +1,10 @@
+{
+  "object_id": "SL-VAL-TAKER-FLOW-ARCHIVE-EQUIVALENCE-EXEC-001",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "terminal_states": [
+    "ARCHIVE-EQUIVALENT",
+    "ARCHIVE-MISMATCH",
+    "PROVIDER-BLOCKED"
+  ]
+}

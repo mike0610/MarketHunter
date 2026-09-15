@@ -1,0 +1,46 @@
+{
+  "job_id": "SL-VAL-TRENDPULLBACK-ENTRY-CONTEXT-001",
+  "title": "TrendPullback Entry Context Validation",
+  "status": "FROZEN",
+  "scope": {
+    "strategy": "TrendPullback",
+    "markets": ["futures"],
+    "timeframes": ["1h"],
+    "completed_trades_only": true
+  },
+  "question": "Which entry-time market contexts distinguish weak TrendPullback entries from successful entries?",
+  "entry_quality_groups": {
+    "weak": "observed MFE < 0.02 and final net return < 0",
+    "confirmed_move": "observed MFE >= 0.02"
+  },
+  "context_at_entry": [
+    "higher_timeframe_trend",
+    "trend_alignment",
+    "pullback_depth",
+    "market_structure_state",
+    "atr_volatility",
+    "pre_entry_impulse"
+  ],
+  "rules": [
+    "Use the same observed historical entries; do not change entry timestamps or prices.",
+    "Reconstruct context causally using only candles completed before each entry.",
+    "Compare weak entries with confirmed-move and profitable entries.",
+    "Do not add filters or tune thresholds after seeing results.",
+    "Do not modify production strategy code from this job.",
+    "Report missing context/data as BLOCKED-EVIDENCE rather than inferring it."
+  ],
+  "outputs": [
+    "trade_count",
+    "weak_entry_count",
+    "context_distribution_by_group",
+    "largest_context_differences",
+    "candidate_entry_defects",
+    "counterexamples",
+    "terminal_verdict"
+  ],
+  "terminal_states": [
+    "ENTRY-CONTEXT-DIFFERENCE-SUPPORTED",
+    "ENTRY-CONTEXT-DIFFERENCE-NOT-SUPPORTED",
+    "BLOCKED-EVIDENCE"
+  ]
+}

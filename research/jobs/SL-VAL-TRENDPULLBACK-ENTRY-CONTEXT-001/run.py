@@ -40,7 +40,6 @@ def slope_return(b,n):
  return b[-1]['c']/b[-1-n]['c']-1
 
 def context(symbol,entry_ms,direction):
- # Only completed candles before entry. Fetch enough 1h/4h history for frozen descriptive features.
  h1=klines(symbol,'1h',entry_ms-220*HOUR,entry_ms-1)
  h4=klines(symbol,'4h',entry_ms-80*4*HOUR,entry_ms-1)
  if len(h1)<60 or len(h4)<30:return None
@@ -49,10 +48,8 @@ def context(symbol,entry_ms,direction):
  if None in (a,r24,r72,r4) or not a:return None
  ht='UP' if r4>0 else 'DOWN' if r4<0 else 'FLAT'
  align=(direction=='LONG' and ht=='UP') or (direction=='SHORT' and ht=='DOWN')
- # Pullback depth against the 72h directional range, descriptive and frozen.
  w=h1[-72:];hi=max(x['h'] for x in w);lo=min(x['l'] for x in w);rng=max(hi-lo,1e-12)
  depth=(hi-c)/rng if direction=='LONG' else (c-lo)/rng
- # Simple causal structure state from last 24h high/low versus preceding 24h high/low.
  a24=h1[-24:];p24=h1[-48:-24]
  ah,al=max(x['h'] for x in a24),min(x['l'] for x in a24);ph,pl=max(x['h'] for x in p24),min(x['l'] for x in p24)
  structure='HH_HL' if ah>ph and al>pl else 'LH_LL' if ah<ph and al<pl else 'MIXED'
@@ -69,7 +66,7 @@ def summarize(rows,group):
 def main(out,job):
  try:
   cfg=json.loads(Path(job).read_text())
-  if cfg.get('job_id')!=O:raise ValueError('job_id')
+  if cfg.get('object_id')!=O:raise ValueError('object_id')
   snap=load_snapshot();ts=snap['trades']
   eligible=[t for t in ts if t.get('strategy')=='TrendPullback' and t.get('market')=='futures' and t.get('timeframe')=='1h' and t.get('status') in ('closed','expired') and isinstance(t.get('profit_percent'),(int,float)) and t.get('entry_price') and t.get('opened_at')]
   rows=[];missing=[]

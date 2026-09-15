@@ -1,0 +1,13 @@
+{
+  "object_id": "SL-VAL-LEVEL-SEMANTIC-FORWARD-EXEC-001",
+  "executor": "vps",
+  "timeout_minutes": 15,
+  "parent_census_sha256": "9d767934ec1142b1c2b88920098a951bb11bac448ccd0baeacc6ea4545039c8b",
+  "semantic_snapshot_run_id": "34902277568",
+  "semantic_snapshot_git_sha": "a015f26d62a3cf8ab49aa9608bc777107e6c69ef",
+  "expected_event_count": 1391,
+  "expected_unknown_count": 4,
+  "expected_decluster_suppressions": 435,
+  "interpretation_rule": "PRIMARY only; HALF sensitivity cannot rescue",
+  "terminal_states": ["LEVEL-FORWARD-SUPPORT", "LEVEL-FORWARD-NO-SUPPORT", "BLOCKED-EVIDENCE", "PROVIDER-BLOCKED"]
+}

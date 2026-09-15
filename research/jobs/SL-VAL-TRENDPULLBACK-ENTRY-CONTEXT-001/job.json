@@ -2,6 +2,7 @@
   "job_id": "SL-VAL-TRENDPULLBACK-ENTRY-CONTEXT-001",
   "title": "TrendPullback Entry Context Validation",
   "status": "FROZEN",
+  "queue_nonce": "2026-09-15T08:20:00+03:00",
   "scope": {
     "strategy": "TrendPullback",
     "markets": ["futures"],

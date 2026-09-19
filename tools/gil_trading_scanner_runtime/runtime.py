@@ -24,6 +24,32 @@ from trading_scanner.store import TradingScannerStore
 logger = logging.getLogger("gil_trading_scanner_runtime.runtime")
 EXIT_OK = 0
 EXIT_FAILURE = 1
+ENV_BATCH_SIZE = "TRADING_SCANNER_UNIVERSE_BATCH_SIZE"
+ENV_BATCH_STATE_PATH = "TRADING_SCANNER_UNIVERSE_BATCH_STATE_PATH"
+
+
+def _select_universe_batch(symbols: tuple[str, ...]) -> tuple[str, ...]:
+    """Select a persistent round-robin slice without increasing provider calls/cycle."""
+    batch_size = int(os.getenv(ENV_BATCH_SIZE, "0"))
+    if batch_size <= 0 or batch_size >= len(symbols):
+        return symbols
+    state_path = Path(os.getenv(ENV_BATCH_STATE_PATH, "data/trading_scanner_universe_cursor.txt"))
+    try:
+        cursor = int(state_path.read_text(encoding="utf-8").strip()) if state_path.exists() else 0
+    except (OSError, ValueError):
+        cursor = 0
+    cursor %= len(symbols)
+    selected = tuple(symbols[(cursor + offset) % len(symbols)] for offset in range(batch_size))
+    next_cursor = (cursor + batch_size) % len(symbols)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = state_path.with_suffix(state_path.suffix + ".tmp")
+    tmp_path.write_text(str(next_cursor), encoding="utf-8")
+    tmp_path.replace(state_path)
+    logger.info(
+        "universe batch selected - total=%d batch=%d cursor=%d next_cursor=%d symbols=%s",
+        len(symbols), len(selected), cursor, next_cursor, ",".join(selected),
+    )
+    return selected
 
 
 def _resolve_db_path() -> Path:
@@ -42,6 +68,8 @@ def _build_market_data_source() -> MarketDataScannerAdapter | None:
     )
     if not symbols:
         raise ValueError("TRADING_SCANNER_UNIVERSE_SYMBOLS is required for configured provider")
+    if provider_name == "twelve_data":
+        symbols = _select_universe_batch(symbols)
     max_age = int(os.getenv("TRADING_SCANNER_MAX_DATA_AGE_SECONDS", str(4 * 24 * 3600)))
     if provider_name == "stooq":
         provider = StooqDailyProvider(symbols, max_age_seconds=max_age)

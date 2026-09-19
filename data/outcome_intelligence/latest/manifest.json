@@ -12,15 +12,15 @@
       "source": "/research/statistics"
     },
     "trades.json": {
-      "byte_count": 633281,
-      "sha256": "57fa6f2e78e70ce2fac58d3c74472977c0e97685191c758d1e37a56f19d9a148",
+      "byte_count": 633282,
+      "sha256": "0a2436fb2c51028bfd78d7444b458e13b5a47d07fe410a0b1a48380f79e4a961",
       "source": "/research/trades"
     }
   },
-  "byte_count": 633281,
-  "captured_at_utc": "2026-09-19T17:51:48.063860+00:00",
-  "sha256": "57fa6f2e78e70ce2fac58d3c74472977c0e97685191c758d1e37a56f19d9a148",
+  "byte_count": 633282,
+  "captured_at_utc": "2026-09-19T18:10:43.184596+00:00",
+  "sha256": "0a2436fb2c51028bfd78d7444b458e13b5a47d07fe410a0b1a48380f79e4a961",
   "source": "/research/trades",
-  "source_revision": "a24b2f57cb62776e732a42598618679136481531",
+  "source_revision": "ae014880091bd3adb7ecfbb3991419176994636b",
   "total": 432
 }

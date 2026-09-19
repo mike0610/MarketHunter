@@ -45,7 +45,7 @@ jobs:
           for f in deploy/systemd/gil-trading-scanner-runtime.env /etc/markethunter/gil-trading-scanner-runtime.env; do
             if [ -f "$f" ]; then
               echo "ENV_FILE=$f"
-              grep -E '^(TRADING_SCANNER_MARKET_DATA_PROVIDER|TRADING_SCANNER_UNIVERSE_SYMBOLS|TRADING_SCANNER_MAX_DATA_AGE_SECONDS|TRADING_SCANNER_HISTORY_LIMIT|TRADING_SCANNER_RESEARCH_STRATEGY_HISTORY_LIMIT|TRADING_SCANNER_DB_PATH|TRADING_SCANNER_RESEARCH_STRATEGY_DB_PATH)=' "$f" || true
+              grep -E '^(TRADING_SCANNER_MARKET_DATA_PROVIDER|TRADING_SCANNER_UNIVERSE_SYMBOLS|TRADING_SCANNER_MAX_DATA_AGE_SECONDS|TRADING_SCANNER_HISTORY_LIMIT|TRADING_SCANNER_RESEARCH_STRATEGY_HISTORY_LIMIT|TRADING_SCANNER_DB_PATH|TRADING_SCANNER_RESEARCH_STRATEGY_DB_PATH|TRADING_SCANNER_UNIVERSE_BATCH_SIZE|TRADING_SCANNER_UNIVERSE_BATCH_STATE_PATH)=' "$f" || true
             fi
           done
           echo '=== DEPLOY CURRENT MASTER + RUN SCANNER ==='
@@ -53,6 +53,8 @@ jobs:
           git checkout master
           git pull --ff-only origin master
           echo "DEPLOYED_SHA=$(git rev-parse HEAD)"
+          sudo systemctl start gil-trading-scanner-runtime.service || true
+          sudo systemctl start gil-trading-scanner-runtime.service || true
           sudo systemctl start gil-trading-scanner-runtime.service || true
           echo '=== POST-FIX SCANNER JOURNAL ==='
           journalctl -u gil-trading-scanner-runtime.service -n 80 --no-pager || true

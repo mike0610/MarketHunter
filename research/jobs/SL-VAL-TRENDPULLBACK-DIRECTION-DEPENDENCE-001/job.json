@@ -44,5 +44,6 @@
   "terminal_states": [
     "DIRECTION-DEPENDENCE-AUDIT-COMPLETE",
     "BLOCKED-EVIDENCE"
-  ]
+  ],
+  "queue_nonce": "2026-09-19T23:00:00+03:00"
 }

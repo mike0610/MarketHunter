@@ -28,11 +28,11 @@ ENV_BATCH_SIZE = "TRADING_SCANNER_UNIVERSE_BATCH_SIZE"
 ENV_BATCH_STATE_PATH = "TRADING_SCANNER_UNIVERSE_BATCH_STATE_PATH"
 
 
-def _select_universe_batch(symbols: tuple[str, ...]) -> tuple[str, ...]:
+def _select_universe_batch(symbols: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[Path, int] | None]:
     """Select a persistent round-robin slice without increasing provider calls/cycle."""
     batch_size = int(os.getenv(ENV_BATCH_SIZE, "0"))
     if batch_size <= 0 or batch_size >= len(symbols):
-        return symbols
+        return symbols, None
     state_path = Path(os.getenv(ENV_BATCH_STATE_PATH, "data/trading_scanner_universe_cursor.txt"))
     try:
         cursor = int(state_path.read_text(encoding="utf-8").strip()) if state_path.exists() else 0
@@ -41,15 +41,21 @@ def _select_universe_batch(symbols: tuple[str, ...]) -> tuple[str, ...]:
     cursor %= len(symbols)
     selected = tuple(symbols[(cursor + offset) % len(symbols)] for offset in range(batch_size))
     next_cursor = (cursor + batch_size) % len(symbols)
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = state_path.with_suffix(state_path.suffix + ".tmp")
-    tmp_path.write_text(str(next_cursor), encoding="utf-8")
-    tmp_path.replace(state_path)
     logger.info(
         "universe batch selected - total=%d batch=%d cursor=%d next_cursor=%d symbols=%s",
         len(symbols), len(selected), cursor, next_cursor, ",".join(selected),
     )
-    return selected
+    return selected, (state_path, next_cursor)
+
+
+def _commit_universe_cursor(state: tuple[Path, int] | None) -> None:
+    if state is None:
+        return
+    state_path, next_cursor = state
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = state_path.with_suffix(state_path.suffix + ".tmp")
+    tmp_path.write_text(str(next_cursor), encoding="utf-8")
+    tmp_path.replace(state_path)
 
 
 def _resolve_db_path() -> Path:
@@ -57,10 +63,10 @@ def _resolve_db_path() -> Path:
     return Path(raw) if raw else Path(DEFAULT_DB_PATH)
 
 
-def _build_market_data_source() -> MarketDataScannerAdapter | None:
+def _build_market_data_source() -> tuple[MarketDataScannerAdapter | None, tuple[Path, int] | None]:
     provider_name = os.getenv("TRADING_SCANNER_MARKET_DATA_PROVIDER", "").strip().lower()
     if provider_name not in {"stooq", "yahoo", "twelve_data"}:
-        return None
+        return None, None
     symbols = tuple(
         item.strip().upper()
         for item in os.getenv("TRADING_SCANNER_UNIVERSE_SYMBOLS", "").split(",")
@@ -68,8 +74,9 @@ def _build_market_data_source() -> MarketDataScannerAdapter | None:
     )
     if not symbols:
         raise ValueError("TRADING_SCANNER_UNIVERSE_SYMBOLS is required for configured provider")
+    batch_state = None
     if provider_name == "twelve_data":
-        symbols = _select_universe_batch(symbols)
+        symbols, batch_state = _select_universe_batch(symbols)
     max_age = int(os.getenv("TRADING_SCANNER_MAX_DATA_AGE_SECONDS", str(4 * 24 * 3600)))
     if provider_name == "stooq":
         provider = StooqDailyProvider(symbols, max_age_seconds=max_age)
@@ -88,8 +95,8 @@ def _build_market_data_source() -> MarketDataScannerAdapter | None:
             max_age_seconds=max_age,
             history_limit=max(native_history_limit, research_history_limit),
         )
-        return MarketDataScannerAdapter(provider, history_limit=native_history_limit)
-    return MarketDataScannerAdapter(provider)
+        return MarketDataScannerAdapter(provider, history_limit=native_history_limit), batch_state
+    return MarketDataScannerAdapter(provider), batch_state
 
 
 def run_once():
@@ -98,7 +105,7 @@ def run_once():
     This is the reusable no-Slack seam consumed by Stage 9 orchestration.
     It preserves the scanner's existing fail-closed configuration rules.
     """
-    source = _build_market_data_source()
+    source, batch_state = _build_market_data_source()
     if source is None:
         logger.info("scanner cycle skipped - no real market-data provider configured")
         return None
@@ -118,6 +125,7 @@ def run_once():
         piped,
         seen_at=datetime.now(timezone.utc),
     )
+    _commit_universe_cursor(batch_state)
     logger.info(
         "scanner cycle complete - contracts_seen=%d native_candidates=%d piped_research_strategy_candidates=%d",
         result.contracts_seen,

@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tools.gil_trading_scanner_runtime.runtime import _select_universe_batch
+from tools.gil_trading_scanner_runtime.runtime import _commit_universe_cursor, _select_universe_batch
 
 
 class StaggeredUniverseTests(unittest.TestCase):
@@ -19,14 +19,22 @@ class StaggeredUniverseTests(unittest.TestCase):
                 "TRADING_SCANNER_UNIVERSE_BATCH_STATE_PATH": str(state),
             }
             with patch.dict(os.environ, env, clear=False):
-                self.assertEqual(_select_universe_batch(symbols), symbols[:5])
-                self.assertEqual(_select_universe_batch(symbols), ("AMD", "META", "SPY", "QQQ", "AAPL"))
-                self.assertEqual(_select_universe_batch(symbols), ("MSFT", "NVDA", "AMD", "META", "SPY"))
+                first, pending = _select_universe_batch(symbols)
+                self.assertEqual(first, symbols[:5])
+                self.assertFalse(state.exists())
+                retry, _ = _select_universe_batch(symbols)
+                self.assertEqual(retry, first)
+                _commit_universe_cursor(pending)
+                second, pending = _select_universe_batch(symbols)
+                self.assertEqual(second, ("AMD", "META", "SPY", "QQQ", "AAPL"))
+                _commit_universe_cursor(pending)
+                third, _ = _select_universe_batch(symbols)
+                self.assertEqual(third, ("MSFT", "NVDA", "AMD", "META", "SPY"))
 
     def test_disabled_batching_keeps_full_universe(self):
         symbols = ("SPY", "QQQ")
         with patch.dict(os.environ, {"TRADING_SCANNER_UNIVERSE_BATCH_SIZE": "0"}, clear=False):
-            self.assertEqual(_select_universe_batch(symbols), symbols)
+            self.assertEqual(_select_universe_batch(symbols), (symbols, None))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,52 @@
+{
+  "object_id": "SL-VAL-TRENDPULLBACK-MOMENTUM-CONFIRM-001",
+  "title": "TrendPullback Momentum Confirmation Validation",
+  "status": "FROZEN",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "scope": {
+    "strategy": "TrendPullback",
+    "markets": [
+      "futures"
+    ],
+    "timeframes": [
+      "1h"
+    ],
+    "completed_trades_only": true
+  },
+  "question": "Does stronger causal pre-entry momentum distinguish TrendPullback entries that achieve meaningful favorable excursion from weak losing entries?",
+  "groups": {
+    "weak": "observed MFE < 2.0% and final net return < 0",
+    "confirmed_move": "observed MFE >= 2.0%"
+  },
+  "frozen_features": [
+    "pre_entry_return_24h",
+    "pre_entry_return_72h",
+    "impulse_atr_units",
+    "higher_timeframe_trend",
+    "trend_alignment"
+  ],
+  "rules": [
+    "Use the same observed historical entries; do not alter entry timestamps or prices.",
+    "Use only fully completed candles before entry; exclude any candle whose close time is after the entry timestamp.",
+    "Treat momentum as continuous descriptive evidence first; do not choose a cutoff from this sample.",
+    "Compare weak versus confirmed-move groups and report counterexamples.",
+    "Do not modify production strategy code.",
+    "Do not tune thresholds after seeing results.",
+    "If causal candle reconstruction or comparison-group evidence is insufficient, return BLOCKED-EVIDENCE."
+  ],
+  "outputs": [
+    "trade_count",
+    "weak_entry_count",
+    "confirmed_move_count",
+    "momentum_distribution_by_group",
+    "effect_differences",
+    "counterexamples",
+    "terminal_verdict"
+  ],
+  "terminal_states": [
+    "MOMENTUM-CONTEXT-SUPPORTED",
+    "MOMENTUM-CONTEXT-NOT-SUPPORTED",
+    "BLOCKED-EVIDENCE"
+  ]
+}

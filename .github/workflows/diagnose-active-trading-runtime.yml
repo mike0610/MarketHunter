@@ -48,8 +48,16 @@ jobs:
               grep -E '^(TRADING_SCANNER_MARKET_DATA_PROVIDER|TRADING_SCANNER_UNIVERSE_SYMBOLS|TRADING_SCANNER_MAX_DATA_AGE_SECONDS|TRADING_SCANNER_HISTORY_LIMIT|TRADING_SCANNER_RESEARCH_STRATEGY_HISTORY_LIMIT|TRADING_SCANNER_DB_PATH|TRADING_SCANNER_RESEARCH_STRATEGY_DB_PATH)=' "$f" || true
             fi
           done
+          echo '=== DEPLOY CURRENT MASTER + RUN SCANNER ==='
+          git fetch origin master
+          git checkout master
+          git pull --ff-only origin master
+          echo "DEPLOYED_SHA=$(git rev-parse HEAD)"
+          sudo systemctl start gil-trading-scanner-runtime.service || true
+          echo '=== POST-FIX SCANNER JOURNAL ==='
+          journalctl -u gil-trading-scanner-runtime.service -n 80 --no-pager || true
           echo '=== SCANNER DB FUNNEL ==='
-          python - <<'PY'
+          .venv/bin/python - <<'PY'
           import os, sqlite3
           from pathlib import Path
           paths=[

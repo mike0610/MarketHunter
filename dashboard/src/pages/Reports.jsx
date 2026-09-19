@@ -22,8 +22,8 @@ import {
 
 import {
     extractApiError,
-    getResearchSetupReasonStatistics,
-    getResearchStatistics,
+    getReportsSnapshotSetupReasonStatistics,
+    getReportsSnapshotStatistics,
 } from "../api/researchApi";
 
 import MetricCard from "../components/layout/MetricCard";
@@ -224,8 +224,8 @@ export default function Reports() {
                 statisticsResult,
                 setupReasonResult,
             ] = await Promise.allSettled([
-                getResearchStatistics(),
-                getResearchSetupReasonStatistics(),
+                getReportsSnapshotStatistics(),
+                getReportsSnapshotSetupReasonStatistics(),
             ]);
 
             if (requestId !== requestIdRef.current) {

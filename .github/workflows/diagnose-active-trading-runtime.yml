@@ -28,7 +28,7 @@ jobs:
           chmod 600 ~/.ssh/key
           ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
 
-      - name: Read runtime failure evidence
+      - name: Read Active Trading funnel evidence
         shell: bash
         run: |
           set -euo pipefail
@@ -36,14 +36,37 @@ jobs:
           set -u
           cd /home/ubuntu/MarketHunter
           echo "SHA=$(git rev-parse HEAD)"
-          echo '=== TIMER ==='
-          systemctl status experiment1-runtime.timer --no-pager || true
-          echo '=== SERVICE ==='
-          systemctl status experiment1-runtime.service --no-pager || true
-          echo '=== JOURNAL ==='
-          journalctl -u experiment1-runtime.service -n 200 --no-pager || true
-          echo '=== ENV KEYS ==='
-          if [ -f deploy/systemd/experiment1-runtime.env ]; then
-            grep -E '^(GIL_SLACK_TRANSPORT_ENABLED|TRADING_SLACK_TRANSPORT_ENABLED|TRADING_SLACK_CHANNEL_ID|TRADING_SLACK_ALLOWED_USER_ID)=' deploy/systemd/experiment1-runtime.env || true
-          fi
+          echo '=== SCANNER TIMER/SERVICE ==='
+          systemctl status gil-trading-scanner-runtime.timer --no-pager || true
+          systemctl status gil-trading-scanner-runtime.service --no-pager || true
+          echo '=== SCANNER JOURNAL ==='
+          journalctl -u gil-trading-scanner-runtime.service -n 120 --no-pager || true
+          echo '=== SAFE SCANNER CONFIG ==='
+          for f in deploy/systemd/gil-trading-scanner-runtime.env /etc/markethunter/gil-trading-scanner-runtime.env; do
+            if [ -f "$f" ]; then
+              echo "ENV_FILE=$f"
+              grep -E '^(TRADING_SCANNER_MARKET_DATA_PROVIDER|TRADING_SCANNER_UNIVERSE_SYMBOLS|TRADING_SCANNER_MAX_DATA_AGE_SECONDS|TRADING_SCANNER_HISTORY_LIMIT|TRADING_SCANNER_RESEARCH_STRATEGY_HISTORY_LIMIT|TRADING_SCANNER_DB_PATH|TRADING_SCANNER_RESEARCH_STRATEGY_DB_PATH)=' "$f" || true
+            fi
+          done
+          echo '=== SCANNER DB FUNNEL ==='
+          python - <<'PY'
+          import os, sqlite3
+          from pathlib import Path
+          paths=[
+              Path(os.getenv("TRADING_SCANNER_DB_PATH","data/trading_scanner.db")),
+              Path(os.getenv("TRADING_SCANNER_RESEARCH_STRATEGY_DB_PATH","data/research_strategy_signals.db")),
+          ]
+          for p in paths:
+              print("DB",p,"exists=",p.exists(),"size=",p.stat().st_size if p.exists() else 0)
+              if not p.exists(): continue
+              con=sqlite3.connect(p)
+              tables=[r[0] for r in con.execute("select name from sqlite_master where type='table' order by name")]
+              print("TABLES",tables)
+              if "trading_scanner_candidates" in tables:
+                  print("QUEUE_STATES",con.execute("select queue_state,count(*) from trading_scanner_candidates group by queue_state order by queue_state").fetchall())
+                  print("RECENT_CYCLES",con.execute("select scan_cycle_id,count(*),max(discovered_at) from trading_scanner_candidates group by scan_cycle_id order by max(discovered_at) desc limit 5").fetchall())
+              if "research_strategy_signals" in tables:
+                  print("RESEARCH_SIGNALS",con.execute("select strategy,count(*),sum(observations) from research_strategy_signals group by strategy order by strategy").fetchall())
+              con.close()
+          PY
           REMOTE

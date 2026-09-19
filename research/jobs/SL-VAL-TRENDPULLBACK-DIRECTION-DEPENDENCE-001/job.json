@@ -1,0 +1,48 @@
+{
+  "object_id": "SL-VAL-TRENDPULLBACK-DIRECTION-DEPENDENCE-001",
+  "title": "TrendPullback Direction and Repeated-Trade Dependence Audit",
+  "status": "FROZEN",
+  "executor": "vps",
+  "timeout_minutes": 20,
+  "scope": {
+    "strategy": "TrendPullback",
+    "market": "futures",
+    "timeframe": "1h",
+    "completed_trades_only": true
+  },
+  "question": "Does the observed pre-entry momentum difference persist within LONG and SHORT separately, and how sensitive is it to repeated symbols and overlapping market periods?",
+  "groups": {
+    "weak": "observed MFE < 2.0% and final net return < 0",
+    "confirmed_move": "observed MFE >= 2.0%; favorable excursion is not realized profit"
+  },
+  "features": [
+    "directional_return_24h",
+    "directional_return_72h",
+    "impulse_atr_units"
+  ],
+  "rules": [
+    "Use the same observed entries and outcomes and only fully completed pre-entry candles.",
+    "Report group counts and momentum distributions separately for LONG and SHORT; do not pool directions to infer entry quality.",
+    "If either comparison group is absent within a direction, mark that direction BLOCKED-EVIDENCE rather than extrapolating.",
+    "Identify repeated symbols and overlapping entry-time windows; show symbol-level counts and sensitivity of descriptive differences to one-observation-per-symbol and to excluding overlapping windows, without choosing a favorable subset.",
+    "Preserve trade-level counterexamples, including confirmed favorable excursion with negative realized outcome.",
+    "Do not tune thresholds, invent independence, propose an entry cutoff, or change production code.",
+    "Do not assign evidentiary support from any nonzero descriptive difference alone."
+  ],
+  "outputs": [
+    "eligible_trade_count",
+    "reconstructed_trade_count",
+    "direction_group_counts",
+    "direction_specific_momentum_distributions",
+    "repeated_symbol_counts",
+    "overlapping_window_counts",
+    "dependence_sensitivity",
+    "counterexamples",
+    "limitations",
+    "terminal_verdict"
+  ],
+  "terminal_states": [
+    "DIRECTION-DEPENDENCE-AUDIT-COMPLETE",
+    "BLOCKED-EVIDENCE"
+  ]
+}

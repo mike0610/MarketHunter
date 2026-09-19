@@ -43,6 +43,34 @@ export async function getResearchStatistics() {
     return response.data;
 }
 
+
+const REPORTS_SNAPSHOT_BASE_URL = (
+    import.meta.env.VITE_REPORTS_SNAPSHOT_BASE_URL
+    || "https://raw.githubusercontent.com/mike0610/MarketHunter/outcome-intelligence-snapshots/data/outcome_intelligence/latest"
+);
+
+const reportsSnapshotApi = axios.create({
+    baseURL: REPORTS_SNAPSHOT_BASE_URL,
+});
+
+export async function getReportsSnapshotStatistics() {
+    const response = await reportsSnapshotApi.get(
+        "/statistics.json",
+        { params: { t: Date.now() } },
+    );
+
+    return response.data;
+}
+
+export async function getReportsSnapshotSetupReasonStatistics() {
+    const response = await reportsSnapshotApi.get(
+        "/setup_reasons.json",
+        { params: { t: Date.now() } },
+    );
+
+    return response.data;
+}
+
 export async function getWorkerStatus() {
     const response = await api.get(
         "/research/worker-status",

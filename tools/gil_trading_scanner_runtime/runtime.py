@@ -48,11 +48,19 @@ def _build_market_data_source() -> MarketDataScannerAdapter | None:
     elif provider_name == "yahoo":
         provider = YahooChartDailyProvider(symbols, max_age_seconds=max_age)
     else:
+        native_history_limit = int(os.getenv("TRADING_SCANNER_HISTORY_LIMIT", "120"))
+        research_history_limit = int(os.getenv("TRADING_SCANNER_RESEARCH_STRATEGY_HISTORY_LIMIT", "500"))
+        # Twelve Data's free tier is rate-limited. Preload each symbol once with
+        # the largest history window needed by either scanner path so the
+        # unchanged Research-strategy pipe reuses the provider cache instead of
+        # issuing a second request per symbol (5 symbols previously became
+        # 10 requests/cycle and triggered HTTP 429).
         provider = TwelveDataDailyProvider(
             symbols,
             max_age_seconds=max_age,
-            history_limit=int(os.getenv("TRADING_SCANNER_HISTORY_LIMIT", "120")),
+            history_limit=max(native_history_limit, research_history_limit),
         )
+        return MarketDataScannerAdapter(provider, history_limit=native_history_limit)
     return MarketDataScannerAdapter(provider)
 
 

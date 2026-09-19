@@ -10,6 +10,8 @@ def test_trade_snapshot_workflow_is_read_only_against_production() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
 
     assert "/research/trades" in text
+    assert "/research/statistics" in text
+    assert "/research/statistics/setup-reasons" in text
     assert "limit = 200" in text
     assert "trade population changed during capture" in text
     assert "incomplete or duplicate trade population" in text
@@ -34,5 +36,7 @@ def test_trade_snapshot_workflow_publishes_provenance() -> None:
     assert '"source_revision"' in text
     assert '"sha256"' in text
     assert '"byte_count"' in text
+    assert "statistics.json" in text
+    assert "setup_reasons.json" in text
     assert "outcome-intelligence-snapshots" in text
     assert "data/outcome_intelligence/latest" in text

@@ -1,0 +1,6 @@
+{
+  "object_id": "SL-VAL-TRENDPULLBACK-ENTRY-DEFECT-BREADTH-COUNT-005",
+  "executor": "vps",
+  "timeout_minutes": 5,
+  "terminal_states": ["BREADTH-GATE-MET", "BREADTH-GATE-NOT-MET", "BLOCKED-EVIDENCE"]
+}

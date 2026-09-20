@@ -13,13 +13,13 @@
     },
     "trades.json": {
       "byte_count": 641966,
-      "sha256": "b0f048a61db9485cb465ad637e22c4bdddaaf026eb5b072d03bb40eafe7f4b13",
+      "sha256": "2d99d5903acde50b3c7bc5bae0107b915c31612380728b6e0c780055e2505162",
       "source": "/research/trades"
     }
   },
   "byte_count": 641966,
-  "captured_at_utc": "2026-09-20T04:38:45.747133+00:00",
-  "sha256": "b0f048a61db9485cb465ad637e22c4bdddaaf026eb5b072d03bb40eafe7f4b13",
+  "captured_at_utc": "2026-09-20T04:57:59.809791+00:00",
+  "sha256": "2d99d5903acde50b3c7bc5bae0107b915c31612380728b6e0c780055e2505162",
   "source": "/research/trades",
   "source_revision": "bcdd20c9e0dd2b49983cab9acb9249685467eb27",
   "total": 438

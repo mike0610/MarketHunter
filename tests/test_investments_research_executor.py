@@ -10,7 +10,7 @@ from investments.research_queue import InvestmentResearchQueue, InvestmentResear
 from investments.research_worker import InvestmentResearchWorker
 
 
-NOW = datetime(2026, 9, 7, 12, 0, tzinfo=timezone.utc)
+NOW = datetime.now(timezone.utc)  # Keep fixture evidence fresh without weakening production freshness checks.
 
 
 class Identity:

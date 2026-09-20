@@ -48,7 +48,7 @@ jobs:
               grep -E '^(TRADING_SCANNER_MARKET_DATA_PROVIDER|TRADING_SCANNER_UNIVERSE_SYMBOLS|TRADING_SCANNER_MAX_DATA_AGE_SECONDS|TRADING_SCANNER_HISTORY_LIMIT|TRADING_SCANNER_RESEARCH_STRATEGY_HISTORY_LIMIT|TRADING_SCANNER_DB_PATH|TRADING_SCANNER_RESEARCH_STRATEGY_DB_PATH|TRADING_SCANNER_UNIVERSE_BATCH_SIZE|TRADING_SCANNER_UNIVERSE_BATCH_STATE_PATH)=' "$f" || true
             fi
           done
-          echo '=== DIAGNOSTIC UTC ==='
+          echo '=== DIAGNOSTIC UTC / ROTATION FOLLOW-UP ==='
           date -u '+%Y-%m-%dT%H:%M:%SZ'
           echo '=== SCHEDULED SCANNER CYCLES ==='
           journalctl -u gil-trading-scanner-runtime.service --since '2026-09-20 04:27:00 UTC' --no-pager | grep -E 'universe batch selected|scanner cycle complete|scanner cycle failed|HTTP Error 429|scanner cycle skipped' || true

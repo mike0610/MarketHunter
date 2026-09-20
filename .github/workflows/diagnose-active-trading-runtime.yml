@@ -48,35 +48,10 @@ jobs:
               grep -E '^(TRADING_SCANNER_MARKET_DATA_PROVIDER|TRADING_SCANNER_UNIVERSE_SYMBOLS|TRADING_SCANNER_MAX_DATA_AGE_SECONDS|TRADING_SCANNER_HISTORY_LIMIT|TRADING_SCANNER_RESEARCH_STRATEGY_HISTORY_LIMIT|TRADING_SCANNER_DB_PATH|TRADING_SCANNER_RESEARCH_STRATEGY_DB_PATH|TRADING_SCANNER_UNIVERSE_BATCH_SIZE|TRADING_SCANNER_UNIVERSE_BATCH_STATE_PATH)=' "$f" || true
             fi
           done
-          echo '=== DEPLOY CURRENT MASTER + CONFIGURE STAGGERED UNIVERSE ==='
-          git fetch origin master
-          git checkout master
-          git pull --ff-only origin master
-          echo "DEPLOYED_SHA=$(git rev-parse HEAD)"
-          .venv/bin/python - <<'PY'
-          from pathlib import Path
-          path = Path("deploy/systemd/gil-trading-scanner-runtime.env")
-          if not path.exists():
-              raise SystemExit("Scanner env missing; refusing to create or overwrite")
-          lines = path.read_text().splitlines()
-          expected = "TRADING_SCANNER_UNIVERSE_SYMBOLS=SPY,QQQ,AAPL,MSFT,NVDA"
-          existing = [line for line in lines if line.startswith("TRADING_SCANNER_UNIVERSE_SYMBOLS=")]
-          expanded = "TRADING_SCANNER_UNIVERSE_SYMBOLS=SPY,QQQ,AAPL,MSFT,NVDA,AMD,META,AMZN,GOOGL,JPM,XLF,XLK"
-          if existing not in ([expected], [expanded]):
-              raise SystemExit("Unexpected universe config; refusing to overwrite")
-          batch = [line for line in lines if line.startswith("TRADING_SCANNER_UNIVERSE_BATCH_SIZE=")]
-          if batch not in ([], ["TRADING_SCANNER_UNIVERSE_BATCH_SIZE=4"]):
-              raise SystemExit("Unexpected batch size; refusing to overwrite")
-          lines = [expanded if line == expected else line for line in lines]
-          if not batch:
-              lines.append("TRADING_SCANNER_UNIVERSE_BATCH_SIZE=4")
-          path.write_text("\\n".join(lines) + "\\n")
-          print("Configured 12 US stocks/ETFs, 4 per normal timer cycle; no forced API requests")
-          PY
-          echo '=== TIMER STATE (NO FORCED CYCLES) ==='
-          systemctl list-timers gil-trading-scanner-runtime.timer --no-pager || true
-          echo '=== RECENT SCANNER LOGS ==='
-          journalctl -u gil-trading-scanner-runtime.service --since '10 minutes ago' --no-pager | grep -E 'universe batch selected|scanner cycle complete|scanner cycle failed|HTTP Error 429' || true
+          echo '=== ROTATION PROOF FROM NORMAL TIMER CYCLES ==='
+          journalctl -u gil-trading-scanner-runtime.service --since '2026-09-19 19:45:00 UTC' --no-pager | grep -E 'universe batch selected|scanner cycle complete|scanner cycle failed|HTTP Error 429' || true
+          echo '=== CURSOR ==='
+          if [ -f data/trading_scanner_universe_cursor.txt ]; then cat data/trading_scanner_universe_cursor.txt; else echo 'cursor file absent'; fi
           echo '=== SCANNER DB FUNNEL ==='
           .venv/bin/python - <<'PY'
           import os, sqlite3

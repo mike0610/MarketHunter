@@ -22,6 +22,7 @@ from loguru import logger
 
 from models.signal import Signal
 from telegram.message_builder import MessageBuilder
+from telegram.live_quote import observe_futures_quote
 from telegram.notifier import TelegramNotifier
 
 
@@ -344,6 +345,8 @@ def notify_elite_signals(
             )
 
             continue
+
+        observe_futures_quote(signal)
 
         text = builder.build(
             signal,

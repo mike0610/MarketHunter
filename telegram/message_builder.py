@@ -28,6 +28,13 @@ class MessageBuilder:
             ):
                 if risk.get(key) is not None:
                     lines.append(f"{label}: {risk[key]}")
+        quote = signal.metadata.get("live_quote") if isinstance(signal.metadata, dict) else None
+        if isinstance(quote, dict):
+            lines.append(f"Observed bid / ask: {quote['bid']} / {quote['ask']}")
+            lines.append(f"Top-of-book spread: {quote['spread_percent']}%")
+            lines.append(f"Exchange quote time (UTC): {quote['exchange_time']}")
+        if signal.metadata.get("quote_blocker"):
+            lines.append(f"Quote / liquidity limitation: {signal.metadata['quote_blocker']}")
         lines.extend(["", "Reasons:"])
         lines.extend(f"• {reason}" for reason in signal.reasons)
         lines.extend(["", "Research alert only. No orders. Recheck live price and liquidity."])

@@ -48,25 +48,26 @@ jobs:
               grep -E '^(TRADING_SCANNER_MARKET_DATA_PROVIDER|TRADING_SCANNER_UNIVERSE_SYMBOLS|TRADING_SCANNER_MAX_DATA_AGE_SECONDS|TRADING_SCANNER_HISTORY_LIMIT|TRADING_SCANNER_RESEARCH_STRATEGY_HISTORY_LIMIT|TRADING_SCANNER_DB_PATH|TRADING_SCANNER_RESEARCH_STRATEGY_DB_PATH|TRADING_SCANNER_UNIVERSE_BATCH_SIZE|TRADING_SCANNER_UNIVERSE_BATCH_STATE_PATH)=' "$f" || true
             fi
           done
-          echo '=== SCHEDULED ROTATION / FAILURES ==='
+          echo '=== SCHEDULED SCANNER CYCLES ==='
           journalctl -u gil-trading-scanner-runtime.service --since '2026-09-20 04:27:00 UTC' --no-pager | grep -E 'universe batch selected|scanner cycle complete|scanner cycle failed|HTTP Error 429|scanner cycle skipped' || true
           echo '=== SCANNER CONFIG / CURSOR ==='
           grep -E '^(TRADING_SCANNER_MARKET_DATA_PROVIDER|TRADING_SCANNER_UNIVERSE_SYMBOLS|TRADING_SCANNER_UNIVERSE_BATCH_SIZE)=' deploy/systemd/gil-trading-scanner-runtime.env || true
           if [ -f data/trading_scanner_universe_cursor.txt ]; then cat data/trading_scanner_universe_cursor.txt; else echo 'cursor file absent'; fi
-          echo '=== EXPERIMENT1 PAPER FUNNEL ==='
+          echo '=== PAPER FUNNEL WITH PROVENANCE ==='
           .venv/bin/python - <<'PY'
           import sqlite3
           from pathlib import Path
-          p = Path("data/experiment1.db")
-          print("experiment1_db_exists=", p.exists())
-          if p.exists():
-              con = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
-              tables = {row[0] for row in con.execute("select name from sqlite_master where type='table'")}
-              for name in ("experiment1_trading_decision_inbox", "experiment1_intents", "experiment1_fills"):
-                  if name in tables:
-                      print(name, con.execute(f"select count(*) from {name}").fetchone()[0])
-                      print(name + "_columns", [row[1] for row in con.execute(f"pragma table_info({name})")])
-              con.close()
+          p=Path("data/experiment1.db")
+          con=sqlite3.connect(f"file:{p}?mode=ro",uri=True)
+          for table in ("experiment1_trading_decision_inbox","experiment1_intents","experiment1_fills"):
+              cols=[r[1] for r in con.execute(f"pragma table_info({table})")]
+              print(table+"_count",con.execute(f"select count(*) from {table}").fetchone()[0])
+              print(table+"_columns",cols)
+              safe=[x for x in ("created_at","received_at","observed_at","account","action","symbol","status","status_reason","source","source_reference","intent_id","reason","realized_pnl_delta") if x in cols]
+              if safe:
+                  rows=con.execute("select "+",".join(safe)+" from "+table+" limit 5").fetchall()
+                  print(table+"_sample",rows)
+          con.close()
           PY
           echo '=== SCANNER DB FUNNEL ==='
           .venv/bin/python - <<'PY'

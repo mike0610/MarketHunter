@@ -48,6 +48,28 @@ jobs:
               grep -E '^(TRADING_SCANNER_MARKET_DATA_PROVIDER|TRADING_SCANNER_UNIVERSE_SYMBOLS|TRADING_SCANNER_MAX_DATA_AGE_SECONDS|TRADING_SCANNER_HISTORY_LIMIT|TRADING_SCANNER_RESEARCH_STRATEGY_HISTORY_LIMIT|TRADING_SCANNER_DB_PATH|TRADING_SCANNER_RESEARCH_STRATEGY_DB_PATH|TRADING_SCANNER_UNIVERSE_BATCH_SIZE|TRADING_SCANNER_UNIVERSE_BATCH_STATE_PATH)=' "$f" || true
             fi
           done
+          echo '=== REPAIR SCANNER ENV LINE ENDINGS ==='
+          .venv/bin/python - <<'PY'
+          from pathlib import Path
+          path = Path("deploy/systemd/gil-trading-scanner-runtime.env")
+          raw = path.read_text()
+          if "\\n" not in raw:
+              print("No escaped line endings found; leaving config unchanged")
+          else:
+              parts = raw.split("\\n")
+              expected = {
+                  "TRADING_SCANNER_DB_PATH=",
+                  "TRADING_SCANNER_MARKET_DATA_PROVIDER=",
+                  "TRADING_SCANNER_UNIVERSE_SYMBOLS=",
+                  "TRADING_SCANNER_MAX_DATA_AGE_SECONDS=",
+                  "TRADING_SCANNER_HISTORY_LIMIT=",
+                  "TRADING_SCANNER_UNIVERSE_BATCH_SIZE=",
+              }
+              if not all(not part or any(part.startswith(key) for key in expected) for part in parts):
+                  raise SystemExit("Unexpected config content; refusing automatic repair")
+              path.write_text(raw.replace("\\n", chr(10)))
+              print("Restored scanner env line endings")
+          PY
           echo '=== ROTATION PROOF FROM NORMAL TIMER CYCLES ==='
           journalctl -u gil-trading-scanner-runtime.service --since '2026-09-19 19:45:00 UTC' --no-pager | grep -E 'universe batch selected|scanner cycle complete|scanner cycle failed|HTTP Error 429' || true
           echo '=== CURSOR ==='

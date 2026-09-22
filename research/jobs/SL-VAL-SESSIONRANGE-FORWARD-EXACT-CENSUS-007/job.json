@@ -1,0 +1,6 @@
+{
+  "object_id": "SL-VAL-SESSIONRANGE-FORWARD-EXACT-CENSUS-007",
+  "executor": "vps",
+  "timeout_minutes": 5,
+  "terminal_states": ["CENSUS-COMPLETE", "BLOCKED-EVIDENCE"]
+}

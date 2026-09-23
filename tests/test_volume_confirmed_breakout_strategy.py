@@ -22,4 +22,20 @@ class VolumeConfirmedBreakoutTests(unittest.IsolatedAsyncioTestCase):
  async def test_rejects_breakout_without_trade_participation(self):
   cs=[c(i,100,102,98,100) for i in range(29)]+[c(29,100,105,99,104,1700,110)]
   self.assertIsNone(await VolumeConfirmedBreakoutStrategy().analyze(snap(cs)))
+ async def test_rejects_countertrend_breakout(self):
+  cs=[c(i,100,102,98,100) for i in range(29)]+[c(29,100,103,99,102.5,1700,150)]
+  self.assertIsNone(await VolumeConfirmedBreakoutStrategy().analyze(snap(cs,95,100,105)))
+
+ async def test_rejects_long_with_large_rejection_wick(self):
+  cs=[c(i,100,102,98,100) for i in range(29)]+[c(29,100,108,99,103,1700,150)]
+  self.assertIsNone(await VolumeConfirmedBreakoutStrategy().analyze(snap(cs)))
+
+ async def test_rejects_weak_body_breakout(self):
+  cs=[c(i,100,102,98,100) for i in range(29)]+[c(29,101.5,104,99,102.5,1700,150)]
+  self.assertIsNone(await VolumeConfirmedBreakoutStrategy().analyze(snap(cs)))
+
+ async def test_rejects_overextended_breakout_close(self):
+  cs=[c(i,100,102,98,100) for i in range(29)]+[c(29,100,105,99,104,1700,150)]
+  self.assertIsNone(await VolumeConfirmedBreakoutStrategy().analyze(snap(cs,105,100,95)._replace(atr14=2) if False else MarketSnapshot("BTCUSDT",cs,105,100,95,1,1000,max(x.high for x in cs[-20:]),min(x.low for x in cs[-20:]))))
+
 if __name__=="__main__":unittest.main()

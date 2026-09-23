@@ -16,6 +16,23 @@ from models.position import Position
 from services.snapshot_builder import SnapshotBuilder
 from strategies.volume_confirmed_breakout import VolumeConfirmedBreakoutStrategy
 
+
+class LegacyVolumeConfirmedBreakoutStrategy(VolumeConfirmedBreakoutStrategy):
+    """Frozen pre-entry-quality eligibility rules for A/B comparison."""
+
+    def _candidate(self, snapshot, trigger, direction, level, vol_ratio, trade_ratio):
+        extreme = trigger.low if direction == "LONG" else trigger.high
+        buffer = max(snapshot.atr14 * 0.10, trigger.close * 0.0005)
+        stop = extreme - buffer if direction == "LONG" else extreme + buffer
+        risk = trigger.close - stop if direction == "LONG" else stop - trigger.close
+        if risk <= 0:
+            return None
+        target = trigger.close + 3 * risk if direction == "LONG" else trigger.close - 3 * risk
+        from models.signal import Signal
+        signal = Signal(symbol=snapshot.symbol, market="", timeframe="", strategy=self.name, direction=direction, score=95.0)
+        signal.metadata.update({"entry": trigger.close, "stop_loss": stop, "take_profit": target, "rr": 3.0})
+        return signal
+
 SYMBOLS = ("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT", "LTCUSDT")
 MARKETS = ("spot", "futures")
 INTERVAL = "1h"
@@ -92,8 +109,8 @@ async def _history(client: BinanceClient, symbol: str, market: str):
         return [Candle.from_binance(row) for row in rows[-LIMIT:]]
 
 
-async def _replay(candles, start: int, end: int) -> ValidationStats:
-    strategy = VolumeConfirmedBreakoutStrategy()
+async def _replay(candles, start: int, end: int, strategy_cls=VolumeConfirmedBreakoutStrategy) -> ValidationStats:
+    strategy = strategy_cls()
     builder = SnapshotBuilder()
     simulator = TradeSimulator(ExecutionAssumptions())
     notional = 100.0
@@ -173,8 +190,11 @@ async def main() -> None:
             split = int(len(candles) * DEVELOPMENT_FRACTION)
             dev = await _replay(candles, WARMUP, split)
             oos = await _replay(candles, split, len(candles))
+            legacy_dev = await _replay(candles, WARMUP, split, LegacyVolumeConfirmedBreakoutStrategy)
+            legacy_oos = await _replay(candles, split, len(candles), LegacyVolumeConfirmedBreakoutStrategy)
             total_dev.append(dev); total_oos.append(oos)
-            print(market.upper(), symbol, "DEV", asdict(dev), "OOS", asdict(oos))
+            print(market.upper(), symbol, "NEW_DEV", asdict(dev), "NEW_OOS", asdict(oos),
+                  "LEGACY_DEV", asdict(legacy_dev), "LEGACY_OOS", asdict(legacy_oos))
     for name, rows in (("DEV", total_dev), ("OOS", total_oos)):
         signals = sum(x.signals for x in rows)
         wins = sum(x.wins for x in rows)

@@ -40,17 +40,54 @@ async def _history(client: BinanceClient, symbol: str, market: str):
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code != 451:
             raise
-        # Public Binance market-data fallbacks for restricted runners.
-        endpoint = ("https://fapi.binance.com/fapi/v1/klines" if futures
-                    else "https://data-api.binance.vision/api/v3/klines")
+
+        from models.candle import Candle
+
+        if not futures:
+            async with httpx.AsyncClient(timeout=30.0) as public:
+                response = await public.get(
+                    "https://data-api.binance.vision/api/v3/klines",
+                    params={"symbol": symbol, "interval": INTERVAL, "limit": LIMIT},
+                )
+                response.raise_for_status()
+                return [Candle.from_binance(row) for row in response.json()]
+
+        # GitHub-hosted runners can receive HTTP 451 from Binance Futures REST.
+        # Use Binance's public historical-data archive instead. Daily futures
+        # klines preserve the native Binance kline schema without changing the
+        # frozen validation rules.
+        from datetime import datetime, timedelta, timezone
+        from io import BytesIO
+        from zipfile import ZipFile
+        import csv
+
+        rows = []
+        day = datetime.now(timezone.utc).date() - timedelta(days=1)
         async with httpx.AsyncClient(timeout=30.0) as public:
-            response = await public.get(
-                endpoint,
-                params={"symbol": symbol, "interval": INTERVAL, "limit": LIMIT},
-            )
-            response.raise_for_status()
-            from models.candle import Candle
-            return [Candle.from_binance(row) for row in response.json()]
+            for _ in range(90):
+                url = (
+                    "https://data.binance.vision/data/futures/um/daily/klines/"
+                    f"{symbol}/{INTERVAL}/{symbol}-{INTERVAL}-{day.isoformat()}.zip"
+                )
+                response = await public.get(url)
+                if response.status_code == 200:
+                    with ZipFile(BytesIO(response.content)) as archive:
+                        name = archive.namelist()[0]
+                        text = archive.read(name).decode("utf-8")
+                        reader = csv.reader(text.splitlines())
+                        for row in reader:
+                            if row and row[0].isdigit():
+                                rows.append(row)
+                elif response.status_code not in {404, 451}:
+                    response.raise_for_status()
+                if len(rows) >= LIMIT:
+                    break
+                day -= timedelta(days=1)
+
+        if not rows:
+            raise RuntimeError(f"No Binance Vision futures candles for {symbol}")
+        rows.sort(key=lambda row: int(row[0]))
+        return [Candle.from_binance(row) for row in rows[-LIMIT:]]
 
 
 async def _replay(candles, start: int, end: int) -> ValidationStats:

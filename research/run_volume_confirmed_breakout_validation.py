@@ -10,6 +10,8 @@ import asyncio
 from dataclasses import asdict, dataclass
 from decimal import Decimal
 
+import httpx
+
 from backtesting.trade_simulator import ExecutionAssumptions, TradeSimulator
 from exchange.binance_client import BinanceClient
 from models.position import Position
@@ -33,7 +35,22 @@ class ValidationStats:
 
 
 async def _history(client: BinanceClient, symbol: str):
-    return await client.get_klines(symbol, interval=INTERVAL, limit=LIMIT)
+    try:
+        return await client.get_klines(symbol, interval=INTERVAL, limit=LIMIT)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 451:
+            raise
+        # Binance documents data-api.binance.vision as a public-market-data
+        # base endpoint. Keep the validation read-only and preserve the exact
+        # /api/v3/klines payload shape used by Candle.from_binance.
+        async with httpx.AsyncClient(timeout=30.0) as public:
+            response = await public.get(
+                "https://data-api.binance.vision/api/v3/klines",
+                params={"symbol": symbol, "interval": INTERVAL, "limit": LIMIT},
+            )
+            response.raise_for_status()
+            from models.candle import Candle
+            return [Candle.from_binance(row) for row in response.json()]
 
 
 async def _replay(candles, start: int, end: int) -> ValidationStats:

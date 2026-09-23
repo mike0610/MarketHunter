@@ -38,6 +38,7 @@ MARKETS = ("spot", "futures")
 INTERVAL = "1h"
 LIMIT = 8760
 ARCHIVE_LOOKBACK_DAYS = 400
+ARCHIVE_CONCURRENCY = 12
 WARMUP = 200
 DEVELOPMENT_FRACTION = 0.70
 
@@ -94,29 +95,39 @@ async def _history(client: BinanceClient, symbol: str, market: str):
         import csv
 
         rows = []
-        day = datetime.now(timezone.utc).date() - timedelta(days=1)
+        last_day = datetime.now(timezone.utc).date() - timedelta(days=1)
+        days = [last_day - timedelta(days=i) for i in range(ARCHIVE_LOOKBACK_DAYS)]
+
+        async def fetch_day(public, day):
+            url = (
+                "https://data.binance.vision/data/futures/um/daily/klines/"
+                f"{symbol}/{INTERVAL}/{symbol}-{INTERVAL}-{day.isoformat()}.zip"
+            )
+            response = await public.get(url)
+            if response.status_code in {404, 451}:
+                return []
+            response.raise_for_status()
+            with ZipFile(BytesIO(response.content)) as archive:
+                name = archive.namelist()[0]
+                text = archive.read(name).decode("utf-8")
+            parsed = []
+            for row in csv.reader(text.splitlines()):
+                if row and row[0].isdigit():
+                    row[0] = int(row[0])
+                    row[6] = int(row[6])
+                    parsed.append(row)
+            return parsed
+
         async with httpx.AsyncClient(timeout=30.0) as public:
-            for _ in range(ARCHIVE_LOOKBACK_DAYS):
-                url = (
-                    "https://data.binance.vision/data/futures/um/daily/klines/"
-                    f"{symbol}/{INTERVAL}/{symbol}-{INTERVAL}-{day.isoformat()}.zip"
+            for offset in range(0, len(days), ARCHIVE_CONCURRENCY):
+                batch_days = days[offset:offset + ARCHIVE_CONCURRENCY]
+                batches = await asyncio.gather(
+                    *(fetch_day(public, day) for day in batch_days)
                 )
-                response = await public.get(url)
-                if response.status_code == 200:
-                    with ZipFile(BytesIO(response.content)) as archive:
-                        name = archive.namelist()[0]
-                        text = archive.read(name).decode("utf-8")
-                        reader = csv.reader(text.splitlines())
-                        for row in reader:
-                            if row and row[0].isdigit():
-                                row[0] = int(row[0])
-                                row[6] = int(row[6])
-                                rows.append(row)
-                elif response.status_code not in {404, 451}:
-                    response.raise_for_status()
+                for batch in batches:
+                    rows.extend(batch)
                 if len(rows) >= LIMIT:
                     break
-                day -= timedelta(days=1)
 
         if not rows:
             raise RuntimeError(f"No Binance Vision futures candles for {symbol}")

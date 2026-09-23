@@ -13,6 +13,8 @@ from models.candle import Candle
 from research.models.trade import ResearchTrade
 from research.models.trade_status import TradeStatus
 from research.monitor import TradeMonitor
+from research.outcomes import classify_research_trade
+from research.models.trade_outcome import TradeOutcomeGroup, TradeOutcomeType
 
 
 class MemoryRepository:
@@ -376,6 +378,22 @@ class TradeMonitorTests(unittest.TestCase):
 
         self.assertEqual(result.status, TradeStatus.ACTIVE)
         self.assertEqual(result.stop_loss, 100.0)
+
+    def test_profitable_protective_stop_is_positive_outcome(
+        self,
+    ) -> None:
+        trade = self.long_trade()
+        trade.activate(opened_at=self.start)
+        trade.close(
+            price=101.0,
+            reason="LIVE_STOP_LOSS",
+            closed_at=self.start + timedelta(minutes=1),
+        )
+
+        group, outcome_type = classify_research_trade(trade)
+
+        self.assertEqual(group, TradeOutcomeGroup.POSITIVE)
+        self.assertEqual(outcome_type, TradeOutcomeType.STOP_LOSS)
 
     def test_trade_expires_after_max_active_candles(
         self,

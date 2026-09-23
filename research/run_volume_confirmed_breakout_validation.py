@@ -77,6 +77,8 @@ async def _history(client: BinanceClient, symbol: str, market: str):
                         reader = csv.reader(text.splitlines())
                         for row in reader:
                             if row and row[0].isdigit():
+                                row[0] = int(row[0])
+                                row[6] = int(row[6])
                                 rows.append(row)
                 elif response.status_code not in {404, 451}:
                     response.raise_for_status()

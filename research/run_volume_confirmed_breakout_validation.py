@@ -36,7 +36,8 @@ class LegacyVolumeConfirmedBreakoutStrategy(VolumeConfirmedBreakoutStrategy):
 SYMBOLS = ("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT", "LTCUSDT")
 MARKETS = ("spot", "futures")
 INTERVAL = "1h"
-LIMIT = 1500
+LIMIT = 8760
+ARCHIVE_LOOKBACK_DAYS = 400
 WARMUP = 200
 DEVELOPMENT_FRACTION = 0.70
 
@@ -61,13 +62,27 @@ async def _history(client: BinanceClient, symbol: str, market: str):
         from models.candle import Candle
 
         if not futures:
+            # Spot REST caps klines per request. Walk backward with endTime so
+            # the one-year regime run uses the same native Binance candles.
+            rows = []
+            end_time = None
             async with httpx.AsyncClient(timeout=30.0) as public:
-                response = await public.get(
-                    "https://data-api.binance.vision/api/v3/klines",
-                    params={"symbol": symbol, "interval": INTERVAL, "limit": LIMIT},
-                )
-                response.raise_for_status()
-                return [Candle.from_binance(row) for row in response.json()]
+                while len(rows) < LIMIT:
+                    params = {"symbol": symbol, "interval": INTERVAL, "limit": 1000}
+                    if end_time is not None:
+                        params["endTime"] = end_time
+                    response = await public.get(
+                        "https://data-api.binance.vision/api/v3/klines", params=params
+                    )
+                    response.raise_for_status()
+                    batch = response.json()
+                    if not batch:
+                        break
+                    rows = batch + rows
+                    end_time = int(batch[0][0]) - 1
+                    if len(batch) < 1000:
+                        break
+            return [Candle.from_binance(row) for row in rows[-LIMIT:]]
 
         # GitHub-hosted runners can receive HTTP 451 from Binance Futures REST.
         # Use Binance's public historical-data archive instead. Daily futures
@@ -81,7 +96,7 @@ async def _history(client: BinanceClient, symbol: str, market: str):
         rows = []
         day = datetime.now(timezone.utc).date() - timedelta(days=1)
         async with httpx.AsyncClient(timeout=30.0) as public:
-            for _ in range(90):
+            for _ in range(ARCHIVE_LOOKBACK_DAYS):
                 url = (
                     "https://data.binance.vision/data/futures/um/daily/klines/"
                     f"{symbol}/{INTERVAL}/{symbol}-{INTERVAL}-{day.isoformat()}.zip"

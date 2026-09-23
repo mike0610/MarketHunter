@@ -13,6 +13,8 @@ from models.candle import Candle
 from research.models.trade import ResearchTrade
 from research.models.trade_status import TradeStatus
 from research.monitor import TradeMonitor
+from research.outcomes import classify_research_trade
+from research.models.trade_outcome import TradeOutcomeGroup, TradeOutcomeType
 
 
 class MemoryRepository:
@@ -286,6 +288,112 @@ class TradeMonitorTests(unittest.TestCase):
             result.rr,
             2.0,
         )
+
+    def test_long_moves_stop_to_breakeven_after_one_r(
+        self,
+    ) -> None:
+        trade = self.long_trade()
+
+        self.monitor.update_with_candle(
+            trade=trade,
+            candle=self.candle(0, 101.0, 99.0, 100.0),
+        )
+
+        result = self.monitor.update_with_candle(
+            trade=trade,
+            candle=self.candle(1, 105.0, 96.0, 104.0),
+        )
+
+        self.assertEqual(result.status, TradeStatus.ACTIVE)
+        self.assertEqual(result.stop_loss, 100.0)
+        self.assertEqual(
+            result.mtf_context["breakeven_initial_stop_loss"],
+            95.0,
+        )
+        self.assertEqual(
+            result.mtf_context["breakeven_trigger_r"],
+            1.0,
+        )
+
+    def test_breakeven_stop_is_effective_from_next_candle(
+        self,
+    ) -> None:
+        trade = self.long_trade()
+
+        self.monitor.update_with_candle(
+            trade=trade,
+            candle=self.candle(0, 101.0, 99.0, 100.0),
+        )
+
+        # This candle reaches +1R and trades below entry. It must not be
+        # retroactively stopped at breakeven because OHLC has no ordering.
+        result = self.monitor.update_with_candle(
+            trade=trade,
+            candle=self.candle(1, 105.0, 96.0, 101.0),
+        )
+        self.assertEqual(result.status, TradeStatus.ACTIVE)
+        self.assertEqual(result.stop_loss, 100.0)
+
+        result = self.monitor.update_with_candle(
+            trade=trade,
+            candle=self.candle(2, 102.0, 99.0, 100.0),
+        )
+        self.assertEqual(result.status, TradeStatus.CLOSED)
+        self.assertEqual(result.close_reason, "SL")
+        self.assertEqual(result.profit_percent, 0.0)
+
+    def test_original_stop_wins_before_same_candle_breakeven_move(
+        self,
+    ) -> None:
+        trade = self.long_trade()
+
+        self.monitor.update_with_candle(
+            trade=trade,
+            candle=self.candle(0, 101.0, 99.0, 100.0),
+        )
+
+        result = self.monitor.update_with_candle(
+            trade=trade,
+            candle=self.candle(1, 106.0, 94.0, 100.0),
+        )
+
+        self.assertEqual(result.status, TradeStatus.CLOSED)
+        self.assertEqual(result.stop_loss, 95.0)
+        self.assertEqual(result.profit_percent, -5.0)
+
+    def test_short_moves_stop_to_breakeven_after_one_r(
+        self,
+    ) -> None:
+        trade = self.short_trade()
+
+        self.monitor.update_with_candle(
+            trade=trade,
+            candle=self.candle(0, 101.0, 99.0, 100.0),
+        )
+
+        result = self.monitor.update_with_candle(
+            trade=trade,
+            candle=self.candle(1, 104.0, 95.0, 96.0),
+        )
+
+        self.assertEqual(result.status, TradeStatus.ACTIVE)
+        self.assertEqual(result.stop_loss, 100.0)
+
+    def test_profitable_protective_stop_is_positive_outcome(
+        self,
+    ) -> None:
+        trade = self.long_trade()
+        trade.activate(opened_at=self.start)
+        trade.close(
+            price=101.0,
+            reason="LIVE_STOP_LOSS",
+            closed_at=self.start + timedelta(minutes=1),
+        )
+
+        group, outcome_type = classify_research_trade(trade)
+
+        self.assertEqual(group, TradeOutcomeGroup.POSITIVE)
+        self.assertEqual(outcome_type, TradeOutcomeType.STOP_LOSS)
 
     def test_trade_expires_after_max_active_candles(
         self,

@@ -115,7 +115,16 @@ def classify_research_trade(
         return _resolve(cleanup)
 
     if trade.status == TradeStatus.CLOSED:
-        return _resolve(_classify_closed(trade))
+        outcome_type = _classify_closed(trade)
+        if outcome_type == TradeOutcomeType.STOP_LOSS:
+            # A protective stop can close above entry after the stop has
+            # advanced. Keep the exit mechanism as STOP_LOSS while deriving
+            # the analytical result from realized P&L.
+            if trade.profit_percent > 0:
+                return TradeOutcomeGroup.POSITIVE, outcome_type
+            if trade.profit_percent == 0:
+                return TradeOutcomeGroup.NEUTRAL, outcome_type
+        return _resolve(outcome_type)
 
     return _resolve(_classify_expired(trade))
 

@@ -158,6 +158,15 @@ class TradeMonitor:
                 closed_at=candle.close_time,
             )
 
+        elif self._move_stop_to_breakeven_if_earned(
+            trade=trade,
+            candle=candle,
+        ):
+            # The new stop becomes effective only for the next candle.
+            # OHLC does not reveal whether the favorable extreme or a
+            # same-candle retracement happened first.
+            pass
+
         self.repository.save(trade)
 
         return trade
@@ -246,6 +255,57 @@ class TradeMonitor:
             return candle.low <= trade.stop_loss
 
         return candle.high >= trade.stop_loss
+
+    def _move_stop_to_breakeven_if_earned(
+        self,
+        trade: ResearchTrade,
+        candle: Candle,
+    ) -> bool:
+        """
+        Protect an active trade after it has earned one initial unit of risk.
+
+        The initial stop is persisted in mtf_context before the first move so
+        the trigger remains stable after stop_loss changes. Break-even is
+        deliberately applied only after the current completed candle survives
+        the original SL/TP checks; the moved stop is therefore effective from
+        the next candle, avoiding invented intrabar ordering from OHLC data.
+        """
+
+        context = trade.mtf_context or {}
+        if context.get("breakeven_moved_at"):
+            return False
+
+        initial_stop = context.get(
+            "breakeven_initial_stop_loss",
+            trade.stop_loss,
+        )
+
+        try:
+            initial_stop = float(initial_stop)
+        except (TypeError, ValueError):
+            return False
+
+        if trade.is_long():
+            initial_risk = trade.entry_price - initial_stop
+            trigger_price = trade.entry_price + initial_risk
+            earned = candle.high >= trigger_price
+            improves_stop = trade.stop_loss < trade.entry_price
+        else:
+            initial_risk = initial_stop - trade.entry_price
+            trigger_price = trade.entry_price - initial_risk
+            earned = candle.low <= trigger_price
+            improves_stop = trade.stop_loss > trade.entry_price
+
+        if initial_risk <= 0 or not earned or not improves_stop:
+            return False
+
+        context["breakeven_initial_stop_loss"] = initial_stop
+        context["breakeven_trigger_r"] = 1.0
+        context["breakeven_trigger_price"] = trigger_price
+        context["breakeven_moved_at"] = candle.close_time.isoformat()
+        trade.mtf_context = context
+        trade.stop_loss = trade.entry_price
+        return True
 
     def _take_profit_hit(
         self,

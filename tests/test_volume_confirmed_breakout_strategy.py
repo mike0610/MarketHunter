@@ -36,6 +36,7 @@ class VolumeConfirmedBreakoutTests(unittest.IsolatedAsyncioTestCase):
 
  async def test_rejects_overextended_breakout_close(self):
   cs=[c(i,100,102,98,100) for i in range(29)]+[c(29,100,105,99,104,1700,150)]
-  self.assertIsNone(await VolumeConfirmedBreakoutStrategy().analyze(snap(cs,105,100,95)._replace(atr14=2) if False else MarketSnapshot("BTCUSDT",cs,105,100,95,1,1000,max(x.high for x in cs[-20:]),min(x.low for x in cs[-20:]))))
+  s=MarketSnapshot("BTCUSDT",cs,105,100,95,1,1000,max(x.high for x in cs[-20:]),min(x.low for x in cs[-20:]))
+  self.assertIsNone(await VolumeConfirmedBreakoutStrategy().analyze(s))
 
 if __name__=="__main__":unittest.main()

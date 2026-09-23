@@ -16,9 +16,10 @@ from models.position import Position
 from services.snapshot_builder import SnapshotBuilder
 from strategies.volume_confirmed_breakout import VolumeConfirmedBreakoutStrategy
 
-SYMBOLS = ("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT")
+SYMBOLS = ("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT", "LTCUSDT")
+MARKETS = ("spot", "futures")
 INTERVAL = "1h"
-LIMIT = 1000
+LIMIT = 1500
 WARMUP = 200
 DEVELOPMENT_FRACTION = 0.70
 
@@ -32,18 +33,19 @@ class ValidationStats:
     profit_factor: float | None
 
 
-async def _history(client: BinanceClient, symbol: str):
+async def _history(client: BinanceClient, symbol: str, market: str):
+    futures = market == "futures"
     try:
-        return await client.get_klines(symbol, interval=INTERVAL, limit=LIMIT)
+        return await client.get_klines(symbol, interval=INTERVAL, limit=LIMIT, futures=futures)
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code != 451:
             raise
-        # Binance documents data-api.binance.vision as a public-market-data
-        # base endpoint. Keep the validation read-only and preserve the exact
-        # /api/v3/klines payload shape used by Candle.from_binance.
+        # Public Binance market-data fallbacks for restricted runners.
+        endpoint = ("https://fapi.binance.com/fapi/v1/klines" if futures
+                    else "https://data-api.binance.vision/api/v3/klines")
         async with httpx.AsyncClient(timeout=30.0) as public:
             response = await public.get(
-                "https://data-api.binance.vision/api/v3/klines",
+                endpoint,
                 params={"symbol": symbol, "interval": INTERVAL, "limit": LIMIT},
             )
             response.raise_for_status()
@@ -122,13 +124,18 @@ async def main() -> None:
     client = BinanceClient()
     total_dev: list[ValidationStats] = []
     total_oos: list[ValidationStats] = []
-    for symbol in SYMBOLS:
-        candles = await _history(client, symbol)
-        split = int(len(candles) * DEVELOPMENT_FRACTION)
-        dev = await _replay(candles, WARMUP, split)
-        oos = await _replay(candles, split, len(candles))
-        total_dev.append(dev); total_oos.append(oos)
-        print(symbol, "DEV", asdict(dev), "OOS", asdict(oos))
+    for market in MARKETS:
+        for symbol in SYMBOLS:
+            try:
+                candles = await _history(client, symbol, market)
+            except httpx.HTTPStatusError as exc:
+                print(market.upper(), symbol, "SKIP", exc.response.status_code)
+                continue
+            split = int(len(candles) * DEVELOPMENT_FRACTION)
+            dev = await _replay(candles, WARMUP, split)
+            oos = await _replay(candles, split, len(candles))
+            total_dev.append(dev); total_oos.append(oos)
+            print(market.upper(), symbol, "DEV", asdict(dev), "OOS", asdict(oos))
     for name, rows in (("DEV", total_dev), ("OOS", total_oos)):
         signals = sum(x.signals for x in rows)
         wins = sum(x.wins for x in rows)

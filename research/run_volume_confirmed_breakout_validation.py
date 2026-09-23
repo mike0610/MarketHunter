@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict, dataclass
-from decimal import Decimal
-
 import httpx
 
 from backtesting.trade_simulator import ExecutionAssumptions, TradeSimulator
@@ -57,6 +55,7 @@ async def _replay(candles, start: int, end: int) -> ValidationStats:
     strategy = VolumeConfirmedBreakoutStrategy()
     builder = SnapshotBuilder()
     simulator = TradeSimulator(ExecutionAssumptions())
+    notional = 100.0
     pnls: list[float] = []
     i = max(WARMUP, start)
     while i < end - 1:
@@ -78,12 +77,35 @@ async def _replay(candles, start: int, end: int) -> ValidationStats:
             i += 1
             continue
         pos = Position(
-            symbol="VALIDATION", market="spot", side=side, quantity=1.0,
+            symbol="VALIDATION", market="spot", side=side, quantity=notional / entry,
             entry=entry, stop_loss=stop, take_profit=target,
             opened_at=0.0, current_price=entry,
         )
         future = candles[entry_i:end]
-        result = simulator.long(pos, future) if side == "LONG" else simulator.short(pos, future)
+        initial_risk = abs(entry - stop)
+        breakeven_trigger = entry + initial_risk if side == "LONG" else entry - initial_risk
+        active_stop = stop
+        result = None
+        for offset, candle in enumerate(future):
+            # Existing stop/target always resolves before a newly earned
+            # breakeven move, so the move can only protect the next candle.
+            if side == "LONG":
+                stop_hit = candle.low <= active_stop
+                target_hit = candle.high >= target
+                earned_1r = candle.high >= breakeven_trigger
+            else:
+                stop_hit = candle.high >= active_stop
+                target_hit = candle.low <= target
+                earned_1r = candle.low <= breakeven_trigger
+            if stop_hit or target_hit:
+                raw_exit = active_stop if stop_hit else target
+                reason = "stop" if stop_hit else "target"
+                result = simulator._result(pos, raw_exit, offset, reason)
+                break
+            if active_stop != entry and earned_1r:
+                active_stop = entry
+        if result is None:
+            result = simulator._result(pos, future[-1].close, len(future) - 1, "window_close")
         pnls.append(float(result.pnl))
         i = max(i + 1, entry_i + result.exit_offset + 1)
     wins = [p for p in pnls if p > 0]

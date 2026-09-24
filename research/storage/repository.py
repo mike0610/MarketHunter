@@ -287,15 +287,9 @@ class ResearchRepository:
                   AND (
                       (outcome_group = ? AND outcome_type = ?)
                       OR (
-                          LOWER(COALESCE(close_reason, '')) LIKE '%stop_loss%'
-                          AND (
-                              (profit_percent > 0 AND outcome_group != 'positive')
-                              OR (profit_percent = 0 AND outcome_group != 'neutral')
-                              OR (profit_percent < 0 AND outcome_group != 'negative')
+                          LOWER(TRIM(COALESCE(close_reason, ''))) IN (
+                              'sl', 'stop_loss', 'live_stop_loss'
                           )
-                      )
-                      OR (
-                          LOWER(COALESCE(close_reason, '')) = 'sl'
                           AND (
                               (profit_percent > 0 AND outcome_group != 'positive')
                               OR (profit_percent = 0 AND outcome_group != 'neutral')

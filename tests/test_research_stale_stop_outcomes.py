@@ -26,6 +26,7 @@ def test_repairs_only_unlocked_stale_stop_groups(tmp_path):
     _insert(repo, "locked", reason="SL", profit=2, group="negative", locked=1)
     _insert(repo, "correct", reason="SL", profit=-2, group="negative")
     _insert(repo, "unknown", reason="MANUAL_CLEANUP: test", profit=3, group="excluded")
+    _insert(repo, "cleanup", reason="MANUAL_CLEANUP: stop_loss legacy", profit=3, group="negative")
     repo.connection.close()
 
     repaired = ResearchRepository(str(tmp_path / "research.db"))
@@ -37,8 +38,9 @@ def test_repairs_only_unlocked_stale_stop_groups(tmp_path):
     assert rows["locked"]["outcome_group"] == "negative"
     assert rows["correct"]["outcome_group"] == "negative"
     assert rows["unknown"]["outcome_group"] == "excluded"
+    assert rows["cleanup"]["outcome_group"] == "negative"
     for trade_id, pnl in (("profitable", 1.25), ("neutral", 0),
-                          ("locked", 2), ("correct", -2), ("unknown", 3)):
+                          ("locked", 2), ("correct", -2), ("unknown", 3), ("cleanup", 3)):
         assert rows[trade_id]["profit_amount"] == pnl
         assert rows[trade_id]["status"] == "closed"
     repaired.connection.close()

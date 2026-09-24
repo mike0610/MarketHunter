@@ -40,10 +40,15 @@ jobs:
           import shutil, socket
           print("CERTBOT_INSTALLED="+("YES" if shutil.which("certbot") else "NO"))
           print("OPENSSL_INSTALLED="+("YES" if shutil.which("openssl") else "NO"))
+          print("UFW="+subprocess.run(["bash","-lc","command -v ufw >/dev/null && sudo -n ufw status | head -n 1 || echo UNAVAILABLE"],capture_output=True,text=True).stdout.strip()[:100])
+          print("PORT443_LISTEN="+("YES" if ":443 " in subprocess.run(["ss","-lnt"],capture_output=True,text=True).stdout else "NO"))
+          print("NGINX_ROOT_CANDIDATES="+str(len(re.findall(r"^\\s*root\\s+[^;]+;",c,flags=re.M))))
           for line in c.splitlines():
               s=line.strip()
               if s.startswith("listen "):
                   print("LISTENER="+re.sub(r"\\s+", " ", s)[:90])
+              elif s.startswith("root "):
+                  print("WEBROOT="+s[:150])
               elif s.startswith("server_name "):
                   print("SERVER_NAME="+s[:160])
               elif s.startswith("location "):

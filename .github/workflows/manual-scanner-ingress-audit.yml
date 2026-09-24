@@ -36,17 +36,31 @@ jobs:
               raise SystemExit(2)
           c = run.stdout
           print("NGINX_READ=OK")
-          for name, pattern in (
-              ("HTTPS_LISTENER", r"listen\\s+[^;\\n]*443\\b"),
-              ("TLS_CERTIFICATE_CONFIGURED", r"\\bssl_certificate\\s+"),
-              ("HTTP_TO_HTTPS_REDIRECT", r"return\\s+30[128]\\s+https://"),
-              ("API_LOCATION", r"location\\s+[^\\{]*?/api(?:/|\\s|\\{)"),
-              ("SCANNER_LOCATION", r"location\\s+[^\\{]*?/api/manual-scanner"),
-              ("BASIC_AUTH_PRESENT", r"\\bauth_basic\\s+"),
-              ("AUTH_REQUEST_PRESENT", r"\\bauth_request\\s+"),
-              ("LOCATION_INCLUDE_PRESENT", r"\\binclude\\s+[^;]*conf(?:;|$)"),
-          ):
-              print(f"{name}={'YES' if re.search(pattern,c) else 'NO'}")
+          # Inspect only topology: no private-key paths, credentials or full config in logs.
+          import shutil, socket
+          print("CERTBOT_INSTALLED="+("YES" if shutil.which("certbot") else "NO"))
+          print("OPENSSL_INSTALLED="+("YES" if shutil.which("openssl") else "NO"))
+          for line in c.splitlines():
+              s=line.strip()
+              if s.startswith("listen "):
+                  print("LISTENER="+re.sub(r"\\s+", " ", s)[:90])
+              elif s.startswith("server_name "):
+                  print("SERVER_NAME="+s[:160])
+              elif s.startswith("location "):
+                  print("LOCATION="+s[:150])
+              elif s.startswith("ssl_certificate "):
+                  print("TLS_CERTIFICATE=CONFIGURED")
+              elif s.startswith("auth_basic ") or s.startswith("auth_request "):
+                  print("ACCESS_CONTROL_DIRECTIVE=PRESENT")
+              elif s.startswith("proxy_pass "):
+                  host = re.search(r"127\\.0\\.0\\.1:(\\d+)", s)
+                  print("PROXY_TO_LOCAL_PORT="+(host.group(1) if host else "NONLOCAL_OR_VARIABLE"))
+          for candidate in ("149-56-45-39.sslip.io","149.56.45.39.nip.io"):
+              try:
+                  ips={item[4][0] for item in socket.getaddrinfo(candidate,None)}
+                  print("CANDIDATE_DNS="+candidate+" -> "+(",".join(sorted(ips))))
+              except OSError:
+                  print("CANDIDATE_DNS="+candidate+" -> UNRESOLVED")
           files = re.findall(r"^# configuration file ([^:]+):$", c, flags=re.MULTILINE)
           for name in files:
               if name.startswith("/etc/nginx/sites-enabled/") or name.startswith("/etc/nginx/conf.d/"):

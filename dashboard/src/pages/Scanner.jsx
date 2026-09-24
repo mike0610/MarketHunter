@@ -6,7 +6,13 @@ import {
 } from "@mui/material";
 import PageHeader from "../components/layout/PageHeader";
 
-const API = "http://127.0.0.1:8010/manual-scanner";
+// On the VPS, the browser must use a same-origin reverse-proxy route, not
+// its own 127.0.0.1. Local development retains the standalone port 8010.
+// Publishing the route requires a separately verified authenticated proxy.
+const API = (import.meta.env.VITE_MANUAL_SCANNER_API_BASE_URL ||
+  (["localhost", "127.0.0.1"].includes(window.location.hostname)
+    ? "http://127.0.0.1:8010/manual-scanner"
+    : "/api/manual-scanner")).replace(/\/$/, "");
 const PAGE_SIZE = 25;
 const TERMINAL = new Set(["completed", "partial", "failed"]);
 const SIGNAL_DIRECTIONS = new Set(["up", "down", "long", "short"]);
@@ -177,7 +183,7 @@ export default function Scanner() {
         setRun(null);
         setObservations([]);
       }
-    } catch (failure) { setError(`Окремий Scanner недоступний: ${failure.message}. Перевір порт 8010.`); }
+    } catch (failure) { setError(`Окремий Scanner недоступний: ${failure.message}. Перевір доступність окремого Scanner API.`); }
     finally { setRefreshing(false); setLoading(false); }
   }, [runId, loadRun]);
 

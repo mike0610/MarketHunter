@@ -86,56 +86,56 @@ async def _history(client: BinanceClient, symbol: str, market: str):
             raise RuntimeError(f"Incomplete frozen spot history: {symbol} {len(candles)}")
         return candles
 
-        # GitHub-hosted runners can receive HTTP 451 from Binance Futures REST.
-        # Use Binance's public historical-data archive instead. Daily futures
-        # klines preserve the native Binance kline schema without changing the
-        # frozen validation rules.
-        from io import BytesIO
-        from zipfile import ZipFile
-        import csv
+    # GitHub-hosted runners can receive HTTP 451 from Binance Futures REST.
+    # Use Binance's public historical-data archive instead. Daily futures
+    # klines preserve the native Binance kline schema without changing the
+    # frozen validation rules.
+    from io import BytesIO
+    from zipfile import ZipFile
+    import csv
 
-        rows = []
-        last_day = DATA_END_DAY
-        days = [last_day - timedelta(days=i) for i in range(ARCHIVE_LOOKBACK_DAYS)]
+    rows = []
+    last_day = DATA_END_DAY
+    days = [last_day - timedelta(days=i) for i in range(ARCHIVE_LOOKBACK_DAYS)]
 
-        async def fetch_day(public, day):
-            url = (
-                "https://data.binance.vision/data/futures/um/daily/klines/"
-                f"{symbol}/{INTERVAL}/{symbol}-{INTERVAL}-{day.isoformat()}.zip"
+    async def fetch_day(public, day):
+        url = (
+            "https://data.binance.vision/data/futures/um/daily/klines/"
+            f"{symbol}/{INTERVAL}/{symbol}-{INTERVAL}-{day.isoformat()}.zip"
+        )
+        response = await public.get(url)
+        if response.status_code in {404, 451}:
+            return []
+        response.raise_for_status()
+        with ZipFile(BytesIO(response.content)) as archive:
+            name = archive.namelist()[0]
+            text = archive.read(name).decode("utf-8")
+        parsed = []
+        for row in csv.reader(text.splitlines()):
+            if row and row[0].isdigit():
+                row[0] = int(row[0])
+                row[6] = int(row[6])
+                parsed.append(row)
+        return parsed
+
+    async with httpx.AsyncClient(timeout=30.0) as public:
+        for offset in range(0, len(days), ARCHIVE_CONCURRENCY):
+            batch_days = days[offset:offset + ARCHIVE_CONCURRENCY]
+            batches = await asyncio.gather(
+                *(fetch_day(public, day) for day in batch_days)
             )
-            response = await public.get(url)
-            if response.status_code in {404, 451}:
-                return []
-            response.raise_for_status()
-            with ZipFile(BytesIO(response.content)) as archive:
-                name = archive.namelist()[0]
-                text = archive.read(name).decode("utf-8")
-            parsed = []
-            for row in csv.reader(text.splitlines()):
-                if row and row[0].isdigit():
-                    row[0] = int(row[0])
-                    row[6] = int(row[6])
-                    parsed.append(row)
-            return parsed
+            for batch in batches:
+                rows.extend(batch)
+            if len(rows) >= LIMIT:
+                break
 
-        async with httpx.AsyncClient(timeout=30.0) as public:
-            for offset in range(0, len(days), ARCHIVE_CONCURRENCY):
-                batch_days = days[offset:offset + ARCHIVE_CONCURRENCY]
-                batches = await asyncio.gather(
-                    *(fetch_day(public, day) for day in batch_days)
-                )
-                for batch in batches:
-                    rows.extend(batch)
-                if len(rows) >= LIMIT:
-                    break
-
-        if not rows:
-            raise RuntimeError(f"No Binance Vision futures candles for {symbol}")
-        rows.sort(key=lambda row: int(row[0]))
-        candles = [Candle.from_binance(row) for row in rows[-LIMIT:]]
-        if len(candles) != LIMIT:
-            raise RuntimeError(f"Incomplete frozen futures history: {symbol} {len(candles)}")
-        return candles
+    if not rows:
+        raise RuntimeError(f"No Binance Vision futures candles for {symbol}")
+    rows.sort(key=lambda row: int(row[0]))
+    candles = [Candle.from_binance(row) for row in rows[-LIMIT:]]
+    if len(candles) != LIMIT:
+        raise RuntimeError(f"Incomplete frozen futures history: {symbol} {len(candles)}")
+    return candles
 
 
 async def _replay(candles, start: int, end: int, strategy_cls=VolumeConfirmedBreakoutStrategy, *, blocks=None, market='spot') -> ValidationStats:

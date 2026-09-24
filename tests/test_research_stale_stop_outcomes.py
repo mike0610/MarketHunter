@@ -53,3 +53,16 @@ def test_repairs_only_unlocked_stale_stop_groups(tmp_path):
         assert rows[trade_id]["profit_amount"] == pnl
         assert rows[trade_id]["status"] == "closed"
     repaired.connection.close()
+
+    # Reopening the repository must not change the already repaired records.
+    reopened = ResearchRepository(str(tmp_path / "research.db"))
+    again = {r["id"]: (r["outcome_group"], r["outcome_type"],
+                        r["outcome_note"], r["profit_amount"], r["status"])
+             for r in reopened.connection.execute(
+                 "SELECT * FROM research_trades"
+             ).fetchall()}
+    before = {trade_id: (row["outcome_group"], row["outcome_type"],
+                         row["outcome_note"], row["profit_amount"], row["status"])
+              for trade_id, row in rows.items()}
+    assert again == before
+    reopened.connection.close()

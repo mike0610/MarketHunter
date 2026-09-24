@@ -262,8 +262,8 @@ class ResearchRepository:
 
     def _backfill_outcome_classification(self) -> None:
         """
-        Classify CLOSED/EXPIRED trades still sitting at the
-        unclassified default (neutral/open_active, never locked).
+        Classify unclassified terminal trades and repair stale, unlocked
+        stop-exit outcome groups when their P&L sign disagrees.
 
         Runs on every startup, not just the first time the
         outcome_group/outcome_type columns are added. The WHERE
@@ -284,8 +284,25 @@ class ResearchRepository:
                 FROM research_trades
                 WHERE status IN (?, ?)
                   AND outcome_locked = 0
-                  AND outcome_group = ?
-                  AND outcome_type = ?
+                  AND (
+                      (outcome_group = ? AND outcome_type = ?)
+                      OR (
+                          LOWER(COALESCE(close_reason, '')) LIKE '%stop_loss%'
+                          AND (
+                              (profit_percent > 0 AND outcome_group != 'positive')
+                              OR (profit_percent = 0 AND outcome_group != 'neutral')
+                              OR (profit_percent < 0 AND outcome_group != 'negative')
+                          )
+                      )
+                      OR (
+                          LOWER(COALESCE(close_reason, '')) = 'sl'
+                          AND (
+                              (profit_percent > 0 AND outcome_group != 'positive')
+                              OR (profit_percent = 0 AND outcome_group != 'neutral')
+                              OR (profit_percent < 0 AND outcome_group != 'negative')
+                          )
+                      )
+                  )
                 """,
                 (
                     TradeStatus.CLOSED.value,

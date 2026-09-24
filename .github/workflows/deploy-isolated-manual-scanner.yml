@@ -1,0 +1,96 @@
+name: Deploy Isolated Manual Scanner (private VPS port)
+
+on:
+  push:
+    branches:
+      - feature/mobile-scanner-paper-vps-prep-20260925
+    paths:
+      - .github/workflows/deploy-isolated-manual-scanner.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      VPS_HOST: 149.56.45.39
+      VPS_USER: ubuntu
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Checkout exact isolated-scanner source
+        uses: actions/checkout@v4
+      - name: Validate source and dashboard
+        run: |
+          set -euo pipefail
+          python3 -m py_compile services/standalone_scanner.py
+          test -f dashboard/src/pages/Scanner.jsx
+          test -f deploy/systemd/standalone-manual-scanner.service
+          grep -Fq -- '--host 127.0.0.1 --port 8010' deploy/systemd/standalone-manual-scanner.service
+      - name: Fail closed without existing VPS SSH credential
+        run: |
+          test -n "${SSH_PRIVATE_KEY}" || { echo 'BLOCKED: no VPS SSH secret'; exit 2; }
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+      - name: Verify isolated deployment prerequisites without mutations
+        run: |
+          set -euo pipefail
+          ssh -o BatchMode=yes -i ~/.ssh/key "${VPS_USER}@${VPS_HOST}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd /home/ubuntu/MarketHunter
+          test -x .venv/bin/python
+          .venv/bin/python -c 'import fastapi, httpx, uvicorn, numpy, pandas, pydantic'
+          sudo -n true
+          test ! -e /etc/systemd/system/standalone-manual-scanner.service
+          test ! -e /home/ubuntu/markethunter-manual-scanner-v1
+          .venv/bin/python - <<'PY'
+          import socket
+          s=socket.socket()
+          try:
+              s.bind(("127.0.0.1", 8010))
+              print("PORT_8010=FREE")
+          finally:
+              s.close()
+          PY
+          echo "ISOLATED_PREREQUISITES=OK"
+          REMOTE
+      - name: Stage scanner-only source (do not change production checkout)
+        run: |
+          set -euo pipefail
+          tar -czf manual-scanner-stage.tgz --exclude='./.git' --exclude='./data' --exclude='./dashboard/node_modules' --exclude='./dashboard/dist' --exclude='./.env' --exclude='./*.db' .
+          scp -o BatchMode=yes -i ~/.ssh/key manual-scanner-stage.tgz "${VPS_USER}@${VPS_HOST}:/tmp/markethunter-manual-scanner-${GITHUB_SHA}.tgz"
+          ssh -o BatchMode=yes -i ~/.ssh/key "${VPS_USER}@${VPS_HOST}" 'bash -s' <<REMOTE
+          set -euo pipefail
+          mkdir -m 700 /home/ubuntu/markethunter-manual-scanner-v1
+          mkdir -p /home/ubuntu/markethunter-manual-scanner-state
+          chmod 700 /home/ubuntu/markethunter-manual-scanner-state
+          tar -xzf /tmp/markethunter-manual-scanner-${GITHUB_SHA}.tgz -C /home/ubuntu/markethunter-manual-scanner-v1
+          rm /tmp/markethunter-manual-scanner-${GITHUB_SHA}.tgz
+          REMOTE
+      - name: Install and verify only the NEW loopback-only service
+        run: |
+          set -euo pipefail
+          ssh -o BatchMode=yes -i ~/.ssh/key "${VPS_USER}@${VPS_HOST}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd /home/ubuntu/markethunter-manual-scanner-v1
+          sudo -n install -m 0644 deploy/systemd/standalone-manual-scanner.service /etc/systemd/system/standalone-manual-scanner.service
+          sudo -n systemctl daemon-reload
+          sudo -n systemctl enable --now standalone-manual-scanner.service
+          for n in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsS --max-time 2 http://127.0.0.1:8010/manual-scanner/runs | python3 -c 'import sys,json;assert isinstance(json.load(sys.stdin)["runs"],list)' 2>/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          systemctl is-active --quiet standalone-manual-scanner.service
+          curl -fsS --max-time 5 http://127.0.0.1:8010/manual-scanner/runs | python3 -c 'import json,sys;print("LOCAL_MANUAL_SCANNER_API=OK" if isinstance(json.load(sys.stdin)["runs"],list) else "BAD_RESPONSE")'
+          echo "INGRESS=NOT_CONFIGURED (private loopback only; no public access)"
+          echo "PAPER_TRADING=NOT_INSTALLED"
+          echo "PRODUCTION_CHECKOUT=UNCHANGED"
+          REMOTE

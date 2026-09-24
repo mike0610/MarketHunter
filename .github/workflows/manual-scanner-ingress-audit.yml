@@ -1,0 +1,55 @@
+name: Scanner Smartphone HTTPS/Auth Preflight (read only)
+
+on:
+  push:
+    branches:
+      - feature/mobile-scanner-paper-vps-prep-20260925
+    paths:
+      - .github/workflows/manual-scanner-ingress-audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VPS_HOST: 149.56.45.39
+      VPS_USER: ubuntu
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Configure SSH
+        run: |
+          test -n "${SSH_PRIVATE_KEY}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+      - name: Read-only ingress structure (no full Nginx config/secret values)
+        run: |
+          ssh -o BatchMode=yes -i ~/.ssh/key "${VPS_USER}@${VPS_HOST}" 'python3 -' <<'PY'
+          import re, subprocess
+          run = subprocess.run(["sudo", "-n", "nginx", "-T"], capture_output=True, text=True)
+          if run.returncode:
+              print("NGINX_READ=BLOCKED")
+              raise SystemExit(2)
+          c = run.stdout
+          print("NGINX_READ=OK")
+          for name, pattern in (
+              ("HTTPS_LISTENER", r"listen\\s+[^;\\n]*443\\b"),
+              ("TLS_CERTIFICATE_CONFIGURED", r"\\bssl_certificate\\s+"),
+              ("HTTP_TO_HTTPS_REDIRECT", r"return\\s+30[128]\\s+https://"),
+              ("API_LOCATION", r"location\\s+[^\\{]*?/api(?:/|\\s|\\{)"),
+              ("SCANNER_LOCATION", r"location\\s+[^\\{]*?/api/manual-scanner"),
+              ("BASIC_AUTH_PRESENT", r"\\bauth_basic\\s+"),
+              ("AUTH_REQUEST_PRESENT", r"\\bauth_request\\s+"),
+              ("LOCATION_INCLUDE_PRESENT", r"\\binclude\\s+[^;]*conf(?:;|$)"),
+          ):
+              print(f"{name}={'YES' if re.search(pattern,c) else 'NO'}")
+          files = re.findall(r"^# configuration file ([^:]+):$", c, flags=re.MULTILINE)
+          for name in files:
+              if name.startswith("/etc/nginx/sites-enabled/") or name.startswith("/etc/nginx/conf.d/"):
+                  print("ACTIVE_SITE_CONFIG_BASENAME="+name.rsplit("/",1)[-1])
+          print("AUTHENTICATED_SCANNER_INGRESS=NOT_PROVEN")
+          PY

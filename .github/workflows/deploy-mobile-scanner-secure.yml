@@ -1,0 +1,137 @@
+name: Deploy HTTPS Private Mobile Manual Scanner (new vhost only)
+
+on:
+  push:
+    branches:
+      - feature/mobile-scanner-paper-vps-prep-20260925
+    paths:
+      - .github/workflows/deploy-mobile-scanner-secure.yml
+
+permissions:
+  contents: read
+
+env:
+  VPS_HOST: 149.56.45.39
+  VPS_USER: ubuntu
+  SCANNER_DOMAIN: 149-56-45-39.sslip.io
+  SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+
+jobs:
+  deploy-secure-scanner:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout isolated scanner and dashboard
+        uses: actions/checkout@v4
+
+      - name: Build mobile dashboard from exact branch
+        working-directory: dashboard
+        env:
+          VITE_API_BASE_URL: /api
+          VITE_MANUAL_SCANNER_API_BASE_URL: /api/manual-scanner
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          test -s dist/index.html
+          grep -q 'auth_basic_user_file' ../deploy/nginx/markethunter-scanner-mobile.conf
+
+      - name: Configure existing VPS SSH
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}" || { echo "BLOCKED: SSH secret missing"; exit 2; }
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Verify HTTP-01 challenge route and isolated service
+        run: |
+          set -euo pipefail
+          PROBE="mh-scanner-acme-${GITHUB_RUN_ID}"
+          ssh -o BatchMode=yes -i ~/.ssh/key "${VPS_USER}@${VPS_HOST}" "set -e; sudo -n install -d -m 755 /var/www/html/.well-known/acme-challenge; printf '%s' '${PROBE}' | sudo -n tee '/var/www/html/.well-known/acme-challenge/${PROBE}' >/dev/null; curl -fsS --max-time 4 http://127.0.0.1:8010/manual-scanner/runs >/dev/null"
+          PROBE_RESULT="$(curl --fail --silent --show-error --max-time 10 --resolve "${SCANNER_DOMAIN}:80:${VPS_HOST}" "http://${SCANNER_DOMAIN}/.well-known/acme-challenge/${PROBE}" || true)"
+          ssh -o BatchMode=yes -i ~/.ssh/key "${VPS_USER}@${VPS_HOST}" "sudo -n rm -f '/var/www/html/.well-known/acme-challenge/${PROBE}'"
+          test "${PROBE_RESULT}" = "${PROBE}" || { echo "BLOCKED: HTTP-01 challenge not reachable from internet"; exit 3; }
+          echo "ACME_HTTP_EXTERNAL=OK"
+
+      - name: Obtain CA-trusted TLS cert without editing production Nginx
+        run: |
+          ssh -o BatchMode=yes -i ~/.ssh/key "${VPS_USER}@${VPS_HOST}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          test ! -f /etc/nginx/sites-enabled/markethunter-scanner-mobile.conf
+          sudo -n apt-get update -qq
+          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq certbot
+          sudo -n certbot certonly --non-interactive --agree-tos --register-unsafely-without-email \
+            --webroot -w /var/www/html --preferred-challenges http \
+            --cert-name markethunter-scanner-mobile \
+            -d 149-56-45-39.sslip.io
+          sudo -n test -s /etc/letsencrypt/live/markethunter-scanner-mobile/fullchain.pem
+          sudo -n test -s /etc/letsencrypt/live/markethunter-scanner-mobile/privkey.pem
+          echo "TRUSTED_TLS_CERT=ISSUED"
+          REMOTE
+
+      - name: Transfer isolated built dashboard and Nginx configuration
+        run: |
+          set -euo pipefail
+          tar -C dashboard -czf "${RUNNER_TEMP}/mobile-scanner-dist.tgz" dist
+          scp -o BatchMode=yes -i ~/.ssh/key "${RUNNER_TEMP}/mobile-scanner-dist.tgz" "${VPS_USER}@${VPS_HOST}:/tmp/mobile-scanner-dist-${GITHUB_SHA}.tgz"
+          scp -o BatchMode=yes -i ~/.ssh/key deploy/nginx/markethunter-scanner-mobile.conf "${VPS_USER}@${VPS_HOST}:/tmp/markethunter-scanner-mobile-${GITHUB_SHA}.conf"
+
+      - name: Deploy dedicated protected HTTPS vhost and verify locally
+        run: |
+          ssh -o BatchMode=yes -i ~/.ssh/key "${VPS_USER}@${VPS_HOST}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          test ! -f /etc/nginx/sites-enabled/markethunter-scanner-mobile.conf
+          test ! -f /etc/nginx/.markethunter-scanner-auth
+          sudo -n install -d -m 755 /var/www/markethunter-scanner-mobile
+          TMP="$(mktemp -d)"
+          trap 'rm -rf "$TMP"' EXIT
+          tar -xzf /tmp/mobile-scanner-dist-${GITHUB_SHA}.tgz -C "$TMP"
+          test -s "$TMP/dist/index.html"
+          sudo -n rsync -a --delete "$TMP/dist/" /var/www/markethunter-scanner-mobile/
+          rm -f /tmp/mobile-scanner-dist-${GITHUB_SHA}.tgz
+          PASS="$(openssl rand -base64 36 | tr -d '\n')"
+          HASH="$(printf '%s' "$PASS" | openssl passwd -6 -stdin)"
+          printf 'scanner:%s\n' "$HASH" | sudo -n tee /etc/nginx/.markethunter-scanner-auth >/dev/null
+          sudo -n chown root:www-data /etc/nginx/.markethunter-scanner-auth
+          sudo -n chmod 640 /etc/nginx/.markethunter-scanner-auth
+          sudo -n install -m 644 /tmp/markethunter-scanner-mobile-${GITHUB_SHA}.conf /etc/nginx/sites-available/markethunter-scanner-mobile.conf
+          rm /tmp/markethunter-scanner-mobile-${GITHUB_SHA}.conf
+          sudo -n ln -s /etc/nginx/sites-available/markethunter-scanner-mobile.conf /etc/nginx/sites-enabled/markethunter-scanner-mobile.conf
+          sudo -n nginx -t
+          sudo -n systemctl reload nginx
+          BASE="https://149-56-45-39.sslip.io"
+          AUTHLESS="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 --resolve '149-56-45-39.sslip.io:443:127.0.0.1' "$BASE/scanner")"
+          test "$AUTHLESS" = "401"
+          curl --fail --silent --show-error --max-time 10 --resolve '149-56-45-39.sslip.io:443:127.0.0.1' \
+            --user "scanner:$PASS" "$BASE/scanner" | grep -q '<html'
+          curl --fail --silent --show-error --max-time 10 --resolve '149-56-45-39.sslip.io:443:127.0.0.1' \
+            --user "scanner:$PASS" "$BASE/api/manual-scanner/runs" | python3 -c 'import json,sys;assert isinstance(json.load(sys.stdin)["runs"],list)'
+          PRODUCTION_API_CHECK="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 --resolve '149-56-45-39.sslip.io:443:127.0.0.1' \
+            --user "scanner:$PASS" "$BASE/api/experiment1/state")"
+          test "$PRODUCTION_API_CHECK" = "404"
+          sudo -n systemctl enable --now certbot.timer
+          echo "LOCAL_HTTPS_AUTHLESS=401"
+          echo "LOCAL_HTTPS_AUTHENTICATED_SCANNER=200"
+          echo "PRODUCTION_API_NOT_EXPOSED=404"
+          echo "CERTBOT_RENEWAL_TIMER=ENABLED"
+          # Transport the generated password encrypted; never write raw password into
+          # repository or workflow logs. RSA private key is held outside GitHub.
+          PUB="$(mktemp)"
+          printf '%s' 'LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUFySzVzcWhIYUVKbEQ1ZTVSYmhyLwpUUkl6Zy8zd0dMSDFTZm9EQy85TU1UOVV2MUlPdHJCMlYvSW1BK3Z4bG5zVVJndEtjRXZCUENGQmdxeU9GUTdDCnVMUGkrMGkzQXJBaHRTSFdxV2xoa0VpbHJZZFlRcWVjYVZQRXpsK05WSFpvOXJnU3BWUUVKek8wWHVuMlUxdG8KQXJPOXNtaUdtMFlNeXN1N0NDU08vNlJWcEE2Nm4yOHBHWVRVL2d3VVFXNGF5elhxSzhwWkpRV2VGS0ZNOHpuWAphd002WHd2WmhoaWRLZTRiMEF6N21sQ01HSFk4WEZaeUJONUVVbmdheWZZMFFCLytyY2x5dHdUd1MyblFUeGRZCjlzYm91WnErRDNoMjNEK0twMXJGTklHeUdVS0VsU01NTEc5bW8rV254WWYrTTZaQ29FSnhoMkZPUjNTQjRvRTkKWFFJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==' | base64 -d > "$PUB"
+          echo -n "SCANNER_LOGIN_CREDENTIAL_RSA_OAEP_SHA256_B64="
+          printf '%s' "$PASS" | openssl pkeyutl -encrypt -pubin -inkey "$PUB" \
+            -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 | base64 -w0
+          echo
+          rm -f "$PUB"
+          echo "DEPLOYED_MOBILE_SCANNER=https://149-56-45-39.sslip.io/scanner"
+          echo "PRODUCTION_NGINX_PORT80=UNCHANGED"
+          REMOTE
+
+      - name: Verify external HTTPS rejects unauthenticated requests
+        run: |
+          set -euo pipefail
+          CODE="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 12 --resolve "${SCANNER_DOMAIN}:443:${VPS_HOST}" "https://${SCANNER_DOMAIN}/scanner")"
+          test "$CODE" = "401" || { echo "EXTERNAL_TLS_AUTH_GATE=FAILED HTTP=$CODE"; exit 4; }
+          echo "EXTERNAL_TLS_AUTH_GATE=PASS (verified certificate + HTTP 401)"

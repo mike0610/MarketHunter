@@ -22,7 +22,6 @@ import TimelineIcon from "@mui/icons-material/Timeline";
 
 import { NavLink } from "react-router-dom";
 
-
 const drawerWidth = 240;
 
 const items = [
@@ -40,14 +39,14 @@ const items = [
 
 function SidebarContent({ onNavigate }) {
     return (
-        <Box sx={{ width: drawerWidth }}>
-            <Toolbar>
-                <Typography variant="h6" sx={{ fontWeight: 700 }}>
+        <Box sx={{ width: "100%", minWidth: 0, maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
+            <Toolbar sx={{ minWidth: 0, overflow: "hidden" }}>
+                <Typography variant="h6" noWrap sx={{ fontWeight: 700, minWidth: 0 }}>
                     🏹 MarketHunter
                 </Typography>
             </Toolbar>
 
-            <List>
+            <List sx={{ width: "100%", minWidth: 0 }}>
                 {items.map((item) => (
                     <ListItemButton
                         key={item.text}
@@ -55,13 +54,14 @@ function SidebarContent({ onNavigate }) {
                         to={item.path}
                         onClick={onNavigate}
                         sx={{
+                            minWidth: 0,
                             "&.active": {
                                 bgcolor: "action.selected",
                             },
                         }}
                     >
                         <ListItemIcon>{item.icon}</ListItemIcon>
-                        <ListItemText primary={item.text} />
+                        <ListItemText primary={item.text} sx={{ minWidth: 0 }} primaryTypographyProps={{ noWrap: true }} />
                     </ListItemButton>
                 ))}
             </List>
@@ -82,6 +82,7 @@ export default function AppSidebar({ mobileOpen = false, onMobileClose }) {
                     "& .MuiDrawer-paper": {
                         width: drawerWidth,
                         boxSizing: "border-box",
+                        overflowX: "hidden",
                     },
                 }}
             >
@@ -98,6 +99,7 @@ export default function AppSidebar({ mobileOpen = false, onMobileClose }) {
                     "& .MuiDrawer-paper": {
                         width: drawerWidth,
                         boxSizing: "border-box",
+                        overflowX: "hidden",
                     },
                 }}
             >

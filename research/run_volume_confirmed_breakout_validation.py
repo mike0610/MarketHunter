@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict, dataclass
 import httpx
+import hashlib
+from datetime import date, datetime, timedelta, timezone
 
 from backtesting.trade_simulator import ExecutionAssumptions, TradeSimulator
 from exchange.binance_client import BinanceClient
@@ -38,6 +40,8 @@ MARKETS = ("spot", "futures")
 INTERVAL = "1h"
 LIMIT = 8760
 ARCHIVE_LOOKBACK_DAYS = 400
+# Frozen UTC endpoint: never include an unfinished candle or slide the sample.
+DATA_END_DAY = date(2026, 9, 23)
 ARCHIVE_CONCURRENCY = 12
 WARMUP = 200
 DEVELOPMENT_FRACTION = 0.70
@@ -54,48 +58,44 @@ class ValidationStats:
 
 async def _history(client: BinanceClient, symbol: str, market: str):
     futures = market == "futures"
-    try:
-        return await client.get_klines(symbol, interval=INTERVAL, limit=LIMIT, futures=futures)
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code != 451:
-            raise
-
-        from models.candle import Candle
-
-        if not futures:
-            # Spot REST caps klines per request. Walk backward with endTime so
-            # the one-year regime run uses the same native Binance candles.
-            rows = []
-            end_time = None
-            async with httpx.AsyncClient(timeout=30.0) as public:
-                while len(rows) < LIMIT:
-                    params = {"symbol": symbol, "interval": INTERVAL, "limit": 1000}
-                    if end_time is not None:
-                        params["endTime"] = end_time
-                    response = await public.get(
-                        "https://data-api.binance.vision/api/v3/klines", params=params
-                    )
-                    response.raise_for_status()
-                    batch = response.json()
-                    if not batch:
-                        break
-                    rows = batch + rows
-                    end_time = int(batch[0][0]) - 1
-                    if len(batch) < 1000:
-                        break
-            return [Candle.from_binance(row) for row in rows[-LIMIT:]]
+    # Always use the same dated archive window. The direct REST shortcut
+    # previously ignored the cutoff and silently shifted samples each run.
+    from models.candle import Candle
+    if not futures:
+        rows = []
+        end_time = int(datetime.combine(
+            DATA_END_DAY + timedelta(days=1), datetime.min.time(),
+            tzinfo=timezone.utc,
+        ).timestamp() * 1000) - 1
+        async with httpx.AsyncClient(timeout=30.0) as public:
+            while len(rows) < LIMIT:
+                params = {"symbol": symbol, "interval": INTERVAL,
+                          "limit": min(1000, LIMIT - len(rows)),
+                          "endTime": end_time}
+                response = await public.get(
+                    "https://data-api.binance.vision/api/v3/klines", params=params
+                )
+                response.raise_for_status()
+                batch = response.json()
+                if not batch:
+                    break
+                rows = batch + rows
+                end_time = int(batch[0][0]) - 1
+        candles = [Candle.from_binance(row) for row in rows[-LIMIT:]]
+        if len(candles) != LIMIT:
+            raise RuntimeError(f"Incomplete frozen spot history: {symbol} {len(candles)}")
+        return candles
 
         # GitHub-hosted runners can receive HTTP 451 from Binance Futures REST.
         # Use Binance's public historical-data archive instead. Daily futures
         # klines preserve the native Binance kline schema without changing the
         # frozen validation rules.
-        from datetime import datetime, timedelta, timezone
         from io import BytesIO
         from zipfile import ZipFile
         import csv
 
         rows = []
-        last_day = datetime.now(timezone.utc).date() - timedelta(days=1)
+        last_day = DATA_END_DAY
         days = [last_day - timedelta(days=i) for i in range(ARCHIVE_LOOKBACK_DAYS)]
 
         async def fetch_day(public, day):
@@ -132,7 +132,10 @@ async def _history(client: BinanceClient, symbol: str, market: str):
         if not rows:
             raise RuntimeError(f"No Binance Vision futures candles for {symbol}")
         rows.sort(key=lambda row: int(row[0]))
-        return [Candle.from_binance(row) for row in rows[-LIMIT:]]
+        candles = [Candle.from_binance(row) for row in rows[-LIMIT:]]
+        if len(candles) != LIMIT:
+            raise RuntimeError(f"Incomplete frozen futures history: {symbol} {len(candles)}")
+        return candles
 
 
 async def _replay(candles, start: int, end: int, strategy_cls=VolumeConfirmedBreakoutStrategy, *, blocks=None, market='spot') -> ValidationStats:
@@ -218,6 +221,12 @@ async def main() -> None:
             except httpx.HTTPStatusError as exc:
                 print(market.upper(), symbol, "SKIP", exc.response.status_code)
                 continue
+            digest = hashlib.sha256('\n'.join(
+                f'{c.open_time.isoformat()}|{c.open}|{c.high}|{c.low}|{c.close}|{c.volume}'
+                for c in candles
+            ).encode()).hexdigest()
+            print('DATASET', market, symbol, 'end_day', DATA_END_DAY.isoformat(),
+                  'bars', len(candles), 'sha256', digest)
             split = int(len(candles) * DEVELOPMENT_FRACTION)
             dev = await _replay(candles, WARMUP, split, blocks=chronological.setdefault(('NEW', 'DEV'), []), market=market)
             oos = await _replay(candles, split, len(candles), blocks=chronological.setdefault(('NEW', 'OOS'), []), market=market)

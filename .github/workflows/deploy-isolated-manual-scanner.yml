@@ -63,8 +63,8 @@ jobs:
       - name: Stage scanner-only source (do not change production checkout)
         run: |
           set -euo pipefail
-          tar -czf manual-scanner-stage.tgz --exclude='./.git' --exclude='./data' --exclude='./dashboard/node_modules' --exclude='./dashboard/dist' --exclude='./.env' --exclude='./*.db' .
-          scp -o BatchMode=yes -i ~/.ssh/key manual-scanner-stage.tgz "${VPS_USER}@${VPS_HOST}:/tmp/markethunter-manual-scanner-${GITHUB_SHA}.tgz"
+          tar -czf "${RUNNER_TEMP}/manual-scanner-stage.tgz" --exclude='./.git' --exclude='./data' --exclude='./dashboard/node_modules' --exclude='./dashboard/dist' --exclude='./.env' --exclude='./*.db' .
+          scp -o BatchMode=yes -i ~/.ssh/key "${RUNNER_TEMP}/manual-scanner-stage.tgz" "${VPS_USER}@${VPS_HOST}:/tmp/markethunter-manual-scanner-${GITHUB_SHA}.tgz"
           ssh -o BatchMode=yes -i ~/.ssh/key "${VPS_USER}@${VPS_HOST}" 'bash -s' <<REMOTE
           set -euo pipefail
           mkdir -m 700 /home/ubuntu/markethunter-manual-scanner-v1

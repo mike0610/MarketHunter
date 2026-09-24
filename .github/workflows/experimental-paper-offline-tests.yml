@@ -1,0 +1,28 @@
+name: Experimental paper offline tests (no market calls)
+
+on:
+  push:
+    branches:
+      - feature/mobile-scanner-paper-vps-prep-20260925
+    paths:
+      - experimental_paper_v1/**
+      - .github/workflows/experimental-paper-offline-tests.yml
+  pull_request:
+    paths:
+      - experimental_paper_v1/**
+      - .github/workflows/experimental-paper-offline-tests.yml
+
+permissions:
+  contents: read
+
+jobs:
+  paper-fixture-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Execute deterministic synthetic-only tests
+        working-directory: experimental_paper_v1
+        run: |
+          python3 -m compileall -q forward_gate.py paper_book.py test_forward_gate.py test_paper_book.py
+          python3 -m unittest -v test_forward_gate.py test_paper_book.py

@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 
-const API = "http://127.0.0.1:8010/manual-scanner";
+// On the VPS, the browser must use a same-origin reverse-proxy route, not
+// its own 127.0.0.1. Local development retains the standalone port 8010.
+// Publishing the route requires a separately verified authenticated proxy.
+const API = (import.meta.env.VITE_MANUAL_SCANNER_API_BASE_URL ||
+  (["localhost", "127.0.0.1"].includes(window.location.hostname)
+    ? "http://127.0.0.1:8010/manual-scanner"
+    : "/api/manual-scanner")).replace(/\/$/, "");
 
 export default function ManualScannerPanel() {
   const [market, setMarket] = useState("spot");
@@ -51,7 +57,7 @@ export default function ManualScannerPanel() {
       setObservations([]);
       setRun({ id: data.run_id, status: data.status, symbols_total: list.length, symbols_done: 0 });
     } catch (e) {
-      setError(`Не вдалося запустити сканер: ${e.message}. Перевір, чи працює окремий сервіс на порту 8010.`);
+      setError(`Не вдалося запустити сканер: ${e.message}. Перевір доступність окремого Scanner API.`);
     } finally {
       setStarting(false);
     }

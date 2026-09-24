@@ -287,7 +287,9 @@ class ResearchRepository:
                   AND (
                       (outcome_group = ? AND outcome_type = ?)
                       OR (
-                          LOWER(TRIM(COALESCE(close_reason, ''))) IN (
+                          status = 'closed'
+                          AND outcome_type = 'stop_loss'
+                          AND LOWER(TRIM(COALESCE(close_reason, ''))) IN (
                               'sl', 'stop_loss', 'live_stop_loss'
                           )
                           AND (

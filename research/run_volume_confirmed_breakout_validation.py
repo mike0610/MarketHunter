@@ -135,7 +135,7 @@ async def _history(client: BinanceClient, symbol: str, market: str):
         return [Candle.from_binance(row) for row in rows[-LIMIT:]]
 
 
-async def _replay(candles, start: int, end: int, strategy_cls=VolumeConfirmedBreakoutStrategy) -> ValidationStats:
+async def _replay(candles, start: int, end: int, strategy_cls=VolumeConfirmedBreakoutStrategy, *, blocks=None, market='spot') -> ValidationStats:
     strategy = strategy_cls()
     builder = SnapshotBuilder()
     simulator = TradeSimulator(ExecutionAssumptions())
@@ -161,7 +161,7 @@ async def _replay(candles, start: int, end: int, strategy_cls=VolumeConfirmedBre
             i += 1
             continue
         pos = Position(
-            symbol="VALIDATION", market="spot", side=side, quantity=notional / entry,
+            symbol="VALIDATION", market=market, side=side, quantity=notional / entry,
             entry=entry, stop_loss=stop, take_profit=target,
             opened_at=0.0, current_price=entry,
         )
@@ -191,6 +191,10 @@ async def _replay(candles, start: int, end: int, strategy_cls=VolumeConfirmedBre
         if result is None:
             result = simulator._result(pos, future[-1].close, len(future) - 1, "window_close")
         pnls.append(float(result.pnl))
+        if blocks is not None:
+            entered = candles[entry_i].open_time
+            quarter = (entered.month - 1) // 3 + 1
+            blocks.append((f'{entered.year}-Q{quarter}', float(result.pnl)))
         i = max(i + 1, entry_i + result.exit_offset + 1)
     wins = [p for p in pnls if p > 0]
     losses = [p for p in pnls if p <= 0]
@@ -206,6 +210,7 @@ async def main() -> None:
     client = BinanceClient()
     total_dev: list[ValidationStats] = []
     total_oos: list[ValidationStats] = []
+    chronological = {}
     for market in MARKETS:
         for symbol in SYMBOLS:
             try:
@@ -214,13 +219,20 @@ async def main() -> None:
                 print(market.upper(), symbol, "SKIP", exc.response.status_code)
                 continue
             split = int(len(candles) * DEVELOPMENT_FRACTION)
-            dev = await _replay(candles, WARMUP, split)
-            oos = await _replay(candles, split, len(candles))
-            legacy_dev = await _replay(candles, WARMUP, split, LegacyVolumeConfirmedBreakoutStrategy)
-            legacy_oos = await _replay(candles, split, len(candles), LegacyVolumeConfirmedBreakoutStrategy)
+            dev = await _replay(candles, WARMUP, split, blocks=chronological.setdefault(('NEW', 'DEV'), []), market=market)
+            oos = await _replay(candles, split, len(candles), blocks=chronological.setdefault(('NEW', 'OOS'), []), market=market)
+            legacy_dev = await _replay(candles, WARMUP, split, LegacyVolumeConfirmedBreakoutStrategy, blocks=chronological.setdefault(('LEGACY', 'DEV'), []), market=market)
+            legacy_oos = await _replay(candles, split, len(candles), LegacyVolumeConfirmedBreakoutStrategy, blocks=chronological.setdefault(('LEGACY', 'OOS'), []), market=market)
             total_dev.append(dev); total_oos.append(oos)
             print(market.upper(), symbol, "NEW_DEV", asdict(dev), "NEW_OOS", asdict(oos),
                   "LEGACY_DEV", asdict(legacy_dev), "LEGACY_OOS", asdict(legacy_oos))
+    for (version, segment), trades in sorted(chronological.items()):
+        for quarter in sorted({quarter for quarter, _ in trades}):
+            values = [pnl for period, pnl in trades if period == quarter]
+            print("QUARTER", version, segment, quarter, {
+                "signals": len(values), "wins": sum(p > 0 for p in values),
+                "losses": sum(p <= 0 for p in values), "net_pnl": sum(values),
+            })
     for name, rows in (("DEV", total_dev), ("OOS", total_oos)):
         signals = sum(x.signals for x in rows)
         wins = sum(x.wins for x in rows)

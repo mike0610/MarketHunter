@@ -67,6 +67,7 @@ jobs:
             tests/test_gil_trading_scanner_runtime.py \
             tests/test_setup_reason_statistics.py \
             tests/test_research_api.py \
+            tests/test_research_stale_stop_outcomes.py \
             tests/test_target_block_statistics.py \
             tests/test_portfolio_v1_domain.py \
             tests/test_portfolio_v1_assessment.py \

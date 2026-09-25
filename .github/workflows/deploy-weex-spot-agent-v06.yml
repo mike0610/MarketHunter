@@ -1,0 +1,94 @@
+name: Deploy WEEX Spot Agent v06 (Telegram paper signals)
+
+on:
+  push:
+    branches:
+      - deploy/weex-spot-agent-v06-vps
+    paths:
+      - local_agents/weex_spot_agent_v06/**
+      - deploy/systemd/weex-spot-agent-v06.service
+      - .github/workflows/deploy-weex-spot-agent-v06.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VPS_HOST: 149.56.45.39
+      VPS_USER: ubuntu
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate alert-only source
+        run: |
+          set -euo pipefail
+          python3 -m py_compile local_agents/weex_spot_agent_v06/agent.py
+          grep -Fq 'NEVER places orders' local_agents/weex_spot_agent_v06/agent.py
+          grep -Fq "https://api.telegram.org/bot" local_agents/weex_spot_agent_v06/agent.py
+          ! grep -Eiq 'submit_order|place_order|create_order|/order|/orders' local_agents/weex_spot_agent_v06/agent.py
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}" || { echo 'BLOCKED: VPS SSH secret missing'; exit 2; }
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Stage code and service without exposing Telegram credentials
+        run: |
+          set -euo pipefail
+          tar -C local_agents/weex_spot_agent_v06 -czf "${RUNNER_TEMP}/weex-agent.tgz" agent.py
+          scp -o BatchMode=yes -i ~/.ssh/key "${RUNNER_TEMP}/weex-agent.tgz" "${VPS_USER}@${VPS_HOST}:/tmp/weex-agent-${GITHUB_SHA}.tgz"
+          scp -o BatchMode=yes -i ~/.ssh/key deploy/systemd/weex-spot-agent-v06.service "${VPS_USER}@${VPS_HOST}:/tmp/weex-spot-agent-v06.service"
+
+      - name: Install isolated agent and start only when private config is present
+        run: |
+          ssh -o BatchMode=yes -i ~/.ssh/key "${VPS_USER}@${VPS_HOST}" "GITHUB_SHA=${GITHUB_SHA} bash -s" <<'REMOTE'
+          set -euo pipefail
+          DEST=/home/ubuntu/weex_spot_agent_v06
+          mkdir -p "$DEST"
+          chmod 700 "$DEST"
+          tar -xzf "/tmp/weex-agent-${GITHUB_SHA}.tgz" -C "$DEST"
+          rm -f "/tmp/weex-agent-${GITHUB_SHA}.tgz"
+
+          # User uploads this private file directly from their PC to VPS.
+          if [ -f /home/ubuntu/weex_spot_agent_v06_config.json ]; then
+            install -m 600 /home/ubuntu/weex_spot_agent_v06_config.json "$DEST/config.json"
+            rm -f /home/ubuntu/weex_spot_agent_v06_config.json
+          fi
+
+          sudo -n install -m 0644 /tmp/weex-spot-agent-v06.service /etc/systemd/system/weex-spot-agent-v06.service
+          rm -f /tmp/weex-spot-agent-v06.service
+          sudo -n systemctl daemon-reload
+
+          if [ ! -s "$DEST/config.json" ]; then
+            echo "AGENT_DEPLOYED=YES"
+            echo "TELEGRAM_CONFIG=PENDING"
+            echo "SERVICE_STARTED=NO"
+            exit 3
+          fi
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("/home/ubuntu/weex_spot_agent_v06/config.json")
+          d=json.loads(p.read_text())
+          assert isinstance(d.get("bot_token"), str) and d["bot_token"].strip()
+          assert isinstance(d.get("chat_id"), (str,int)) and str(d["chat_id"]).strip()
+          print("TELEGRAM_CONFIG=VALID_KEYS_PRESENT")
+          PY
+
+          sudo -n systemctl enable --now weex-spot-agent-v06.service
+          sleep 4
+          sudo -n systemctl is-active --quiet weex-spot-agent-v06.service
+          test -s "$DEST/agent.log"
+          echo "SERVICE_STARTED=YES"
+          echo "MODE=PAPER_ONLY_NO_ORDERS"
+          echo "TELEGRAM_SIGNAL_AGENT=ACTIVE"
+          REMOTE

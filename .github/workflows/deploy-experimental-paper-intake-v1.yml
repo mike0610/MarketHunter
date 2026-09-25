@@ -1,0 +1,89 @@
+name: Deploy Experimental Paper Intake v1
+
+on:
+  push:
+    branches:
+      - feature/mobile-scanner-paper-vps-prep-20260925
+    paths:
+      - experimental_paper_v1/forward_gate.py
+      - experimental_paper_v1/intake_runtime.py
+      - deploy/systemd/experimental-paper-intake-v1.service
+      - .github/workflows/deploy-experimental-paper-intake-v1.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      VPS_HOST: 149.56.45.39
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Offline validation
+        run: |
+          set -euo pipefail
+          python3 -m py_compile experimental_paper_v1/forward_gate.py experimental_paper_v1/intake_runtime.py
+          python3 experimental_paper_v1/test_forward_gate.py
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Stage isolated runtime
+        run: |
+          set -euo pipefail
+          tar -C experimental_paper_v1 -czf "${RUNNER_TEMP}/experimental-paper-intake.tgz" forward_gate.py intake_runtime.py
+          scp -o BatchMode=yes -i ~/.ssh/key "${RUNNER_TEMP}/experimental-paper-intake.tgz" "ubuntu@${VPS_HOST}:/tmp/experimental-paper-intake-${GITHUB_SHA}.tgz"
+          scp -o BatchMode=yes -i ~/.ssh/key deploy/systemd/experimental-paper-intake-v1.service "ubuntu@${VPS_HOST}:/tmp/experimental-paper-intake-v1.service"
+
+      - name: Install, arm once, and verify
+        run: |
+          set -euo pipefail
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${VPS_HOST}" "GITHUB_SHA=${GITHUB_SHA} bash -s" <<'REMOTE'
+          set -euo pipefail
+          APP=/home/ubuntu/markethunter-experimental-paper-v1
+          STATE=/home/ubuntu/markethunter-experimental-paper-state
+          SRC=/home/ubuntu/MarketHunter/data/research_strategy_signals.db
+          DB="$STATE/experimental_paper.db"
+          PY=/home/ubuntu/MarketHunter/.venv/bin/python
+
+          test -x "$PY"
+          test -f "$SRC"
+          mkdir -p "$APP" "$STATE"
+          chmod 700 "$APP" "$STATE"
+          tar -xzf "/tmp/experimental-paper-intake-${GITHUB_SHA}.tgz" -C "$APP"
+          rm -f "/tmp/experimental-paper-intake-${GITHUB_SHA}.tgz"
+
+          # Preflight once before installing the long-running service.
+          (cd "$APP" && "$PY" intake_runtime.py --source-db "$SRC" --sandbox-db "$DB" --once)
+
+          sudo -n install -m 0644 /tmp/experimental-paper-intake-v1.service /etc/systemd/system/experimental-paper-intake-v1.service
+          rm -f /tmp/experimental-paper-intake-v1.service
+          sudo -n systemctl daemon-reload
+          sudo -n systemctl enable --now experimental-paper-intake-v1.service
+          sleep 3
+          sudo -n systemctl is-enabled --quiet experimental-paper-intake-v1.service
+          sudo -n systemctl is-active --quiet experimental-paper-intake-v1.service
+
+          "$PY" - <<'PY'
+          import sqlite3
+          p="/home/ubuntu/markethunter-experimental-paper-state/experimental_paper.db"
+          con=sqlite3.connect(p)
+          armed=con.execute("select value from gate_meta where name='armed_at'").fetchone()
+          rows=con.execute("select status,count(*) from paper_signal_intake group by status").fetchall()
+          print("PAPER_INTAKE_ARMED="+("YES" if armed else "NO"))
+          print("PAPER_INTAKE_STATES="+",".join(f"{s}:{n}" for s,n in rows))
+          print("FILLS_ENABLED=NO")
+          print("REAL_ORDERS=NO")
+          PY
+          echo "PAPER_INTAKE_SERVICE=ACTIVE"
+          REMOTE

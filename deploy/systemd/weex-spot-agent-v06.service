@@ -1,0 +1,23 @@
+[Unit]
+Description=WEEX Spot Agent v06 - Telegram paper signals only
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/weex_spot_agent_v06
+ExecStartPre=/usr/bin/rm -f /home/ubuntu/weex_spot_agent_v06/agent.pid
+ExecStart=/usr/bin/python3 /home/ubuntu/weex_spot_agent_v06/agent.py
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=20
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/weex_spot_agent_v06
+
+[Install]
+WantedBy=multi-user.target

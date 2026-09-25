@@ -1,0 +1,71 @@
+name: Experimental Paper VPS Readiness
+
+on:
+  push:
+    branches:
+      - feature/mobile-scanner-paper-vps-prep-20260925
+    paths:
+      - .github/workflows/experimental-paper-vps-readiness.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    env:
+      VPS_HOST: 149.56.45.39
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+      - name: Check evidence and source readiness without printing secrets
+        run: |
+          set -euo pipefail
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${VPS_HOST}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          ROOT=/home/ubuntu/MarketHunter
+          SRC="$ROOT/data/research_strategy_signals.db"
+          PY="$ROOT/.venv/bin/python"
+          test -x "$PY"
+          test -f "$SRC"
+          "$PY" - <<'PY'
+          import sqlite3
+          p="/home/ubuntu/MarketHunter/data/research_strategy_signals.db"
+          con=sqlite3.connect(f"file:{p}?mode=ro",uri=True)
+          cols={r[1] for r in con.execute("pragma table_info(research_strategy_signals)")}
+          required={"symbol","strategy","direction","observed_at","first_seen_at"}
+          print("SOURCE_SCHEMA_OK="+("YES" if required <= cols else "NO"))
+          n=con.execute("select count(*) from research_strategy_signals").fetchone()[0]
+          latest=con.execute("select max(first_seen_at) from research_strategy_signals").fetchone()[0]
+          print("SOURCE_ROWS="+str(n))
+          print("LATEST_FIRST_SEEN="+str(latest))
+          PY
+          "$PY" - <<'PY'
+          try:
+              import httpx
+              print("HTTPX_AVAILABLE=YES")
+          except Exception:
+              print("HTTPX_AVAILABLE=NO")
+          PY
+          present=NO
+          for f in "$ROOT/.env" "$ROOT/.env.local" "$ROOT/.env.production" /etc/markethunter.env /etc/default/markethunter; do
+            if [ -r "$f" ] && grep -q '^TWELVE_DATA_API_KEY=' "$f"; then present=YES; fi
+          done
+          echo "TWELVE_DATA_KEY_PRESENT=$present"
+          alpaca_id=NO
+          alpaca_secret=NO
+          for f in "$ROOT/.env" "$ROOT/.env.local" "$ROOT/.env.production" /etc/markethunter.env /etc/default/markethunter; do
+            if [ -r "$f" ] && grep -q '^EXPERIMENT1_ALPACA_API_KEY_ID=' "$f"; then alpaca_id=YES; fi
+            if [ -r "$f" ] && grep -q '^EXPERIMENT1_ALPACA_API_SECRET_KEY=' "$f"; then alpaca_secret=YES; fi
+          done
+          echo "ALPACA_KEY_ID_PRESENT=$alpaca_id"
+          echo "ALPACA_SECRET_PRESENT=$alpaca_secret"
+          REMOTE

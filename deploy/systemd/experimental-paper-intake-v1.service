@@ -1,0 +1,22 @@
+[Unit]
+Description=MarketHunter Experimental Paper v1 Forward Signal Intake
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/markethunter-experimental-paper-v1
+ExecStart=/home/ubuntu/MarketHunter/.venv/bin/python /home/ubuntu/markethunter-experimental-paper-v1/intake_runtime.py --source-db /home/ubuntu/MarketHunter/data/research_strategy_signals.db --sandbox-db /home/ubuntu/markethunter-experimental-paper-state/experimental_paper.db --interval-seconds 60
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/markethunter-experimental-paper-state
+
+[Install]
+WantedBy=multi-user.target

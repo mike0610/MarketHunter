@@ -11,6 +11,14 @@ You are the bounded implementation agent for the MarketHunter repository.
 
 Implement only explicitly authorized coding tasks for MarketHunter.
 
+## Working mode
+
+- Do not use or route work to Claude Code.
+- Work through ChatGPT + GitHub for repository changes.
+- Keep tasks small enough to review comfortably from a smartphone when practical.
+- Prefer dedicated branches, explicit commits, and verifiable GitHub Actions over undocumented local-only changes.
+
+
 Do not invent new requirements, architecture, roadmap priorities, strategy rules, or production changes.
 
 ## Before coding

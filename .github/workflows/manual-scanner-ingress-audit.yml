@@ -1,0 +1,74 @@
+name: Scanner Smartphone HTTPS/Auth Preflight (read only)
+
+on:
+  push:
+    branches:
+      - feature/mobile-scanner-paper-vps-prep-20260925
+    paths:
+      - .github/workflows/manual-scanner-ingress-audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VPS_HOST: 149.56.45.39
+      VPS_USER: ubuntu
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Configure SSH
+        run: |
+          test -n "${SSH_PRIVATE_KEY}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+      - name: Read-only ingress structure (no full Nginx config/secret values)
+        run: |
+          ssh -o BatchMode=yes -i ~/.ssh/key "${VPS_USER}@${VPS_HOST}" 'python3 -' <<'PY'
+          import re, subprocess
+          run = subprocess.run(["sudo", "-n", "nginx", "-T"], capture_output=True, text=True)
+          if run.returncode:
+              print("NGINX_READ=BLOCKED")
+              raise SystemExit(2)
+          c = run.stdout
+          print("NGINX_READ=OK")
+          # Inspect only topology: no private-key paths, credentials or full config in logs.
+          import shutil, socket
+          print("CERTBOT_INSTALLED="+("YES" if shutil.which("certbot") else "NO"))
+          print("OPENSSL_INSTALLED="+("YES" if shutil.which("openssl") else "NO"))
+          print("UFW="+subprocess.run(["bash","-lc","command -v ufw >/dev/null && sudo -n ufw status | head -n 1 || echo UNAVAILABLE"],capture_output=True,text=True).stdout.strip()[:100])
+          print("PORT443_LISTEN="+("YES" if ":443 " in subprocess.run(["ss","-lnt"],capture_output=True,text=True).stdout else "NO"))
+          print("NGINX_ROOT_CANDIDATES="+str(len(re.findall(r"^\\s*root\\s+[^;]+;",c,flags=re.M))))
+          for line in c.splitlines():
+              s=line.strip()
+              if s.startswith("listen "):
+                  print("LISTENER="+re.sub(r"\\s+", " ", s)[:90])
+              elif s.startswith("root "):
+                  print("WEBROOT="+s[:150])
+              elif s.startswith("server_name "):
+                  print("SERVER_NAME="+s[:160])
+              elif s.startswith("location "):
+                  print("LOCATION="+s[:150])
+              elif s.startswith("ssl_certificate "):
+                  print("TLS_CERTIFICATE=CONFIGURED")
+              elif s.startswith("auth_basic ") or s.startswith("auth_request "):
+                  print("ACCESS_CONTROL_DIRECTIVE=PRESENT")
+              elif s.startswith("proxy_pass "):
+                  host = re.search(r"127\\.0\\.0\\.1:(\\d+)", s)
+                  print("PROXY_TO_LOCAL_PORT="+(host.group(1) if host else "NONLOCAL_OR_VARIABLE"))
+          for candidate in ("149-56-45-39.sslip.io","149.56.45.39.nip.io"):
+              try:
+                  ips={item[4][0] for item in socket.getaddrinfo(candidate,None)}
+                  print("CANDIDATE_DNS="+candidate+" -> "+(",".join(sorted(ips))))
+              except OSError:
+                  print("CANDIDATE_DNS="+candidate+" -> UNRESOLVED")
+          files = re.findall(r"^# configuration file ([^:]+):$", c, flags=re.MULTILINE)
+          for name in files:
+              if name.startswith("/etc/nginx/sites-enabled/") or name.startswith("/etc/nginx/conf.d/"):
+                  print("ACTIVE_SITE_CONFIG_BASENAME="+name.rsplit("/",1)[-1])
+          print("AUTHENTICATED_SCANNER_INGRESS=NOT_PROVEN")
+          PY

@@ -1,0 +1,55 @@
+name: Mobile VPS Finish Audit
+
+on:
+  push:
+    branches:
+      - feature/mobile-scanner-paper-vps-prep-20260925
+    paths:
+      - .github/workflows/mobile-vps-finish-audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    env:
+      VPS_HOST: 149.56.45.39
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+      - name: Audit scanner ingress and supporting services
+        run: |
+          set -euo pipefail
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${VPS_HOST}" 'bash -s' <<'REMOTE'
+          set -u
+          SITE=/etc/nginx/sites-available/markethunter-scanner-mobile.conf
+          echo "NGINX_ACTIVE=$(systemctl is-active nginx || true)"
+          echo "SCANNER_SERVICE_ACTIVE=$(systemctl is-active standalone-manual-scanner.service || true)"
+          echo "CERTBOT_TIMER=$(systemctl is-enabled certbot.timer 2>/dev/null || true)"
+          if sudo -n test -f "$SITE"; then
+            if sudo -n grep -q 'auth_basic' "$SITE"; then echo "SCANNER_AUTH=BASIC"; else echo "SCANNER_AUTH=NONE"; fi
+            if sudo -n grep -q 'limit_req zone=mh_scanner_public_start' "$SITE"; then echo "PUBLIC_RATE_RULE=PRESENT"; else echo "PUBLIC_RATE_RULE=ABSENT"; fi
+          else
+            echo "SCANNER_SITE=MISSING"
+          fi
+          if sudo -n test -f /etc/nginx/conf.d/markethunter-scanner-public-rate.conf; then echo "PUBLIC_RATE_ZONE=PRESENT"; else echo "PUBLIC_RATE_ZONE=ABSENT"; fi
+          if sudo -n test -x /etc/letsencrypt/renewal-hooks/deploy/markethunter-scanner-cert-renew-hook.sh; then echo "CERT_RELOAD_HOOK=PRESENT"; else echo "CERT_RELOAD_HOOK=ABSENT"; fi
+          if command -v tailscale >/dev/null 2>&1; then
+            echo "TAILSCALE_INSTALLED=YES"
+            echo "TAILSCALED_ACTIVE=$(systemctl is-active tailscaled 2>/dev/null || true)"
+          else
+            echo "TAILSCALE_INSTALLED=NO"
+          fi
+          echo "NGINX_RECENT_JOURNAL_BEGIN"
+          sudo -n journalctl -u nginx --since '15 minutes ago' --no-pager -n 40 2>/dev/null | sed -E 's/(Authorization:|token=|password=)[^ ]+/\1[REDACTED]/Ig' || true
+          echo "NGINX_RECENT_JOURNAL_END"
+          REMOTE

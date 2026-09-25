@@ -1,0 +1,45 @@
+name: Install Scanner Cert Renew Hook
+
+on:
+  push:
+    branches:
+      - feature/mobile-scanner-paper-vps-prep-20260925
+    paths:
+      - deploy/nginx/markethunter-scanner-cert-renew-hook.sh
+      - .github/workflows/install-scanner-cert-renew-hook.yml
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    env:
+      VPS_HOST: 149.56.45.39
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+      - name: Install and verify deploy hook
+        run: |
+          set -euo pipefail
+          scp -o BatchMode=yes -i ~/.ssh/key deploy/nginx/markethunter-scanner-cert-renew-hook.sh "ubuntu@${VPS_HOST}:/tmp/markethunter-scanner-cert-renew-hook.sh"
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${VPS_HOST}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          HOOK=/etc/letsencrypt/renewal-hooks/deploy/markethunter-scanner-cert-renew-hook.sh
+          sudo -n install -m 0755 /tmp/markethunter-scanner-cert-renew-hook.sh "$HOOK"
+          rm -f /tmp/markethunter-scanner-cert-renew-hook.sh
+          sudo -n env RENEWED_DOMAINS="149-56-45-39.sslip.io" "$HOOK"
+          sudo -n test -x "$HOOK"
+          sudo -n systemctl is-active --quiet nginx
+          echo "CERT_RELOAD_HOOK=INSTALLED_AND_TESTED"
+          echo "NGINX_AFTER_HOOK=ACTIVE"
+          REMOTE

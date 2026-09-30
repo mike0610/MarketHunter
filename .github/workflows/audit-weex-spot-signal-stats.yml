@@ -92,6 +92,12 @@ jobs:
           print("LIFECYCLE_72H="+json.dumps(dict(life_72),sort_keys=True))
           print("ACTIVE_BREAKOUTS="+str(sum(r["status"]=="ACTIVE" for r in active)))
           print("ACTIVE_STATUS="+json.dumps(dict(Counter(r["status"] for r in active)),sort_keys=True))
+          now_ms=int(now.timestamp()*1000)
+          overdue=[r for r in active if r["status"]=="ACTIVE" and int(r["expires_ms"])<now_ms]
+          print("ACTIVE_OVERDUE="+str(len(overdue)))
+          if overdue:
+              ages=sorted((now_ms-int(r["expires_ms"]))/(1000*3600) for r in overdue)
+              print("OVERDUE_HOURS_MIN_MAX="+str(round(ages[0],1))+","+str(round(ages[-1],1)))
 
           lc_by_candidate=defaultdict(set)
           for r in lifecycle:
@@ -140,6 +146,9 @@ jobs:
               last_cycle_start=None
               last_cycle_end=None
               last_tg_sent=None
+              last_diag=None
+              last_cycle_end_counts=None
+              refresh_error_types=Counter()
               with log.open(encoding="utf-8",errors="replace") as f:
                   for line in deque(f,maxlen=40000):
                       try:d=json.loads(line)
@@ -151,6 +160,8 @@ jobs:
                       if kind=="CYCLE_START":last_cycle_start=d.get("time_utc")
                       if kind=="CYCLE_END":last_cycle_end=d
                       if kind=="TELEGRAM_SENT":last_tg_sent=d
+                      if kind=="CYCLE_DIAGNOSTICS":last_diag=d
+                      if kind=="MTF_REFRESH_ERROR":refresh_error_types[str(d.get("error_type","UNKNOWN"))]+=1
               print("RECENT_LOG_COUNTS="+json.dumps(dict(counts),sort_keys=True))
               print("RECENT_ERROR_COUNTS="+json.dumps(dict(error_types),sort_keys=True))
               print("LAST_CYCLE_START="+str(last_cycle_start))
@@ -158,5 +169,8 @@ jobs:
                   print("LAST_CYCLE_END_ELAPSED_SECONDS="+str(last_cycle_end.get("elapsed_seconds","UNKNOWN")))
                   print("LAST_CYCLE_END_PROCESSED="+str(last_cycle_end.get("processed","UNKNOWN")))
               print("LAST_TELEGRAM_SENT_STATE="+str(last_tg_sent.get("state") if last_tg_sent else "NONE"))
+              print("REFRESH_ERROR_TYPES_RECENT_LOG="+json.dumps(dict(refresh_error_types),sort_keys=True))
+              if last_diag:
+                  print("LAST_M15_PREFETCH="+json.dumps({k:last_diag.get(k) for k in ("m15_prefetch_requested","m15_prefetch_ok","m15_prefetch_errors","cache_pending","refresh_queue")},sort_keys=True))
           PY
           REMOTE

@@ -1,0 +1,80 @@
+name: Audit WEEX spot after lifecycle fix
+
+on:
+  push:
+    branches:
+      - fix/weex-spot-lifecycle-v06-20260930
+    paths:
+      - .github/workflows/audit-weex-spot-postfix.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      HOST: 149.56.45.39
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Secure read-only SSH audit
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          test -n "${SSH_PRIVATE_KEY}"
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${HOST}" >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${HOST}" 'python3 -' <<'PY'
+          import json,sqlite3
+          from pathlib import Path
+          from collections import Counter,deque
+          from datetime import datetime,timezone
+          db="/home/ubuntu/weex_spot_agent_v06/signals_v05.sqlite3"
+          log="/home/ubuntu/weex_spot_agent_v06/agent.log"
+          con=sqlite3.connect(f"file:{db}?mode=ro",uri=True)
+          con.execute("PRAGMA query_only=ON")
+          row=con.execute("SELECT value FROM agent_meta WHERE key='lifecycle_prefetch_fix_20260930_legacy_reconciled'").fetchone()
+          assert row,"fix migration marker missing"
+          marker=json.loads(row[0])
+          applied=datetime.fromisoformat(marker["applied_at"])
+          print("FIX_APPLIED_AT="+applied.isoformat())
+          for label,sql in [
+            ("TOTAL_CANDIDATES","SELECT count(*) FROM events WHERE state='BREAKOUT_CANDIDATE'"),
+            ("ACTIVE_SIGNALS","SELECT count(*) FROM active_breakouts WHERE status='ACTIVE'"),
+            ("LEGACY_UNVERIFIED","SELECT count(*) FROM lifecycle_events WHERE state='BREAKOUT_UNVERIFIED' AND json_extract(payload_json,'$.historical_reconciliation')=1"),
+            ("CONFIRMED","SELECT count(*) FROM lifecycle_events WHERE state='BREAKOUT_CONFIRMED_PAPER'"),
+            ("INVALIDATED","SELECT count(*) FROM lifecycle_events WHERE state='BREAKOUT_INVALIDATED'"),
+            ("EXPIRED","SELECT count(*) FROM lifecycle_events WHERE state='BREAKOUT_EXPIRED'"),
+            ("PENDING_TELEGRAM","SELECT count(*) FROM notification_outbox WHERE delivered_at IS NULL"),
+          ]:
+              print(label+"="+str(con.execute(sql).fetchone()[0]))
+          con.close()
+          counts=Counter();statuses=Counter();symbols=Counter();last_end=None
+          with Path(log).open(encoding="utf-8",errors="replace") as f:
+              recent=deque(f,maxlen=60000)
+          for line in recent:
+              try:e=json.loads(line)
+              except Exception:continue
+              t=e.get("time_utc") or e.get("observed_at_utc")
+              # New MTF diagnostic events do not have a timestamp, so count these
+              # separately but do not mislabel them as post-fix evidence.
+              if e.get("type")=="MTF_REFRESH_ERROR":
+                  symbols[str(e.get("symbol","UNKNOWN"))]+=1
+              if e.get("type")=="MTF_REFRESH_HTTP_ERROR":
+                  statuses[(str(e.get("interval")),str(e.get("status_code")))]+=1
+              if t:
+                  try:
+                      if datetime.fromisoformat(t)<applied:continue
+                  except (TypeError,ValueError):continue
+                  counts[str(e.get("type","UNKNOWN"))]+=1
+                  if e.get("type")=="CYCLE_END":last_end=e
+          print("POST_FIX_TIMESTAMPED_LOG_COUNTS="+json.dumps(dict(counts),sort_keys=True))
+          print("RECENT_MTF_HTTP_STATUS_BY_INTERVAL="+json.dumps([{"interval":i,"status":s,"count":n} for (i,s),n in statuses.most_common(8)]))
+          print("TOP_REFRESH_ERROR_SYMBOLS_RECENT="+json.dumps(symbols.most_common(8)))
+          if last_end:
+              print("LAST_CYCLE_PROCESSED="+str(last_end.get("processed")))
+              print("LAST_CYCLE_ERRORS="+str(last_end.get("other_errors")))
+          PY
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${HOST}" 'systemctl is-active weex-spot-agent-v06.service && systemctl show weex-spot-agent-v06.service -p NRestarts'

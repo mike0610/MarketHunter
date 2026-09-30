@@ -27,7 +27,7 @@ jobs:
           chmod 600 ~/.ssh/key
           ssh-keyscan -H "${HOST}" >> ~/.ssh/known_hosts
           ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${HOST}" 'python3 -' <<'PY'
-          import json,sqlite3
+          import json,sqlite3,time
           from pathlib import Path
           from collections import Counter,deque
           from datetime import datetime,timezone
@@ -50,6 +50,15 @@ jobs:
             ("PENDING_TELEGRAM","SELECT count(*) FROM notification_outbox WHERE delivered_at IS NULL"),
           ]:
               print(label+"="+str(con.execute(sql).fetchone()[0]))
+          n=con.execute("SELECT count(*) FROM events WHERE state='BREAKOUT_CANDIDATE' AND observed_at_utc > ?", (marker["applied_at"],)).fetchone()[0]
+          print("POST_FIX_NEW_CANDIDATES="+str(n))
+          n=con.execute("SELECT count(*) FROM lifecycle_events WHERE state='BREAKOUT_CONFIRMED_PAPER' AND observed_at_utc > ?", (marker["applied_at"],)).fetchone()[0]
+          print("POST_FIX_CONFIRMED="+str(n))
+          cache=con.execute(
+              "SELECT symbol,timeframe,expires_at FROM mtf_negative_cache WHERE reason LIKE '%WEEX_KLINE_INVALID_SYMBOL%' AND expires_at > ? ORDER BY symbol,timeframe",
+              (time.time(),),
+          ).fetchall()
+          print("INVALID_KLINE_QUARANTINE="+json.dumps([{"symbol":s,"timeframe":tf,"remaining_minutes":round((expires-time.time())/60,1)} for s,tf,expires in cache]))
           con.close()
           counts=Counter();statuses=Counter();symbols=Counter();last_end=None
           with Path(log).open(encoding="utf-8",errors="replace") as f:

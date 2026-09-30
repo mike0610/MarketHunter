@@ -1,0 +1,28 @@
+name: Test WEEX Spot lifecycle fix
+
+on:
+  push:
+    branches:
+      - fix/weex-spot-lifecycle-v06-20260930
+    paths:
+      - local_agents/weex_spot_agent_v06/agent.py
+      - local_agents/weex_spot_agent_v06/legacy_lifecycle_maintenance.py
+      - local_agents/weex_spot_agent_v06/test_agent_lifecycle.py
+      - .github/workflows/test-weex-spot-lifecycle-v06.yml
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate offline lifecycle and legacy reconciliation
+        run: |
+          set -euo pipefail
+          python3 -m py_compile local_agents/weex_spot_agent_v06/agent.py local_agents/weex_spot_agent_v06/legacy_lifecycle_maintenance.py local_agents/weex_spot_agent_v06/test_agent_lifecycle.py
+          python3 -m unittest discover -s local_agents/weex_spot_agent_v06 -p test_agent_lifecycle.py -v
+          grep -Fq 'NEVER places orders' local_agents/weex_spot_agent_v06/agent.py
+          ! grep -Eiq 'submit_order|place_order|create_order|/order|/orders' local_agents/weex_spot_agent_v06/agent.py

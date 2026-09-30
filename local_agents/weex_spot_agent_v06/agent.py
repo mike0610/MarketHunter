@@ -816,12 +816,16 @@ def cycle(conn, limit):
             m15 = m15_prefetched.get(symbol)
             if symbol in m15_errors:
                 raise m15_errors[symbol]
-            if symbol in active_symbols and m15 is None:
-                m15 = candles(symbol)
+            # Every active signal must be resolved, including when M15 prefetch
+            # succeeded. Previously this branch ran only on the fallback path,
+            # leaving correctly prefetched signals ACTIVE past their expiry.
+            if symbol in active_symbols:
+                if m15 is None:
+                    m15 = candles(symbol)
                 lifecycle = resolve_breakout(conn, symbol, m15, int(time.time() * 1000))
                 if lifecycle:
                     conn.commit()
-            event = analyze(conn, symbol, m15=m15_prefetched.get(symbol, m15))
+            event = analyze(conn, symbol, m15=m15)
             if event:
                 if event['state'] == 'BREAKOUT_CANDIDATE':
                     event.update(liquidity(symbol, event.get('direction', 'LONG')))

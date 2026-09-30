@@ -1,0 +1,162 @@
+name: Audit WEEX Spot Signal Statistics
+
+on:
+  push:
+    branches:
+      - deploy/weex-spot-agent-v06-vps
+    paths:
+      - .github/workflows/audit-weex-spot-signal-stats.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      VPS_HOST: 149.56.45.39
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Read-only audit on VPS
+        run: |
+          set -euo pipefail
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${VPS_HOST}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          echo "SERVICE_ACTIVE=$(systemctl is-active weex-spot-agent-v06.service || true)"
+          echo "SERVICE_ENABLED=$(systemctl is-enabled weex-spot-agent-v06.service || true)"
+          systemctl show weex-spot-agent-v06.service -p ActiveEnterTimestamp -p NRestarts
+          python3 - <<'PY'
+          from pathlib import Path
+          from collections import Counter, defaultdict, deque
+          from datetime import datetime, timedelta, timezone, date
+          import json, sqlite3
+
+          root=Path("/home/ubuntu/weex_spot_agent_v06")
+          db=root/"signals_v05.sqlite3"
+          log=root/"agent.log"
+          print("DB_EXISTS="+str(db.exists()))
+          print("LOG_EXISTS="+str(log.exists()))
+          if not db.exists():
+              raise SystemExit("DB_NOT_FOUND")
+          con=sqlite3.connect(f"file:{db}?mode=ro",uri=True)
+          con.row_factory=sqlite3.Row
+          now=datetime.now(timezone.utc)
+          cutoff_24=(now-timedelta(hours=24)).isoformat()
+          cutoff_72=(now-timedelta(hours=72)).isoformat()
+          print("AUDIT_UTC="+now.isoformat())
+
+          def get_rows(table):
+              return con.execute(f"SELECT * FROM {table}").fetchall()
+
+          def parse(s):
+              try:return datetime.fromisoformat(str(s).replace("Z","+00:00"))
+              except Exception:return None
+
+          events=get_rows("events")
+          lifecycle=get_rows("lifecycle_events")
+          active=get_rows("active_breakouts")
+          outbox=get_rows("notification_outbox")
+          candidates=[r for r in events if r["state"]=="BREAKOUT_CANDIDATE"]
+          print("TOTAL_EVENTS="+str(len(events)))
+          print("EVENT_STATES="+json.dumps(dict(Counter(r["state"] for r in events)),sort_keys=True))
+          print("TOTAL_CANDIDATES="+str(len(candidates)))
+          print("CANDIDATES_24H="+str(sum(r["observed_at_utc"]>=cutoff_24 for r in candidates)))
+          print("CANDIDATES_72H="+str(sum(r["observed_at_utc"]>=cutoff_72 for r in candidates)))
+          print("UNIQUE_CANDIDATE_SYMBOLS="+str(len(set(r["symbol"] for r in candidates))))
+          print("FIRST_CANDIDATE="+str(min((r["observed_at_utc"] for r in candidates),default="NONE")))
+          print("LAST_CANDIDATE="+str(max((r["observed_at_utc"] for r in candidates),default="NONE")))
+          directions=Counter()
+          for r in candidates:
+              try:
+                  directions[str(json.loads(r["payload_json"]).get("direction","UNKNOWN"))]+=1
+              except Exception:
+                  directions["UNREADABLE"]+=1
+          print("CANDIDATE_DIRECTIONS="+json.dumps(dict(directions),sort_keys=True))
+          print("TOP_CANDIDATE_SYMBOLS="+json.dumps(Counter(r["symbol"] for r in candidates).most_common(12)))
+
+          life_by_state=Counter(r["state"] for r in lifecycle)
+          life_24=Counter(r["state"] for r in lifecycle if r["observed_at_utc"]>=cutoff_24)
+          life_72=Counter(r["state"] for r in lifecycle if r["observed_at_utc"]>=cutoff_72)
+          print("LIFECYCLE_TOTAL="+json.dumps(dict(life_by_state),sort_keys=True))
+          print("LIFECYCLE_24H="+json.dumps(dict(life_24),sort_keys=True))
+          print("LIFECYCLE_72H="+json.dumps(dict(life_72),sort_keys=True))
+          print("ACTIVE_BREAKOUTS="+str(sum(r["status"]=="ACTIVE" for r in active)))
+          print("ACTIVE_STATUS="+json.dumps(dict(Counter(r["status"] for r in active)),sort_keys=True))
+
+          lc_by_candidate=defaultdict(set)
+          for r in lifecycle:
+              lc_by_candidate[(r["symbol"],int(r["signal_candle_ms"]))].add(r["state"])
+          cohort=Counter()
+          for r in candidates:
+              states=lc_by_candidate[(r["symbol"],int(r["candle_close_ms"]))]
+              if "BREAKOUT_CONFIRMED_PAPER" in states: cohort["EVER_CONFIRMED"]+=1
+              if "BREAKOUT_INVALIDATED" in states: cohort["INVALIDATED"]+=1
+              if "BREAKOUT_EXPIRED" in states: cohort["EXPIRED"]+=1
+              if "BREAKOUT_UNVERIFIED" in states: cohort["UNVERIFIED"]+=1
+              if not states:cohort["NO_RECORDED_LIFECYCLE"]+=1
+              if "BREAKOUT_CONFIRMED_PAPER" in states and "BREAKOUT_INVALIDATED" in states:
+                  cohort["CONFIRMED_THEN_INVALIDATED"]+=1
+          print("CANDIDATE_COHORT="+json.dumps(dict(cohort),sort_keys=True))
+          if candidates:
+              print("EVER_CONFIRMED_RATE_PCT="+str(round(cohort["EVER_CONFIRMED"]*100/len(candidates),1)))
+          daily=defaultdict(Counter)
+          for r in candidates:
+              stamp=parse(r["observed_at_utc"])
+              if stamp:daily[stamp.date().isoformat()]["candidate"]+=1
+          for r in lifecycle:
+              stamp=parse(r["observed_at_utc"])
+              if stamp:daily[stamp.date().isoformat()][r["state"]]+=1
+          for n in range(6):
+              day=(now.date()-timedelta(days=5-n)).isoformat()
+              print("DAY_UTC="+day+" "+json.dumps(dict(daily[day]),sort_keys=True))
+
+          cutoff_row=con.execute("SELECT value FROM agent_meta WHERE key='telegram_outbox_migration_cutoff_rowid'").fetchone()
+          migrated_cutoff=int(cutoff_row[0]) if cutoff_row else 0
+          real_outbox=[r for r in con.execute("SELECT rowid,* FROM notification_outbox").fetchall() if r["rowid"]>migrated_cutoff]
+          print("OUTBOX_TOTAL_AFTER_MIGRATION="+str(len(real_outbox)))
+          print("OUTBOX_DELIVERED_AFTER_MIGRATION="+str(sum(r["delivered_at"] is not None for r in real_outbox)))
+          print("OUTBOX_PENDING_AFTER_MIGRATION="+str(sum(r["delivered_at"] is None for r in real_outbox)))
+          pending_states=Counter()
+          for r in real_outbox:
+              if r["delivered_at"] is None:
+                  try:pending_states[str(json.loads(r["payload_json"]).get("state","UNKNOWN"))]+=1
+                  except Exception: pending_states["UNREADABLE"]+=1
+          print("OUTBOX_PENDING_STATES="+json.dumps(dict(pending_states),sort_keys=True))
+          con.close()
+
+          if log.exists():
+              counts=Counter()
+              error_types=Counter()
+              last_cycle_start=None
+              last_cycle_end=None
+              last_tg_sent=None
+              with log.open(encoding="utf-8",errors="replace") as f:
+                  for line in deque(f,maxlen=40000):
+                      try:d=json.loads(line)
+                      except Exception:continue
+                      kind=str(d.get("type","UNKNOWN"))
+                      counts[kind]+=1
+                      if kind in ("ERROR","CYCLE_ABORTED","TELEGRAM_ERROR"):
+                          error_types[kind]+=1
+                      if kind=="CYCLE_START":last_cycle_start=d.get("time_utc")
+                      if kind=="CYCLE_END":last_cycle_end=d
+                      if kind=="TELEGRAM_SENT":last_tg_sent=d
+              print("RECENT_LOG_COUNTS="+json.dumps(dict(counts),sort_keys=True))
+              print("RECENT_ERROR_COUNTS="+json.dumps(dict(error_types),sort_keys=True))
+              print("LAST_CYCLE_START="+str(last_cycle_start))
+              if last_cycle_end:
+                  print("LAST_CYCLE_END_ELAPSED_SECONDS="+str(last_cycle_end.get("elapsed_seconds","UNKNOWN")))
+                  print("LAST_CYCLE_END_PROCESSED="+str(last_cycle_end.get("processed","UNKNOWN")))
+              print("LAST_TELEGRAM_SENT_STATE="+str(last_tg_sent.get("state") if last_tg_sent else "NONE"))
+          PY
+          REMOTE

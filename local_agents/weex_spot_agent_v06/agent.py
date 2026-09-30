@@ -328,6 +328,14 @@ def negative_cache_clear(conn, symbol, timeframe):
                  (symbol, timeframe))
 
 
+def temporarily_unscannable_kline_symbol(conn, symbol):
+    """Exclude unsupported candles symbols only during their negative-cache TTL."""
+    return any(
+        'WEEX_KLINE_INVALID_SYMBOL' in (negative_cache_get(conn, symbol, timeframe) or '')
+        for timeframe in ('1d', '1h')
+    )
+
+
 class CachePending(Exception):
     pass
 
@@ -380,9 +388,19 @@ def _bg_candles(symbol, interval, count, interval_ms):
     try:
         raw = fetch_raw('/api/v3/market/klines', {'symbol': symbol, 'interval': interval, 'limit': max(100, count + 5)})
     except urllib.error.HTTPError as exc:
-        # Identify which high-timeframe endpoint rejects the request without
-        # logging request URLs, tokens or potentially sensitive response bodies.
-        emit(type='MTF_REFRESH_HTTP_ERROR', symbol=symbol, interval=interval, status_code=exc.code)
+        # The exchange may list a symbol as TRADING but reject OHLCV (-1142).
+        # Quarantine only this exact error; retry after the existing cache TTL.
+        provider_code = ''
+        try:
+            response = json.loads(exc.read(2048).decode('utf-8', errors='replace'))
+            if isinstance(response, dict):
+                provider_code = str(response.get('code', ''))
+        except (ValueError, AttributeError, TypeError):
+            pass
+        emit(type='MTF_REFRESH_HTTP_ERROR', symbol=symbol, interval=interval,
+             status_code=exc.code, provider_code=provider_code or 'UNKNOWN')
+        if exc.code == 400 and provider_code == '-1142':
+            raise ValueError(f'Insufficient {interval} candles: WEEX_KLINE_INVALID_SYMBOL -1142') from exc
         raise
     if not isinstance(raw, list):
         raise ValueError(f'Invalid {interval} candles payload')
@@ -763,7 +781,8 @@ def cycle(conn, limit):
     symbols = universe()
     tickers = snapshot()
     matched = symbols & tickers.keys()
-    eligible_symbols = {s for s in matched if eligible(tickers[s])}
+    eligible_symbols = {s for s in matched
+                        if eligible(tickers[s]) and not temporarily_unscannable_kline_symbol(conn, s)}
     conn.executemany('INSERT OR IGNORE INTO queue(symbol) VALUES (?)', ((s,) for s in symbols))
     # Preserve unavailable symbols while their breakout lifecycle is unresolved.
     conn.execute('DELETE FROM queue WHERE symbol NOT IN (' + ','.join('?' for _ in symbols) + ') AND symbol NOT IN (SELECT symbol FROM active_breakouts WHERE status="ACTIVE")', tuple(symbols))

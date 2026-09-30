@@ -377,7 +377,13 @@ def hourly_structure(conn, symbol):
 
 
 def _bg_candles(symbol, interval, count, interval_ms):
-    raw = fetch_raw('/api/v3/market/klines', {'symbol': symbol, 'interval': interval, 'limit': max(100, count + 5)})
+    try:
+        raw = fetch_raw('/api/v3/market/klines', {'symbol': symbol, 'interval': interval, 'limit': max(100, count + 5)})
+    except urllib.error.HTTPError as exc:
+        # Identify which high-timeframe endpoint rejects the request without
+        # logging request URLs, tokens or potentially sensitive response bodies.
+        emit(type='MTF_REFRESH_HTTP_ERROR', symbol=symbol, interval=interval, status_code=exc.code)
+        raise
     if not isinstance(raw, list):
         raise ValueError(f'Invalid {interval} candles payload')
     current = int(time.time() * 1000)

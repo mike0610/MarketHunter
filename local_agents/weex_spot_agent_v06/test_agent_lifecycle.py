@@ -1,4 +1,5 @@
 """Offline regression tests for prefetch lifecycle and legacy reconciliation."""
+import io
 import json
 import sqlite3
 import unittest
@@ -128,9 +129,70 @@ class HttpErrorDiagnosticsTests(unittest.TestCase):
             with self.assertRaises(HTTPError):
                 agent._bg_candles("BADUSDT", "1d", 21, agent.DAY_MS)
         emit.assert_called_once_with(
-            type="MTF_REFRESH_HTTP_ERROR", symbol="BADUSDT", interval="1d", status_code=400
+            type="MTF_REFRESH_HTTP_ERROR", symbol="BADUSDT", interval="1d",
+            status_code=400, provider_code="UNKNOWN"
         )
         self.assertNotIn("never-log", str(emit.call_args))
+
+
+class InvalidKlineSymbolCacheTests(unittest.TestCase):
+    @staticmethod
+    def invalid_http_error(code="-1142"):
+        return HTTPError(
+            "https://example.test/never-log", 400, "Bad request", {},
+            io.BytesIO(json.dumps({"code": code, "msg": "symbol invalid"}).encode()),
+        )
+
+    def test_exact_invalid_symbol_is_cached_and_logged_without_response_body(self):
+        db = sqlite3.connect(":memory:")
+        try:
+            agent.init(db)
+            with patch.object(agent, "fetch_raw", side_effect=self.invalid_http_error()), patch.object(agent, "emit") as emit:
+                agent._refresh_symbol(db, "BTFUSDT")
+            reason = agent.negative_cache_get(db, "BTFUSDT", "1d")
+            self.assertIn("WEEX_KLINE_INVALID_SYMBOL", reason)
+            self.assertTrue(agent.temporarily_unscannable_kline_symbol(db, "BTFUSDT"))
+            emit.assert_called_once_with(
+                type="MTF_REFRESH_HTTP_ERROR", symbol="BTFUSDT", interval="1d",
+                status_code=400, provider_code="-1142",
+            )
+            self.assertNotIn("symbol invalid", str(emit.call_args))
+        finally:
+            db.close()
+
+    def test_unrelated_http_400_not_quarantined(self):
+        db = sqlite3.connect(":memory:")
+        try:
+            agent.init(db)
+            with patch.object(agent, "fetch_raw", side_effect=self.invalid_http_error("-9999")), patch.object(agent, "emit"):
+                with self.assertRaises(HTTPError):
+                    agent._refresh_symbol(db, "OTHERUSDT")
+            self.assertIsNone(agent.negative_cache_get(db, "OTHERUSDT", "1d"))
+        finally:
+            db.close()
+
+    def test_quarantined_pair_filtered_from_new_scans(self):
+        db = sqlite3.connect(":memory:")
+        try:
+            agent.init(db)
+            db.execute(
+                "INSERT INTO mtf_negative_cache(symbol,timeframe,reason,expires_at) VALUES(?,?,?,?)",
+                ("BTFUSDT", "1d", "Insufficient 1d candles: WEEX_KLINE_INVALID_SYMBOL -1142",
+                 agent.time.time() + 3600),
+            )
+            db.commit()
+            with (
+                patch.object(agent, "universe", return_value={"BTFUSDT"}),
+                patch.object(agent, "snapshot", return_value={"BTFUSDT": {}}),
+                patch.object(agent, "eligible", return_value=True),
+                patch.object(agent, "prefetch_m15", return_value=({}, {})) as prefetch,
+                patch.object(agent, "flush_notifications"),
+                patch.object(agent, "emit"),
+            ):
+                agent.cycle(db, 120)
+            self.assertEqual(prefetch.call_args.args[1], [])
+        finally:
+            db.close()
 
 
 class LegacyReconciliationTests(unittest.TestCase):

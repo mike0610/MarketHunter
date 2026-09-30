@@ -3,6 +3,7 @@ import json
 import sqlite3
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 import agent
 import legacy_lifecycle_maintenance as legacy
@@ -118,6 +119,18 @@ class PrefetchLifecycleTests(unittest.TestCase):
             self.conn.execute("SELECT count(*) FROM notification_outbox").fetchone()[0],
             1,
         )
+
+
+class HttpErrorDiagnosticsTests(unittest.TestCase):
+    def test_http_error_logs_safe_status_and_timeframe_only(self):
+        error = HTTPError("https://example.test/secret/never-log", 400, "Bad request", {}, None)
+        with patch.object(agent, "fetch_raw", side_effect=error), patch.object(agent, "emit") as emit:
+            with self.assertRaises(HTTPError):
+                agent._bg_candles("BADUSDT", "1d", 21, agent.DAY_MS)
+        emit.assert_called_once_with(
+            type="MTF_REFRESH_HTTP_ERROR", symbol="BADUSDT", interval="1d", status_code=400
+        )
+        self.assertNotIn("never-log", str(emit.call_args))
 
 
 class LegacyReconciliationTests(unittest.TestCase):

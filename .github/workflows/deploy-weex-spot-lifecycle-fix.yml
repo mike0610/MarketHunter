@@ -1,4 +1,5 @@
 name: Deploy isolated WEEX spot lifecycle fix
+# Follow-up validated rollout: exact WEEX -1142 invalid-kline TTL quarantine.
 
 on:
   push:

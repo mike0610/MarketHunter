@@ -1,0 +1,43 @@
+name: Audit Production Stop Runtime 2026-10-01
+
+on:
+  push:
+    branches:
+      - audit/research-strategy-stats-20261001
+    paths:
+      - .github/workflows/audit-production-stop-runtime-20261001.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    env:
+      VPS_HOST: 149.56.45.39
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Read-only production code path audit
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${VPS_HOST}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          ROOT=/home/ubuntu/MarketHunter
+          echo "DEPLOYED_SHA=$(git -C "$ROOT" rev-parse HEAD)"
+          echo "DEPLOYED_BRANCH=$(git -C "$ROOT" branch --show-current)"
+          echo "GIT_STATUS_BEGIN"
+          git -C "$ROOT" status --short --untracked-files=no || true
+          echo "GIT_STATUS_END"
+          echo "SYSTEMD_WORKER_BEGIN"
+          sudo -n systemctl cat markethunter-worker.service 2>/dev/null | sed -E 's/(Environment=.*(TOKEN|KEY|SECRET|PASSWORD)[^=]*=).*/\1[REDACTED]/I' || true
+          echo "SYSTEMD_WORKER_END"
+          echo "MATCHES_BEGIN"
+          grep -RInE --exclude-dir=.git --exclude-dir=.venv --exclude-dir=data --exclude='*.log' --exclude='*.sqlite*'             'LIVE_(STOP_LOSS|TAKE_PROFIT|SL_MOVED_BREAKEVEN|BREAKEVEN_STOP|SL_MOVED_PROFIT_LOCK|PROFIT_LOCK_STOP|ENTRY_FILLED)|profit[_ -]?lock|breakeven[_ -]?(trigger|move|stop)'             "$ROOT" 2>/dev/null | head -n 300 || true
+          echo "MATCHES_END"
+          REMOTE

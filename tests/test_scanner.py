@@ -296,6 +296,7 @@ def build_scanner(
     snapshot_builder: FakeSnapshotBuilder,
     pipeline: FakePipeline | None = None,
     timeframe: str = "1d",
+    forward_cohort: str | None = None,
 ) -> Scanner:
     """
     Build a Scanner wired to fakes.
@@ -313,6 +314,7 @@ def build_scanner(
         pipeline=pipeline,
         timeframe=timeframe,
         candle_limit=200,
+        forward_cohort=forward_cohort,
     )
 
     scanner.snapshot_builder = snapshot_builder
@@ -482,6 +484,48 @@ class ScannerScanSymbolBaselineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(signals), 1)
         self.assertEqual(signals[0].market, "futures")
         self.assertEqual(signals[0].timeframe, "1d")
+
+    async def test_scanner_stamps_forward_cohort_on_signal_metadata(
+        self,
+    ) -> None:
+        candles = make_candles()
+        pipeline = FakePipeline()
+
+        raw_signal = Signal(
+            symbol="BTCUSDT",
+            market="",
+            timeframe="",
+            strategy="Fake",
+            direction="LONG",
+            score=80.0,
+        )
+
+        scanner = build_scanner(
+            market_data=FakeMarketData(candles),
+            strategies=[
+                FakeStrategy("Fake", raw_signal),
+            ],
+            snapshot_builder=FakeSnapshotBuilder(
+                make_snapshot(candles=candles),
+            ),
+            pipeline=pipeline,
+            timeframe="1h",
+            forward_cohort="core_v2_20261001",
+        )
+
+        signals = await scanner.scan_symbol(
+            make_symbol(market="futures"),
+        )
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(
+            signals[0].metadata["mtf_forward_cohort"],
+            "core_v2_20261001",
+        )
+        self.assertEqual(
+            pipeline.calls[0].signal.metadata["mtf_forward_cohort"],
+            "core_v2_20261001",
+        )
 
     async def test_strategy_returning_none_skips_pipeline(
         self,

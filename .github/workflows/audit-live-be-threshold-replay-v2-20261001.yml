@@ -1,0 +1,229 @@
+name: Audit Live BE Threshold Replay v2 2026-10-01
+
+on:
+  push:
+    branches:
+      - audit/research-strategy-stats-20261001
+    paths:
+      - .github/workflows/audit-live-be-threshold-replay-v2-20261001.yml
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      VPS_HOST: 149.56.45.39
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Replay exact deployed stop geometry with alternate BE trigger
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${VPS_HOST}" 'python3 -' <<'PY'
+          import json, sqlite3, time, urllib.parse, urllib.request, urllib.error
+          from collections import Counter, defaultdict
+          from datetime import datetime, timezone
+
+          DB="/home/ubuntu/MarketHunter/data/research.db"
+          TARGET_RR=2.0
+          PROFIT_LOCK_TRIGGER_R=1.5
+          PROFIT_LOCK_R=0.5
+          THRESHOLDS=(0.5,0.75,1.0)
+
+          con=sqlite3.connect(f"file:{DB}?mode=ro",uri=True)
+          con.row_factory=sqlite3.Row
+          con.execute("PRAGMA query_only=ON")
+          rows=con.execute(
+              """SELECT id,symbol,market,timeframe,strategy,direction,
+                        entry_price,stop_loss,take_profit,notional,status,
+                        opened_at,closed_at,close_reason,profit_amount,profit_percent,
+                        max_active_candles,outcome_group
+                 FROM research_trades
+                 WHERE status IN ('closed','expired')
+                   AND outcome_group != 'excluded'
+                   AND opened_at IS NOT NULL
+                 ORDER BY opened_at"""
+          ).fetchall()
+          con.close()
+
+          INTERVAL_MS={"1m":60_000,"3m":180_000,"5m":300_000,"15m":900_000,
+                       "30m":1_800_000,"1h":3_600_000,"2h":7_200_000,
+                       "4h":14_400_000,"6h":21_600_000,"8h":28_800_000,
+                       "12h":43_200_000,"1d":86_400_000}
+
+          def dt(v):
+              x=datetime.fromisoformat(str(v).replace("Z","+00:00"))
+              return (x if x.tzinfo else x.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+
+          def geometry(r):
+              entry=float(r["entry_price"]); tp=float(r["take_profit"])
+              risk=abs(tp-entry)/TARGET_RR
+              if not (entry>0 and tp>0 and risk>0): return None
+              is_long=str(r["direction"]).upper()=="LONG"
+              stop=entry-risk if is_long else entry+risk
+              return entry,tp,risk,stop,is_long
+
+          def candles(r):
+              interval=str(r["timeframe"])
+              if interval not in INTERVAL_MS: raise ValueError("bad_tf:"+interval)
+              start=int(dt(r["opened_at"]).timestamp()*1000)+1
+              limit=min(1000,max(50,int(r["max_active_candles"] or 30)+8))
+              base=("https://api.binance.com/api/v3/klines"
+                    if str(r["market"]).lower()=="spot"
+                    else "https://fapi.binance.com/fapi/v1/klines")
+              url=base+"?"+urllib.parse.urlencode({
+                  "symbol":r["symbol"],"interval":interval,"startTime":start,"limit":limit
+              })
+              req=urllib.request.Request(url,headers={"User-Agent":"MarketHunter-live-BE-audit/2.0"})
+              for n in range(3):
+                  try:
+                      with urllib.request.urlopen(req,timeout=12) as resp: data=json.load(resp)
+                      return [{"high":float(k[2]),"low":float(k[3]),"close":float(k[4])}
+                              for k in data if isinstance(k,list) and len(k)>=7]
+                  except Exception:
+                      if n==2: raise
+                      time.sleep(.35*(n+1))
+
+          def sim(r,cs,be_trigger):
+              g=geometry(r)
+              if not g:return None
+              entry,tp,risk,stop,is_long=g
+              current_stop=stop
+              state="ORIGINAL"
+              active=0
+              max_active=int(r["max_active_candles"] or 30)
+              be_moved=False; lock_moved=False
+
+              for c in cs:
+                  active+=1
+                  # Conservative OHLC approximation of the live worker:
+                  # honor an already-effective stop/TP first. New management
+                  # from this candle's favorable extreme applies next candle.
+                  stop_hit=(c["low"]<=current_stop) if is_long else (c["high"]>=current_stop)
+                  tp_hit=(c["high"]>=tp) if is_long else (c["low"]<=tp)
+                  if stop_hit:
+                      price=current_stop
+                      reason="PL" if state=="LOCK" else ("BE" if state=="BE" else "SL")
+                      break
+                  if tp_hit:
+                      price=tp;reason="TP";break
+                  if active>=max_active:
+                      price=c["close"];reason="EXPIRED";break
+
+                  favorable=(c["high"]-entry)/risk if is_long else (entry-c["low"])/risk
+                  if favorable>=PROFIT_LOCK_TRIGGER_R and state!="LOCK":
+                      new_stop=entry + PROFIT_LOCK_R*risk if is_long else entry-PROFIT_LOCK_R*risk
+                      improves=(new_stop>current_stop) if is_long else (new_stop<current_stop)
+                      if improves:
+                          current_stop=new_stop;state="LOCK";lock_moved=True
+                  elif favorable>=be_trigger and state=="ORIGINAL":
+                      current_stop=entry;state="BE";be_moved=True
+              else:
+                  return None
+
+              pct=((price-entry)/entry*100) if is_long else ((entry-price)/entry*100)
+              amt=float(r["notional"] or 100)*pct/100
+              return {"amount":amt,"pct":pct,"reason":reason,
+                      "be_moved":be_moved,"lock_moved":lock_moved}
+
+          def summarize(vals):
+              xs=[x for x in vals if x]
+              w=[x for x in xs if x["amount"]>1e-12]
+              l=[x for x in xs if x["amount"]<-1e-12]
+              z=[x for x in xs if abs(x["amount"])<=1e-12]
+              gp=sum(x["amount"] for x in w);gl=abs(sum(x["amount"] for x in l))
+              return {"n":len(xs),"wins":len(w),"losses":len(l),"breakeven":len(z),
+                      "total_profit":round(sum(x["amount"] for x in xs),2),
+                      "profit_factor":round(gp/gl,3) if gl else None,
+                      "be_moves":sum(x["be_moved"] for x in xs),
+                      "profit_lock_moves":sum(x["lock_moved"] for x in xs),
+                      "SL":sum(x["reason"]=="SL" for x in xs),
+                      "BE":sum(x["reason"]=="BE" for x in xs),
+                      "PL":sum(x["reason"]=="PL" for x in xs),
+                      "TP":sum(x["reason"]=="TP" for x in xs),
+                      "EXPIRED":sum(x["reason"]=="EXPIRED" for x in xs)}
+
+          def actual_cat(reason):
+              s=str(reason or "").upper()
+              if "TAKE_PROFIT" in s or s=="TP":return "TP"
+              if "PROFIT_LOCK" in s:return "PL"
+              if "BREAKEVEN" in s:return "BE"
+              if "STOP_LOSS" in s or s=="SL":return "SL"
+              if "EXPIRED" in s:return "EXPIRED"
+              return "OTHER"
+
+          records=[];coverage=Counter();errors=Counter()
+          for i,r in enumerate(rows,1):
+              if geometry(r) is None:
+                  coverage["bad_geometry"]+=1;continue
+              try:cs=candles(r)
+              except Exception as e:
+                  coverage["fetch_failed"]+=1;errors[type(e).__name__+":"+str(e)[:80]]+=1;continue
+              sims={str(t):sim(r,cs,t) for t in THRESHOLDS}
+              if any(v is None for v in sims.values()):
+                  coverage["incomplete"]+=1;continue
+              coverage["replayed"]+=1
+              records.append({"strategy":r["strategy"],"direction":r["direction"],
+                              "market":r["market"],"timeframe":r["timeframe"],
+                              "actual_amount":float(r["profit_amount"] or 0),
+                              "actual_cat":actual_cat(r["close_reason"]),"sims":sims})
+              time.sleep(.045)
+
+          print("AUDIT_UTC="+datetime.now(timezone.utc).isoformat())
+          print("DB_ROWS="+str(len(rows)))
+          print("COVERAGE="+json.dumps(dict(coverage),sort_keys=True))
+          print("FETCH_ERRORS="+json.dumps(errors.most_common(8)))
+
+          actual=[{"amount":r["actual_amount"],"reason":r["actual_cat"],
+                   "be_moved":False,"lock_moved":False} for r in records]
+          print("ACTUAL_SAME_SAMPLE="+json.dumps(summarize(actual),sort_keys=True))
+
+          summary={t:summarize([r["sims"][t] for r in records]) for t in ("0.5","0.75","1.0")}
+          print("SUMMARY="+json.dumps(summary,sort_keys=True))
+
+          for t in ("0.5","0.75","1.0"):
+              matches=sum(r["actual_cat"]==r["sims"][t]["reason"] for r in records)
+              print("OUTCOME_MATCH_"+t+"="+str(round(100*matches/len(records),1) if records else 0))
+
+          base="1.0"
+          comparisons={}
+          for t in ("0.5","0.75"):
+              trans=Counter();delta=0
+              for r in records:
+                  a=r["sims"][base];b=r["sims"][t]
+                  trans[a["reason"]+"->"+b["reason"]]+=1
+                  delta+=b["amount"]-a["amount"]
+              comparisons[t]={"delta_profit_vs_1R":round(delta,2),"transitions":dict(trans)}
+          print("VS_1R="+json.dumps(comparisons,sort_keys=True))
+
+          groups=defaultdict(list)
+          for r in records:groups[str(r["strategy"])].append(r)
+          out=[]
+          for name,items in groups.items():
+              x={"strategy":name,"n":len(items)}
+              for t in ("0.5","0.75","1.0"):
+                  x[t]=summarize([r["sims"][t] for r in items])
+              x["delta_05_vs_1"]=round(x["0.5"]["total_profit"]-x["1.0"]["total_profit"],2)
+              x["delta_075_vs_1"]=round(x["0.75"]["total_profit"]-x["1.0"]["total_profit"],2)
+              out.append(x)
+          out.sort(key=lambda x:x["delta_075_vs_1"],reverse=True)
+          print("BY_STRATEGY="+json.dumps(out,ensure_ascii=False,sort_keys=True))
+
+          for label,key in [
+              ("BY_DIRECTION",lambda r:str(r["direction"])),
+              ("BY_MARKET_TF",lambda r:str(r["market"])+"|"+str(r["timeframe"]))
+          ]:
+              g=defaultdict(list)
+              for r in records:g[key(r)].append(r)
+              payload={}
+              for name,items in g.items():
+                  payload[name]={t:summarize([r["sims"][t] for r in items]) for t in ("0.5","0.75","1.0")}
+              print(label+"="+json.dumps(payload,sort_keys=True))
+          PY

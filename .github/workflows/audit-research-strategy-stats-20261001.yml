@@ -51,7 +51,7 @@ jobs:
           trades=[]
           offset=0
           while True:
-              page=get("/research/trades",{"limit":500,"offset":offset})
+              page=get("/research/trades",{"limit":200,"offset":offset})
               rows=page.get("trades",[])
               trades.extend(rows)
               offset += len(rows)

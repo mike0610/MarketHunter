@@ -1,0 +1,89 @@
+name: Audit Research Core v2 Live
+
+on:
+  push:
+    branches:
+      - deploy/research-core-v2-20261001
+    paths:
+      - .github/workflows/audit-research-core-v2-live.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    env:
+      VPS_HOST: 149.56.45.39
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Read-only live verification
+        run: |
+          set -euo pipefail
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${VPS_HOST}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          ROOT=/home/ubuntu/MarketHunter
+          cd "$ROOT"
+          .venv/bin/python - <<'PY'
+          import json,sqlite3,subprocess
+          from datetime import datetime,timezone
+          from app.main import ARCHIVED_STRATEGY_NAMES, RESEARCH_FORWARD_COHORT, build_strategies
+
+          print("AUDIT_UTC="+datetime.now(timezone.utc).isoformat())
+          print("FORWARD_COHORT="+RESEARCH_FORWARD_COHORT)
+          for tf in ("1h","1d"):
+              names=sorted(s.name for s in build_strategies(tf))
+              print("ACTIVE_"+tf.upper()+"="+json.dumps(names))
+              print("ARCHIVED_PRESENT_"+tf.upper()+"="+json.dumps(sorted(set(names)&set(ARCHIVED_STRATEGY_NAMES))))
+
+          start=subprocess.check_output(
+              ["systemctl","show","markethunter-worker.service","-p","ActiveEnterTimestamp","--value"],
+              text=True,
+          ).strip()
+          print("WORKER_ACTIVE_SINCE="+start)
+
+          db="/home/ubuntu/MarketHunter/data/research.db"
+          con=sqlite3.connect(f"file:{db}?mode=ro",uri=True)
+          con.row_factory=sqlite3.Row
+          # Linux systemd timestamp -> SQLite-friendly ISO boundary is not exact enough
+          # to parse here portably, so use the cohort marker itself as the authoritative
+          # forward boundary and separately report newest archived-strategy rows.
+          archived=tuple(sorted(ARCHIVED_STRATEGY_NAMES))
+          q=",".join("?" for _ in archived)
+          latest_archived=con.execute(
+              f"""SELECT strategy,MAX(created_at) AS last_created
+                  FROM research_trades
+                  WHERE strategy IN ({q})
+                  GROUP BY strategy ORDER BY strategy""",
+              archived,
+          ).fetchall()
+          print("LATEST_ARCHIVED_ROWS="+json.dumps([dict(x) for x in latest_archived],sort_keys=True))
+
+          cohort_rows=con.execute(
+              """SELECT strategy,direction,market,timeframe,status,created_at,mtf_context
+                 FROM research_trades
+                 WHERE mtf_context LIKE '%core_v2_20261001%'
+                 ORDER BY created_at DESC LIMIT 20"""
+          ).fetchall()
+          print("COHORT_ROW_COUNT="+str(con.execute(
+              "SELECT count(*) FROM research_trades WHERE mtf_context LIKE '%core_v2_20261001%'"
+          ).fetchone()[0]))
+          print("COHORT_LATEST="+json.dumps([
+              {k:r[k] for k in ("strategy","direction","market","timeframe","status","created_at")}
+              for r in cohort_rows
+          ],sort_keys=True))
+          con.close()
+          PY
+          systemctl is-active markethunter-worker.service
+          systemctl show markethunter-worker.service -p NRestarts
+          REMOTE

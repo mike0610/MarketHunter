@@ -111,6 +111,7 @@ class Scanner:
         scan_journal: ScanJournalRepository | None = None,
         scan_run_id: str | None = None,
         strategy_bindings: list[StrategyExecutionBinding] | None = None,
+        forward_cohort: str | None = None,
     ) -> None:
         """
         Initialize scanner dependencies.
@@ -156,6 +157,14 @@ class Scanner:
         self.candle_limit = candle_limit
         self.scan_journal = scan_journal
         self.scan_run_id = scan_run_id
+        normalized_forward_cohort = str(
+            forward_cohort or "",
+        ).strip()
+        self.forward_cohort = (
+            normalized_forward_cohort
+            if normalized_forward_cohort
+            else None
+        )
 
     @staticmethod
     def _build_execution_items(
@@ -409,6 +418,11 @@ class Scanner:
 
                 signal.market = symbol.market
                 signal.timeframe = self.timeframe
+
+                if self.forward_cohort is not None:
+                    signal.metadata["mtf_forward_cohort"] = (
+                        self.forward_cohort
+                    )
 
                 raw_signals.append(
                     _ScannedSignal(

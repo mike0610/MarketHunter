@@ -102,6 +102,22 @@ RISK_PER_TRADE_PERCENT = 1.0
 TARGET_RISK_REWARD = 2.0
 VIRTUAL_TRADE_NOTIONAL_USDT = 100.0
 
+# Research performance review 2026-10-01:
+# these strategies were consistently loss-making in clean completed
+# production research statistics and are removed from the active scanner.
+# Historical trades remain untouched and continue to be visible in Reports.
+ARCHIVED_STRATEGY_NAMES = frozenset({
+    "VolumeConfirmedBreakout",
+    "TrendPullback",
+    "LiquidityPool",
+    "BreakoutRetest",
+})
+
+# Every newly created research trade from this scanner cohort carries this
+# marker inside mtf_context so forward performance can be evaluated without
+# mixing it with legacy results.
+RESEARCH_FORWARD_COHORT = "core_v2_20261001"
+
 MONITOR_CANDLE_LIMIT = 240
 
 
@@ -192,7 +208,11 @@ def build_strategies(
             DailyLevelsStrategy(),
         )
 
-    return strategies
+    return [
+        strategy
+        for strategy in strategies
+        if strategy.name not in ARCHIVED_STRATEGY_NAMES
+    ]
 
 def market_symbol_limit(
     market: str,
@@ -447,6 +467,7 @@ async def run_scan_for_market_timeframe(
             candle_limit=SCAN_CANDLE_LIMIT,
             scan_journal=scan_journal,
             scan_run_id=scan_run_id,
+            forward_cohort=RESEARCH_FORWARD_COHORT,
         )
 
         elite_signals = await scanner.scan_many(

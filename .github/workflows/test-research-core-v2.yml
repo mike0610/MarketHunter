@@ -1,0 +1,27 @@
+name: Test Research Core v2
+
+on:
+  push:
+    branches:
+      - fix/archive-negative-strategies-forward-cohort-20261001
+    paths:
+      - app/main.py
+      - services/scanner.py
+      - tests/test_strategy_timeframe_eligibility.py
+      - tests/test_scanner.py
+      - .github/workflows/test-research-core-v2.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run targeted regression suite
+        run: |
+          set -euo pipefail
+          python3 -m py_compile app/main.py services/scanner.py
+          python3 -m unittest             tests.test_strategy_timeframe_eligibility             tests.test_scanner             tests.test_research_trade_mtf_context -v

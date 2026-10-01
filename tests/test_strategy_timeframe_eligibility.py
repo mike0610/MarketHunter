@@ -1,6 +1,6 @@
 from __future__ import annotations
 import unittest
-from app.main import build_strategies
+from app.main import ARCHIVED_STRATEGY_NAMES, build_strategies
 
 class StrategyTimeframeEligibilityTests(unittest.TestCase):
     def _names(self,timeframe):
@@ -17,9 +17,15 @@ class StrategyTimeframeEligibilityTests(unittest.TestCase):
     def test_common_strategy_universe_is_present_on_both_timeframes(self):
         one_hour=self._names("1h")
         one_day=self._names("1d")
-        for name in {"Breakout","LiquiditySweep","StatisticalMeanReversion","VolumeConfirmedBreakout"}:
+        for name in {"Breakout","LiquiditySweep","StatisticalMeanReversion","Compression"}:
             self.assertIn(name,one_hour)
             self.assertIn(name,one_day)
+
+    def test_archived_negative_strategies_are_absent_from_active_scans(self):
+        for timeframe in ("1h","1d"):
+            names=self._names(timeframe)
+            for name in ARCHIVED_STRATEGY_NAMES:
+                self.assertNotIn(name,names)
 
 if __name__=="__main__":
     unittest.main()

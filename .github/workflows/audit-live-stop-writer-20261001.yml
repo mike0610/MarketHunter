@@ -1,0 +1,46 @@
+name: Audit Live Stop Writer 2026-10-01
+
+on:
+  push:
+    branches:
+      - audit/research-strategy-stats-20261001
+    paths:
+      - .github/workflows/audit-live-stop-writer-20261001.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      VPS_HOST: 149.56.45.39
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Locate running producer of LIVE stop lifecycle
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${VPS_HOST}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          echo "RUNNING_UNITS_BEGIN"
+          systemctl list-units --type=service --state=running --no-legend             | grep -Ei 'markethunter|paper|trade|research|strategy|scanner'             | sed -E 's/[[:space:]]+/ /g' || true
+          echo "RUNNING_UNITS_END"
+
+          echo "PROCESS_PATHS_BEGIN"
+          ps -eo pid=,comm=,args=             | grep -Ei 'python|uvicorn'             | grep -Ei 'markethunter|paper|trade|research|strategy'             | sed -E 's/(TOKEN|KEY|SECRET|PASSWORD)=[^ ]+/\1=[REDACTED]/Ig'             | head -n 100 || true
+          echo "PROCESS_PATHS_END"
+
+          echo "LIVE_STRING_FILES_BEGIN"
+          find /home/ubuntu -maxdepth 6 -type f             ! -path '*/.git/*' ! -path '*/.venv/*' ! -path '*/node_modules/*'             ! -path '*/data/*' ! -name '*.log' ! -name '*.sqlite*'             ! -name '*.json' ! -name '*.env' -print0 2>/dev/null           | xargs -0 -r grep -IlE 'LIVE_(STOP_LOSS|TAKE_PROFIT|ENTRY_FILLED|SL_MOVED_BREAKEVEN|BREAKEVEN_STOP|SL_MOVED_PROFIT_LOCK|PROFIT_LOCK_STOP)' 2>/dev/null           | head -n 100
+          echo "LIVE_STRING_FILES_END"
+
+          echo "LIVE_STRING_LINES_BEGIN"
+          find /home/ubuntu -maxdepth 6 -type f             ! -path '*/.git/*' ! -path '*/.venv/*' ! -path '*/node_modules/*'             ! -path '*/data/*' ! -name '*.log' ! -name '*.sqlite*'             ! -name '*.json' ! -name '*.env' -print0 2>/dev/null           | xargs -0 -r grep -InE 'LIVE_(STOP_LOSS|TAKE_PROFIT|ENTRY_FILLED|SL_MOVED_BREAKEVEN|BREAKEVEN_STOP|SL_MOVED_PROFIT_LOCK|PROFIT_LOCK_STOP)' 2>/dev/null           | head -n 200
+          echo "LIVE_STRING_LINES_END"
+          REMOTE

@@ -1,0 +1,58 @@
+name: Audit Trend Context Safe
+
+on:
+  push:
+    branches:
+      - audit/research-strategy-stats-20261001
+    paths:
+      - .github/workflows/audit-trend-context-safe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    env:
+      VPS_HOST: 149.56.45.39
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+      - name: Count stored trend fields
+        run: |
+          set -euo pipefail
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${VPS_HOST}" 'python3 -' <<'PY'
+          import json,sqlite3
+          from collections import Counter
+          p="/home/ubuntu/MarketHunter/data/research.db"
+          con=sqlite3.connect(f"file:{p}?mode=ro",uri=True)
+          rows=con.execute("SELECT reasons,mtf_context FROM research_trades WHERE status IN ('closed','expired') AND outcome_group!='excluded'").fetchall()
+          con.close()
+          keys=Counter();reasons=Counter()
+          for reasons_raw,ctx_raw in rows:
+              try:ctx=json.loads(ctx_raw or "{}")
+              except Exception:ctx={}
+              if isinstance(ctx,dict):
+                  for k in ctx:
+                      lk=str(k).lower()
+                      if any(x in lk for x in ("trend","regime","bias","structure","mtf","direction")):
+                          keys[str(k)]+=1
+              try:rs=json.loads(reasons_raw or "[]")
+              except Exception:rs=[]
+              if isinstance(rs,list):
+                  for x in rs:
+                      sx=str(x)
+                      if "Trend" in sx or "TREND" in sx:
+                          reasons[sx]+=1
+          print("ROWS="+str(len(rows)))
+          print("TREND_KEYS="+json.dumps(keys.most_common(50),ensure_ascii=False))
+          print("TREND_REASONS="+json.dumps(reasons.most_common(50),ensure_ascii=False))
+          PY

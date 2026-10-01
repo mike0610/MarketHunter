@@ -1,0 +1,161 @@
+name: Audit Research Strategy Statistics 2026-10-01
+
+on:
+  push:
+    branches:
+      - audit/research-strategy-stats-20261001
+    paths:
+      - .github/workflows/audit-research-strategy-stats-20261001.yml
+
+permissions:
+  contents: read
+
+jobs:
+  read_only_audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      VPS_HOST: 149.56.45.39
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Read-only production strategy audit
+        run: |
+          set -euo pipefail
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${VPS_HOST}" 'python3 -' <<'PY'
+          import json, math, statistics, urllib.parse, urllib.request
+          from collections import defaultdict
+          from datetime import datetime, timezone
+
+          BASE="http://127.0.0.1:8000"
+
+          def get(path, params=None):
+              url=BASE+path
+              if params:
+                  url+="?"+urllib.parse.urlencode(params)
+              with urllib.request.urlopen(url,timeout=15) as r:
+                  assert r.status==200,(url,r.status)
+                  return json.load(r)
+
+          overall=get("/research/statistics")
+          grouped=get("/research/statistics/setup-reasons")
+
+          trades=[]
+          offset=0
+          while True:
+              page=get("/research/trades",{"limit":500,"offset":offset})
+              rows=page.get("trades",[])
+              trades.extend(rows)
+              offset += len(rows)
+              if not rows or offset>=int(page.get("total",offset)):
+                  break
+
+          print("AUDIT_UTC="+datetime.now(timezone.utc).isoformat())
+          print("OVERALL="+json.dumps(overall,sort_keys=True))
+          print("TRADE_ROWS_FETCHED="+str(len(trades)))
+
+          def clean_completed(t):
+              return (
+                  t.get("status") in ("closed","expired")
+                  and t.get("outcome_group")!="excluded"
+              )
+
+          clean=[t for t in trades if clean_completed(t)]
+          by=defaultdict(list)
+          for t in clean:
+              by[str(t.get("strategy") or "Unknown")].append(t)
+
+          def safe_pf(rows):
+              gp=sum(float(t.get("profit_amount") or 0) for t in rows if float(t.get("profit_percent") or 0)>0)
+              gl=abs(sum(float(t.get("profit_amount") or 0) for t in rows if float(t.get("profit_percent") or 0)<0))
+              return gp/gl if gl>0 else None
+
+          def metrics(rows):
+              rows=list(rows)
+              wins=[t for t in rows if float(t.get("profit_percent") or 0)>0]
+              losses=[t for t in rows if float(t.get("profit_percent") or 0)<0]
+              be=[t for t in rows if float(t.get("profit_percent") or 0)==0]
+              decisive=len(wins)+len(losses)
+              profits=[float(t.get("profit_percent") or 0) for t in rows]
+              amts=[float(t.get("profit_amount") or 0) for t in rows]
+              rrs=[float(t.get("rr") or 0) for t in rows]
+              return {
+                  "n":len(rows),
+                  "wins":len(wins),
+                  "losses":len(losses),
+                  "breakeven":len(be),
+                  "win_rate":round(100*len(wins)/decisive,1) if decisive else 0.0,
+                  "total_profit":round(sum(amts),2),
+                  "profit_factor":round(safe_pf(rows),3) if safe_pf(rows) is not None else None,
+                  "avg_profit_pct":round(sum(profits)/len(rows),3) if rows else 0.0,
+                  "median_profit_pct":round(statistics.median(profits),3) if rows else 0.0,
+                  "avg_rr":round(sum(rrs)/len(rows),3) if rows else 0.0,
+                  "profitable_expired":sum(bool(t.get("is_profitable_expired")) for t in rows),
+                  "expired_at_loss":sum(t.get("status")=="expired" and float(t.get("profit_percent") or 0)<0 for t in rows),
+              }
+
+          strategies=[]
+          for name,rows in by.items():
+              ordered=sorted(
+                  rows,
+                  key=lambda t: (
+                      t.get("closed_at") or t.get("created_at") or "",
+                      t.get("id") or "",
+                  )
+              )
+              allm=metrics(ordered)
+              recent50=metrics(ordered[-50:])
+              recent25=metrics(ordered[-25:])
+              strategies.append({
+                  "strategy":name,
+                  **allm,
+                  "recent50":recent50,
+                  "recent25":recent25,
+              })
+
+          strategies.sort(key=lambda x:(x["total_profit"],x["n"]))
+          print("STRATEGIES="+json.dumps(strategies,ensure_ascii=False,sort_keys=True))
+
+          # Break down by direction inside each strategy to avoid archiving a
+          # whole strategy when only one side is failing.
+          strat_dir=[]
+          for name,rows in by.items():
+              for direction in sorted({str(t.get("direction") or "Unknown") for t in rows}):
+                  subset=[t for t in rows if str(t.get("direction") or "Unknown")==direction]
+                  if subset:
+                      strat_dir.append({"strategy":name,"direction":direction,**metrics(subset)})
+          strat_dir.sort(key=lambda x:(x["total_profit"],-x["n"]))
+          print("STRATEGY_DIRECTION="+json.dumps(strat_dir,ensure_ascii=False,sort_keys=True))
+
+          # Timeframe/market context by strategy.
+          strat_tf=[]
+          for name,rows in by.items():
+              keys=sorted({(str(t.get("market") or "Unknown"),str(t.get("timeframe") or "Unknown")) for t in rows})
+              for market,timeframe in keys:
+                  subset=[t for t in rows if str(t.get("market") or "Unknown")==market and str(t.get("timeframe") or "Unknown")==timeframe]
+                  strat_tf.append({"strategy":name,"market":market,"timeframe":timeframe,**metrics(subset)})
+          strat_tf.sort(key=lambda x:(x["total_profit"],-x["n"]))
+          print("STRATEGY_MARKET_TIMEFRAME="+json.dumps(strat_tf,ensure_ascii=False,sort_keys=True))
+
+          # Group endpoint uses canonical setup-reason bucketing.
+          setup_rows=grouped.get("by_setup_reason",[])
+          setup_rows=sorted(setup_rows,key=lambda x:(float(x.get("total_profit",0)), -int(x.get("clean_completed",0))))
+          print("SETUP_REASONS="+json.dumps(setup_rows,ensure_ascii=False,sort_keys=True))
+
+          # Close-reason concentration helps identify whether losses are
+          # dominated by SL, expiry, or another mechanical path.
+          close_rows=grouped.get("by_close_reason",[])
+          close_rows=sorted(close_rows,key=lambda x:(float(x.get("total_profit",0)), -int(x.get("clean_completed",0))))
+          print("CLOSE_REASONS="+json.dumps(close_rows,ensure_ascii=False,sort_keys=True))
+
+          # Outcome-group totals are useful to reconcile with dashboard.
+          print("OUTCOME_GROUPS="+json.dumps(grouped.get("by_outcome_group",[]),ensure_ascii=False,sort_keys=True))
+          PY

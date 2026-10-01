@@ -1,0 +1,143 @@
+name: Deploy Research Core v2 2026-10-01
+
+on:
+  push:
+    branches:
+      - deploy/research-core-v2-20261001
+    paths:
+      - .github/workflows/deploy-research-core-v2-20261001.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VPS_HOST: 149.56.45.39
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+      PROD_ROOT: /home/ubuntu/MarketHunter
+      BASE_SHA: 7f2c73b8655ed4f35691e865d52835de6a45e913
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate target files and policy invariants
+        run: |
+          set -euo pipefail
+          python3 -m py_compile app/main.py services/scanner.py
+          python3 - <<'PY'
+          from app.main import ARCHIVED_STRATEGY_NAMES, RESEARCH_FORWARD_COHORT, build_strategies
+
+          expected={
+              "VolumeConfirmedBreakout",
+              "TrendPullback",
+              "LiquidityPool",
+              "BreakoutRetest",
+          }
+          assert ARCHIVED_STRATEGY_NAMES == expected
+          assert RESEARCH_FORWARD_COHORT == "core_v2_20261001"
+          for tf in ("1h","1d"):
+              active={s.name for s in build_strategies(tf)}
+              assert not (expected & active), (tf, expected & active)
+          print("LOCAL_POLICY_VALIDATION=PASS")
+          PY
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Stage exact files
+        run: |
+          set -euo pipefail
+          tar -czf "${RUNNER_TEMP}/research-core-v2.tgz" app/main.py services/scanner.py
+          scp -o BatchMode=yes -i ~/.ssh/key "${RUNNER_TEMP}/research-core-v2.tgz" "ubuntu@${VPS_HOST}:/tmp/research-core-v2-${GITHUB_RUN_ID}.tgz"
+
+      - name: Deploy isolated worker policy update
+        run: |
+          set -euo pipefail
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${VPS_HOST}" "BASE_SHA=${BASE_SHA} RUN_ID=${GITHUB_RUN_ID} bash -s" <<'REMOTE'
+          set -Eeuo pipefail
+          ROOT=/home/ubuntu/MarketHunter
+          SERVICE=markethunter-worker.service
+          BACKUP="/home/ubuntu/markethunter_research_core_v2_backups/${RUN_ID}"
+          BUNDLE="/tmp/research-core-v2-${RUN_ID}.tgz"
+          STAGE="$BACKUP/stage"
+          mkdir -p "$STAGE"
+          chmod 700 /home/ubuntu/markethunter_research_core_v2_backups "$BACKUP" "$STAGE"
+
+          echo "PRECHECK_HEAD=$(git -C "$ROOT" rev-parse HEAD)"
+          git -C "$ROOT" diff --quiet -- app/main.py services/scanner.py || {
+            echo "BLOCKED_LOCAL_CHANGES_IN_TARGET_FILES=YES"
+            exit 20
+          }
+
+          git -C "$ROOT" fetch -q origin master
+          git -C "$ROOT" cat-file -e "${BASE_SHA}^{commit}"
+          git -C "$ROOT" diff --quiet "${BASE_SHA}" HEAD -- app/main.py services/scanner.py || {
+            echo "BLOCKED_PRODUCTION_TARGET_FILES_DIVERGED_FROM_REVIEWED_BASE=YES"
+            exit 21
+          }
+
+          sudo -n systemctl is-active --quiet "$SERVICE"
+          cp -p "$ROOT/app/main.py" "$BACKUP/main.py"
+          cp -p "$ROOT/services/scanner.py" "$BACKUP/scanner.py"
+          tar -xzf "$BUNDLE" -C "$STAGE"
+          python3 -m py_compile "$STAGE/app/main.py" "$STAGE/services/scanner.py"
+
+          rollback() {
+            trap - ERR
+            set +e
+            echo "ROLLBACK=START"
+            install -m 644 "$BACKUP/main.py" "$ROOT/app/main.py"
+            install -m 644 "$BACKUP/scanner.py" "$ROOT/services/scanner.py"
+            sudo -n systemctl restart "$SERVICE"
+            sudo -n systemctl is-active --quiet "$SERVICE"
+            echo "ROLLBACK=COMPLETE"
+          }
+          trap rollback ERR
+
+          install -m 644 "$STAGE/app/main.py" "$ROOT/app/main.py"
+          install -m 644 "$STAGE/services/scanner.py" "$ROOT/services/scanner.py"
+
+          cd "$ROOT"
+          .venv/bin/python -m py_compile app/main.py services/scanner.py
+          .venv/bin/python - <<'PY'
+          from app.main import ARCHIVED_STRATEGY_NAMES, RESEARCH_FORWARD_COHORT, build_strategies
+          expected={
+              "VolumeConfirmedBreakout",
+              "TrendPullback",
+              "LiquidityPool",
+              "BreakoutRetest",
+          }
+          assert ARCHIVED_STRATEGY_NAMES == expected
+          assert RESEARCH_FORWARD_COHORT == "core_v2_20261001"
+          for tf in ("1h","1d"):
+              active={s.name for s in build_strategies(tf)}
+              assert not (expected & active)
+          print("VPS_POLICY_IMPORT=PASS")
+          PY
+
+          sudo -n systemctl restart "$SERVICE"
+          sleep 3
+          sudo -n systemctl is-active --quiet "$SERVICE"
+
+          echo "WORKER_ACTIVE=YES"
+          echo "HISTORICAL_DB_MUTATION=NONE"
+          echo "STOP_MANAGEMENT_CHANGED=NO"
+          echo "FORWARD_COHORT=core_v2_20261001"
+          echo "ARCHIVED_STRATEGIES=VolumeConfirmedBreakout,TrendPullback,LiquidityPool,BreakoutRetest"
+
+          for other in markethunter-api.service markethunter-monitor.service; do
+            state="$(systemctl is-active "$other" || true)"
+            echo "${other}=${state}"
+          done
+
+          rm -f "$BUNDLE"
+          trap - ERR
+          REMOTE

@@ -1,0 +1,209 @@
+name: Audit Trend Alignment 2026-10-01
+
+on:
+  push:
+    branches:
+      - audit/research-strategy-stats-20261001
+    paths:
+      - .github/workflows/audit-trend-alignment-20261001.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      VPS_HOST: 149.56.45.39
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Reconstruct trend at signal creation and audit alignment
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${VPS_HOST}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd /home/ubuntu/MarketHunter
+          .venv/bin/python - <<'PY'
+          import json, sqlite3, statistics, time, urllib.parse, urllib.request
+          from collections import Counter, defaultdict
+          from datetime import datetime, timezone
+
+          from models.candle import Candle
+          from structure.trend_engine import TrendEngine
+
+          DB="/home/ubuntu/MarketHunter/data/research.db"
+          LOOKBACK=500
+
+          con=sqlite3.connect(f"file:{DB}?mode=ro",uri=True)
+          con.row_factory=sqlite3.Row
+          con.execute("PRAGMA query_only=ON")
+          rows=con.execute(
+              """SELECT id,symbol,market,timeframe,strategy,direction,
+                        created_at,profit_amount,profit_percent,rr,status,
+                        outcome_group,close_reason
+                 FROM research_trades
+                 WHERE status IN ('closed','expired')
+                   AND outcome_group!='excluded'
+                 ORDER BY created_at"""
+          ).fetchall()
+          con.close()
+
+          engine=TrendEngine()
+          cache={}
+          errors=Counter()
+
+          def parse_dt(v):
+              d=datetime.fromisoformat(str(v).replace("Z","+00:00"))
+              if d.tzinfo is None:d=d.replace(tzinfo=timezone.utc)
+              return d.astimezone(timezone.utc)
+
+          def base_url(market):
+              return ("https://api.binance.com/api/v3/klines"
+                      if str(market).lower()=="spot"
+                      else "https://fapi.binance.com/fapi/v1/klines")
+
+          def fetch_before(symbol,market,interval,when):
+              # Group signals created inside the same minute to avoid duplicate calls.
+              end_ms=int(when.timestamp()*1000)
+              key=(symbol,str(market).lower(),interval,end_ms//60_000)
+              if key in cache:return cache[key]
+              url=base_url(market)+"?"+urllib.parse.urlencode({
+                  "symbol":symbol,"interval":interval,"endTime":end_ms,"limit":LOOKBACK
+              })
+              req=urllib.request.Request(url,headers={"User-Agent":"MarketHunter-trend-audit/1.0"})
+              last=None
+              for n in range(3):
+                  try:
+                      with urllib.request.urlopen(req,timeout=12) as resp:data=json.load(resp)
+                      candles=[Candle.from_binance(x) for x in data
+                               if isinstance(x,list) and len(x)>=11 and int(x[6])<=end_ms]
+                      cache[key]=candles
+                      time.sleep(.025)
+                      return candles
+                  except Exception as exc:
+                      last=exc
+                      time.sleep(.3*(n+1))
+              raise last
+
+          def trend_for(r,interval):
+              when=parse_dt(r["created_at"])
+              cs=fetch_before(r["symbol"],r["market"],interval,when)
+              if len(cs)<200:return "unknown"
+              return engine.analyze(cs).trend
+
+          def align(direction,trend):
+              d=str(direction).upper()
+              if trend=="bullish":
+                  return "with_trend" if d=="LONG" else "counter_trend" if d=="SHORT" else "trend_unknown"
+              if trend=="bearish":
+                  return "with_trend" if d=="SHORT" else "counter_trend" if d=="LONG" else "trend_unknown"
+              return "trend_unknown"
+
+          records=[]
+          for i,r in enumerate(rows,1):
+              try:
+                  tf_trend=trend_for(r,str(r["timeframe"]))
+              except Exception as exc:
+                  tf_trend="unknown"
+                  errors["same_tf:"+type(exc).__name__]+=1
+              daily_trend="not_applicable"
+              if str(r["timeframe"])=="1h":
+                  try:
+                      daily_trend=trend_for(r,"1d")
+                  except Exception as exc:
+                      daily_trend="unknown"
+                      errors["daily:"+type(exc).__name__]+=1
+              records.append({
+                  "strategy":str(r["strategy"]),
+                  "direction":str(r["direction"]).upper(),
+                  "market":str(r["market"]).lower(),
+                  "timeframe":str(r["timeframe"]),
+                  "created_at":str(r["created_at"]),
+                  "profit_amount":float(r["profit_amount"] or 0),
+                  "profit_percent":float(r["profit_percent"] or 0),
+                  "rr":float(r["rr"] or 0),
+                  "same_tf_trend":tf_trend,
+                  "same_tf_alignment":align(r["direction"],tf_trend),
+                  "daily_trend":daily_trend,
+                  "daily_alignment":(
+                      align(r["direction"],daily_trend)
+                      if daily_trend!="not_applicable" else "not_applicable"
+                  ),
+              })
+              if i%100==0:print("PROGRESS="+str(i),flush=True)
+
+          def metrics(xs):
+              xs=list(xs)
+              wins=[x for x in xs if x["profit_amount"]>1e-12]
+              losses=[x for x in xs if x["profit_amount"]<-1e-12]
+              be=[x for x in xs if abs(x["profit_amount"])<=1e-12]
+              gp=sum(x["profit_amount"] for x in wins)
+              gl=abs(sum(x["profit_amount"] for x in losses))
+              pcts=[x["profit_percent"] for x in xs]
+              return {
+                  "n":len(xs),"wins":len(wins),"losses":len(losses),"breakeven":len(be),
+                  "win_rate":round(100*len(wins)/(len(wins)+len(losses)),1) if wins or losses else 0,
+                  "total_profit":round(sum(x["profit_amount"] for x in xs),2),
+                  "profit_factor":round(gp/gl,3) if gl else None,
+                  "avg_profit_pct":round(sum(pcts)/len(pcts),3) if pcts else 0,
+                  "median_profit_pct":round(statistics.median(pcts),3) if pcts else 0,
+                  "avg_rr":round(sum(x["rr"] for x in xs)/len(xs),3) if xs else 0,
+              }
+
+          print("AUDIT_UTC="+datetime.now(timezone.utc).isoformat())
+          print("ROWS="+str(len(records)))
+          print("ERRORS="+json.dumps(dict(errors),sort_keys=True))
+          print("TREND_COUNTS="+json.dumps(dict(Counter(x["same_tf_trend"] for x in records)),sort_keys=True))
+          print("ALIGNMENT_OVERALL="+json.dumps({
+              k:metrics([x for x in records if x["same_tf_alignment"]==k])
+              for k in ("with_trend","counter_trend","trend_unknown")
+          },sort_keys=True))
+
+          strategies=sorted({x["strategy"] for x in records})
+          by_strategy=[]
+          for s in strategies:
+              subset=[x for x in records if x["strategy"]==s]
+              row={"strategy":s,"all":metrics(subset)}
+              for a in ("with_trend","counter_trend","trend_unknown"):
+                  row[a]=metrics([x for x in subset if x["same_tf_alignment"]==a])
+              # Hypothetical filter: only take trades aligned with detected trend.
+              row["with_trend_delta_vs_all"]=round(
+                  row["with_trend"]["total_profit"]-row["all"]["total_profit"],2
+              )
+              by_strategy.append(row)
+          by_strategy.sort(key=lambda x:(x["with_trend_delta_vs_all"],x["all"]["n"]),reverse=True)
+          print("BY_STRATEGY="+json.dumps(by_strategy,ensure_ascii=False,sort_keys=True))
+
+          # Direction split inside alignment to ensure "with-trend" is not just LONG in disguise.
+          buckets={}
+          for a in ("with_trend","counter_trend","trend_unknown"):
+              buckets[a]={}
+              for d in ("LONG","SHORT"):
+                  buckets[a][d]=metrics([x for x in records if x["same_tf_alignment"]==a and x["direction"]==d])
+          print("ALIGNMENT_DIRECTION="+json.dumps(buckets,sort_keys=True))
+
+          # Higher-timeframe 1D context for all 1h trades.
+          one_h=[x for x in records if x["timeframe"]=="1h"]
+          print("DAILY_ALIGNMENT_1H="+json.dumps({
+              k:metrics([x for x in one_h if x["daily_alignment"]==k])
+              for k in ("with_trend","counter_trend","trend_unknown")
+          },sort_keys=True))
+          daily_by_strategy=[]
+          for s in sorted({x["strategy"] for x in one_h}):
+              subset=[x for x in one_h if x["strategy"]==s]
+              daily_by_strategy.append({
+                  "strategy":s,
+                  "all":metrics(subset),
+                  "with_trend":metrics([x for x in subset if x["daily_alignment"]=="with_trend"]),
+                  "counter_trend":metrics([x for x in subset if x["daily_alignment"]=="counter_trend"]),
+                  "trend_unknown":metrics([x for x in subset if x["daily_alignment"]=="trend_unknown"]),
+              })
+          print("DAILY_BY_STRATEGY_1H="+json.dumps(daily_by_strategy,ensure_ascii=False,sort_keys=True))
+          PY
+          REMOTE

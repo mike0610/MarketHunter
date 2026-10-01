@@ -54,6 +54,71 @@ jobs:
           print("POST_FIX_NEW_CANDIDATES="+str(n))
           n=con.execute("SELECT count(*) FROM lifecycle_events WHERE state='BREAKOUT_CONFIRMED_PAPER' AND observed_at_utc > ?", (marker["applied_at"],)).fetchone()[0]
           print("POST_FIX_CONFIRMED="+str(n))
+
+          candidates=con.execute(
+              """SELECT symbol,candle_close_ms,observed_at_utc,payload_json
+                 FROM events
+                 WHERE state='BREAKOUT_CANDIDATE' AND observed_at_utc > ?
+                 ORDER BY observed_at_utc""",
+              (marker["applied_at"],),
+          ).fetchall()
+          lifecycle=con.execute(
+              """SELECT symbol,signal_candle_ms,state,observed_at_utc
+                 FROM lifecycle_events
+                 WHERE observed_at_utc > ?""",
+              (marker["applied_at"],),
+          ).fetchall()
+          by_signal={}
+          for symbol,signal_ms,state,observed in lifecycle:
+              by_signal.setdefault((symbol,int(signal_ms)),set()).add(state)
+
+          cohort=Counter()
+          by_direction=Counter()
+          daily=Counter()
+          for symbol,signal_ms,observed,payload_json in candidates:
+              states=by_signal.get((symbol,int(signal_ms)),set())
+              confirmed="BREAKOUT_CONFIRMED_PAPER" in states
+              invalidated="BREAKOUT_INVALIDATED" in states
+              expired="BREAKOUT_EXPIRED" in states
+              unverified="BREAKOUT_UNVERIFIED" in states
+              if confirmed and invalidated:
+                  bucket="CONFIRMED_THEN_INVALIDATED"
+              elif confirmed and expired:
+                  bucket="CONFIRMED_THEN_EXPIRED"
+              elif confirmed and not (invalidated or expired or unverified):
+                  bucket="CONFIRMED_STILL_ACTIVE"
+              elif invalidated:
+                  bucket="INVALIDATED_BEFORE_CONFIRM"
+              elif expired:
+                  bucket="EXPIRED_WITHOUT_CONFIRM"
+              elif unverified:
+                  bucket="UNVERIFIED"
+              else:
+                  bucket="UNRESOLVED_NO_CONFIRM"
+              cohort[bucket]+=1
+              try:
+                  payload=json.loads(payload_json)
+                  by_direction[str(payload.get("direction","UNKNOWN"))]+=1
+              except Exception:
+                  by_direction["UNREADABLE"]+=1
+              try:
+                  daily[datetime.fromisoformat(observed).date().isoformat()]+=1
+              except Exception:
+                  pass
+
+          total=len(candidates)
+          print("POST_FIX_COHORT="+json.dumps(dict(cohort),sort_keys=True))
+          print("POST_FIX_DIRECTIONS="+json.dumps(dict(by_direction),sort_keys=True))
+          print("POST_FIX_DAILY_CANDIDATES="+json.dumps(dict(sorted(daily.items())),sort_keys=True))
+          if total:
+              confirmed_n=sum(1 for symbol,signal_ms,_,_ in candidates if "BREAKOUT_CONFIRMED_PAPER" in by_signal.get((symbol,int(signal_ms)),set()))
+              invalid_before=cohort["INVALIDATED_BEFORE_CONFIRM"]
+              confirmed_broken=cohort["CONFIRMED_THEN_INVALIDATED"]
+              print("POST_FIX_CONFIRM_RATE_PCT="+str(round(100*confirmed_n/total,1)))
+              print("POST_FIX_INVALID_BEFORE_CONFIRM_RATE_PCT="+str(round(100*invalid_before/total,1)))
+              if confirmed_n:
+                  print("POST_FIX_CONFIRMED_THEN_INVALIDATED_PCT_OF_CONFIRMED="+str(round(100*confirmed_broken/confirmed_n,1)))
+
           cache=con.execute(
               "SELECT symbol,timeframe,expires_at FROM mtf_negative_cache WHERE reason LIKE '%WEEX_KLINE_INVALID_SYMBOL%' AND expires_at > ? ORDER BY symbol,timeframe",
               (time.time(),),

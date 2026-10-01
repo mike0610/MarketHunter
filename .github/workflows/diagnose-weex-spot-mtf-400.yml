@@ -1,0 +1,66 @@
+name: Diagnose WEEX spot MTF HTTP 400
+
+on:
+  push:
+    branches:
+      - fix/weex-spot-lifecycle-v06-20260930
+    paths:
+      - .github/workflows/diagnose-weex-spot-mtf-400.yml
+
+permissions:
+  contents: read
+
+jobs:
+  read_only_probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      VPS_HOST: 149.56.45.39
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Read-only bounded probe of public WEEX candles
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${VPS_HOST}" 'python3 -' <<'PY'
+          import json,urllib.parse,urllib.request,urllib.error,time
+          base="https://api-spot.weex.com"
+          symbols=("BTFUSDT","NIZAUSDT","LFUSDT","BTCUSDT")
+          req=urllib.request.Request(base+"/api/v3/exchangeInfo?symbolStatus=TRADING",headers={"User-Agent":"WEEX-spot-radar/diagnostic"})
+          try:
+              with urllib.request.urlopen(req,timeout=8) as resp:
+                  data=json.load(resp)
+              active={x.get("symbol") for x in data.get("symbols",[]) if x.get("status")=="TRADING"}
+              print("ACTIVE_UNIVERSE_CHECK="+json.dumps({s:s in active for s in symbols},sort_keys=True))
+          except Exception as exc:
+              print("UNIVERSE_CHECK_ERROR="+type(exc).__name__)
+
+          for sym in symbols:
+              url=base+"/api/v3/market/klines?"+urllib.parse.urlencode({"symbol":sym,"interval":"1d","limit":100})
+              request=urllib.request.Request(url,headers={"User-Agent":"WEEX-spot-radar/0.15-controlled-m15-paper"})
+              try:
+                  with urllib.request.urlopen(request,timeout=10) as resp:
+                      payload=json.load(resp)
+                      result={"symbol":sym,"http_status":resp.status,"payload_type":type(payload).__name__}
+                      if isinstance(payload,list):
+                          result["candles"]=len(payload)
+                      elif isinstance(payload,dict):
+                          result["error_code"]=str(payload.get("code",""))[:40]
+                          result["error_message"]=str(payload.get("msg",""))[:160]
+                      print("PROBE="+json.dumps(result))
+              except urllib.error.HTTPError as exc:
+                  raw=exc.read(2000).decode("utf-8",errors="replace")
+                  try:
+                      data=json.loads(raw)
+                      error={"code":str(data.get("code",""))[:40],"msg":str(data.get("msg",""))[:160]}
+                  except Exception:
+                      error={"body_type":"not_json"}
+                  print("PROBE="+json.dumps({"symbol":sym,"http_status":exc.code,**error}))
+              except Exception as exc:
+                  print("PROBE="+json.dumps({"symbol":sym,"exception_type":type(exc).__name__}))
+              time.sleep(0.3)
+          PY

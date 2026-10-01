@@ -1,0 +1,172 @@
+name: Deploy isolated WEEX spot lifecycle fix
+# Follow-up validated rollout: exact WEEX -1142 invalid-kline TTL quarantine.
+
+on:
+  push:
+    branches:
+      - fix/weex-spot-lifecycle-v06-20260930
+    paths:
+      - .github/workflows/deploy-weex-spot-lifecycle-fix.yml
+
+permissions:
+  contents: read
+
+jobs:
+  validated_isolated_rollout:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      VPS_HOST: 149.56.45.39
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Offline regression gate
+        run: |
+          set -euo pipefail
+          python3 -m py_compile local_agents/weex_spot_agent_v06/agent.py local_agents/weex_spot_agent_v06/legacy_lifecycle_maintenance.py local_agents/weex_spot_agent_v06/test_agent_lifecycle.py
+          python3 -m unittest discover -s local_agents/weex_spot_agent_v06 -p test_agent_lifecycle.py -v
+          grep -Fq 'NEVER places orders' local_agents/weex_spot_agent_v06/agent.py
+          ! grep -Eiq 'submit_order|place_order|create_order|/order|/orders' local_agents/weex_spot_agent_v06/agent.py
+
+      - name: Prepare SSH and isolated deployment bundle
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}" || { echo "BLOCKED_MISSING_SSH_KEY"; exit 2; }
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+          tar -C local_agents/weex_spot_agent_v06 -czf "${RUNNER_TEMP}/weex-lifecycle-fix.tgz" agent.py legacy_lifecycle_maintenance.py
+          scp -o BatchMode=yes -i ~/.ssh/key "${RUNNER_TEMP}/weex-lifecycle-fix.tgz" "ubuntu@${VPS_HOST}:/tmp/weex-lifecycle-fix-${GITHUB_SHA}.tgz"
+
+      - name: Back up, reconcile old signals, deploy and verify only WEEX service
+        run: |
+          set -euo pipefail
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${VPS_HOST}" "DEPLOY_SHA=${GITHUB_SHA} DEPLOY_RUN_ID=${GITHUB_RUN_ID} bash -s" <<'REMOTE'
+          set -Eeuo pipefail
+          APP=/home/ubuntu/weex_spot_agent_v06
+          DB="$APP/signals_v05.sqlite3"
+          BAK="/home/ubuntu/weex_spot_agent_v06_deploy_backups/${DEPLOY_RUN_ID}"
+          STAGED="$BAK/new"
+          SERVICE=weex-spot-agent-v06.service
+          STOPPED=0
+          mkdir -p "$STAGED"
+          chmod 700 /home/ubuntu/weex_spot_agent_v06_deploy_backups "$BAK" "$STAGED"
+          test -s "$APP/agent.py"
+          test -s "$APP/config.json"
+          test -s "$DB"
+          sudo -n systemctl is-active --quiet "$SERVICE"
+          tar -xzf "/tmp/weex-lifecycle-fix-${DEPLOY_SHA}.tgz" -C "$STAGED"
+          python3 -m py_compile "$STAGED/agent.py" "$STAGED/legacy_lifecycle_maintenance.py"
+          echo "ISOLATED_TARGET=WEEX_SPOT_AGENT_ONLY"
+          echo "BACKUP_DIR=$BAK"
+
+          rollback() {
+            echo "WEEX_LIFECYCLE_DEPLOY=ROLLING_BACK_CODE"
+            trap - ERR
+            set +e
+            if [ "$STOPPED" = 1 ]; then
+              if [ -s "$BAK/agent.py" ]; then
+                install -m 644 "$BAK/agent.py" "$APP/agent.py"
+              fi
+              sudo -n systemctl restart "$SERVICE"
+              sudo -n systemctl is-active --quiet "$SERVICE"
+            fi
+            echo "DATABASE_BACKUP_PRESERVED=YES"
+            echo "DATABASE_AUTO_RESTORE=NO_TO_AVOID_LOSS_OF_NEW_SIGNALS"
+          }
+          trap rollback ERR
+
+          sudo -n systemctl stop "$SERVICE"
+          STOPPED=1
+          cp -p "$APP/agent.py" "$BAK/agent.py"
+          python3 - "$DB" "$BAK/signals_v05.before.sqlite3" "$BAK/pre.json" <<'PY'
+          import json, sqlite3, sys, time
+          source,dest,stats=sys.argv[1:]
+          src=sqlite3.connect(source)
+          out=sqlite3.connect(dest)
+          src.backup(out)
+          out.close()
+          now=int(time.time()*1000)
+          snapshot={
+              "outbox": src.execute("SELECT count(*) FROM notification_outbox").fetchone()[0],
+              "candidates": src.execute("SELECT count(*) FROM events WHERE state='BREAKOUT_CANDIDATE'").fetchone()[0],
+              "active": src.execute("SELECT count(*) FROM active_breakouts WHERE status='ACTIVE'").fetchone()[0],
+              "overdue_24h": src.execute("SELECT count(*) FROM active_breakouts WHERE status='ACTIVE' AND expires_ms <= ?", (now-86400000,)).fetchone()[0],
+          }
+          src.close()
+          from pathlib import Path
+          Path(stats).write_text(json.dumps(snapshot))
+          print("PRE_DEPLOY_CANDIDATES="+str(snapshot["candidates"]))
+          print("PRE_DEPLOY_ACTIVE="+str(snapshot["active"]))
+          print("PRE_DEPLOY_OVERDUE_24H="+str(snapshot["overdue_24h"]))
+          PY
+          chmod 600 "$BAK/signals_v05.before.sqlite3" "$BAK/pre.json"
+          install -m 644 "$STAGED/agent.py" "$APP/agent.py"
+          install -m 644 "$STAGED/legacy_lifecycle_maintenance.py" "$APP/legacy_lifecycle_maintenance.py"
+
+          python3 "$APP/legacy_lifecycle_maintenance.py" --db "$DB"
+          python3 "$APP/legacy_lifecycle_maintenance.py" --db "$DB" --apply
+
+          python3 - "$DB" "$BAK/pre.json" <<'PY'
+          import json,sqlite3,sys
+          from pathlib import Path
+          db,presnapshot=sys.argv[1:]
+          before=json.loads(Path(presnapshot).read_text())
+          con=sqlite3.connect(db)
+          after_outbox=con.execute("SELECT count(*) FROM notification_outbox").fetchone()[0]
+          after_candidates=con.execute("SELECT count(*) FROM events WHERE state='BREAKOUT_CANDIDATE'").fetchone()[0]
+          after_active=con.execute("SELECT count(*) FROM active_breakouts WHERE status='ACTIVE'").fetchone()[0]
+          after_unverified=con.execute("SELECT count(*) FROM lifecycle_events WHERE state='BREAKOUT_UNVERIFIED'").fetchone()[0]
+          marker=con.execute("SELECT value FROM agent_meta WHERE key='lifecycle_prefetch_fix_20260930_legacy_reconciled'").fetchone()
+          assert marker, "legacy reconciliation marker missing"
+          result=json.loads(marker[0])
+          assert result["telegram_queued"] is False
+          assert after_outbox==before["outbox"], "legacy migration changed Telegram outbox"
+          assert after_candidates==before["candidates"], "legacy migration changed historical candidates"
+          assert after_active<=before["active"], "legacy migration increased active signals"
+          print("LEGACY_RETIRED="+str(result["retired"]))
+          print("LEGACY_CONFLICTS_SKIPPED="+str(result["skipped_conflicting"]))
+          print("POST_DEPLOY_ACTIVE="+str(after_active))
+          print("POST_DEPLOY_UNVERIFIED_TOTAL="+str(after_unverified))
+          print("OUTBOX_UNCHANGED=YES")
+          print("HISTORICAL_CANDIDATES_UNCHANGED=YES")
+          con.close()
+          PY
+
+          DEPLOY_STARTED_AT="$(date +%s)"
+          sudo -n systemctl start "$SERVICE"
+          sudo -n systemctl is-active --quiet "$SERVICE"
+          sudo -n systemctl is-enabled --quiet "$SERVICE"
+          for i in $(seq 1 12); do
+            if python3 - "$APP/agent.log" "$DEPLOY_STARTED_AT" <<'PY'
+          import json,sys
+          from datetime import datetime
+          from collections import deque
+          path,started=sys.argv[1],int(sys.argv[2])
+          with open(path,encoding="utf-8",errors="replace") as f:
+              lines=deque(f,maxlen=120)
+          for line in reversed(lines):
+              try:row=json.loads(line)
+              except ValueError:continue
+              if row.get("type") not in ("CYCLE_START","CYCLE_END"):continue
+              stamp=row.get("time_utc")
+              if not stamp:continue
+              if datetime.fromisoformat(stamp).timestamp()>=started-1:
+                  print("FRESH_AGENT_CYCLE="+row["type"])
+                  sys.exit(0)
+          sys.exit(1)
+          PY
+            then
+              break
+            fi
+            sleep 3
+          done
+          sudo -n systemctl is-active --quiet "$SERVICE"
+          echo "ISOLATED_WEEX_DEPLOY=PASS"
+          echo "MAIN_MARKETHUNTER_SERVICES=UNTOUCHED"
+          echo "REAL_ORDERS=NONE"
+          rm -f "/tmp/weex-lifecycle-fix-${DEPLOY_SHA}.tgz"
+          trap - ERR
+          REMOTE

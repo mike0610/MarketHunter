@@ -1,0 +1,134 @@
+name: Audit WEEX spot post-fix factors
+
+on:
+  push:
+    branches:
+      - fix/weex-spot-lifecycle-v06-20260930
+    paths:
+      - .github/workflows/audit-weex-spot-postfix-factors.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      HOST: 149.56.45.39
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Read-only factor audit
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${HOST}" >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${HOST}" 'python3 -' <<'PY'
+          import json,sqlite3
+          from collections import Counter,defaultdict
+
+          db="/home/ubuntu/weex_spot_agent_v06/signals_v05.sqlite3"
+          con=sqlite3.connect(f"file:{db}?mode=ro",uri=True)
+          con.execute("PRAGMA query_only=ON")
+          marker=json.loads(con.execute(
+              "SELECT value FROM agent_meta WHERE key='lifecycle_prefetch_fix_20260930_legacy_reconciled'"
+          ).fetchone()[0])
+          start=marker["applied_at"]
+          candidates=con.execute(
+              """SELECT symbol,candle_close_ms,payload_json
+                 FROM events WHERE state='BREAKOUT_CANDIDATE' AND observed_at_utc > ?""",
+              (start,),
+          ).fetchall()
+          life=con.execute(
+              """SELECT symbol,signal_candle_ms,state
+                 FROM lifecycle_events WHERE observed_at_utc > ?""",
+              (start,),
+          ).fetchall()
+          by_signal=defaultdict(set)
+          for symbol,signal_ms,state in life:
+              by_signal[(symbol,int(signal_ms))].add(state)
+
+          rows=[]
+          for symbol,signal_ms,payload_raw in candidates:
+              p=json.loads(payload_raw)
+              states=by_signal[(symbol,int(signal_ms))]
+              confirmed="BREAKOUT_CONFIRMED_PAPER" in states
+              invalidated="BREAKOUT_INVALIDATED" in states
+              expired="BREAKOUT_EXPIRED" in states
+              unverified="BREAKOUT_UNVERIFIED" in states
+              if expired:
+                  outcome="SURVIVED_4H"
+              elif invalidated and confirmed:
+                  outcome="FAILED_AFTER_CONFIRM"
+              elif invalidated:
+                  outcome="FAILED_BEFORE_CONFIRM"
+              elif unverified and confirmed:
+                  outcome="CONFIRMED_UNVERIFIED"
+              elif unverified:
+                  outcome="UNVERIFIED"
+              elif confirmed:
+                  outcome="ACTIVE_CONFIRMED"
+              else:
+                  outcome="ACTIVE_UNCONFIRMED"
+              rows.append({
+                  "symbol":symbol,
+                  "direction":str(p.get("direction","UNKNOWN")),
+                  "volume_ratio":float(p.get("volume_ratio",0) or 0),
+                  "range_width_pct":float(p.get("range_width_pct",0) or 0),
+                  "spread_pct":float(p.get("spread_pct",0) or 0),
+                  "depth":float(p.get("near_side_depth_usdt",0) or 0),
+                  "outcome":outcome,
+                  "confirmed":confirmed,
+              })
+
+          def summary(group):
+              n=len(group)
+              verified=[r for r in group if r["outcome"] in ("SURVIVED_4H","FAILED_AFTER_CONFIRM","FAILED_BEFORE_CONFIRM")]
+              survived=sum(r["outcome"]=="SURVIVED_4H" for r in group)
+              confirmed=sum(r["confirmed"] for r in group)
+              return {
+                  "n":n,
+                  "confirmed":confirmed,
+                  "confirm_pct":round(100*confirmed/n,1) if n else None,
+                  "verified_terminal":len(verified),
+                  "survived_4h":survived,
+                  "survival_pct_verified":round(100*survived/len(verified),1) if verified else None,
+                  "outcomes":dict(Counter(r["outcome"] for r in group)),
+              }
+
+          print("FACTOR_AUDIT_FROM="+start)
+          print("OVERALL="+json.dumps(summary(rows),sort_keys=True))
+          for direction in ("LONG","SHORT"):
+              print("DIRECTION_"+direction+"="+json.dumps(summary([r for r in rows if r["direction"]==direction]),sort_keys=True))
+
+          def bucketize(value, edges):
+              for label,lo,hi in edges:
+                  if lo <= value < hi:return label
+              return edges[-1][0]
+
+          feature_specs={
+              "VOLUME_RATIO":[("1.8-<2.0",1.8,2.0),("2.0-<3.0",2.0,3.0),("3.0+",3.0,float("inf"))],
+              "RANGE_WIDTH_PCT":[("1-<3",1,3),("3-<5",3,5),("5-<10",5,10),("10+",10,float("inf"))],
+              "SPREAD_PCT":[("0-<0.10",0,0.10),("0.10-<0.20",0.10,0.20),("0.20-0.35",0.20,float("inf"))],
+              "DEPTH_USDT":[("1k-<5k",1000,5000),("5k-<20k",5000,20000),("20k-<100k",20000,100000),("100k+",100000,float("inf"))],
+          }
+          keymap={"VOLUME_RATIO":"volume_ratio","RANGE_WIDTH_PCT":"range_width_pct","SPREAD_PCT":"spread_pct","DEPTH_USDT":"depth"}
+          for feature,edges in feature_specs.items():
+              groups=defaultdict(list)
+              for r in rows:
+                  groups[bucketize(r[keymap[feature]],edges)].append(r)
+              out={label:summary(groups[label]) for label,_,_ in edges if groups[label]}
+              print(feature+"="+json.dumps(out,sort_keys=True))
+
+          # Top-level feature means for verified terminal groups only. Association, not causation.
+          for outcome in ("SURVIVED_4H","FAILED_AFTER_CONFIRM","FAILED_BEFORE_CONFIRM"):
+              g=[r for r in rows if r["outcome"]==outcome]
+              if not g:continue
+              means={k:round(sum(r[k] for r in g)/len(g),4) for k in ("volume_ratio","range_width_pct","spread_pct","depth")}
+              means["n"]=len(g)
+              print("MEANS_"+outcome+"="+json.dumps(means,sort_keys=True))
+          con.close()
+          PY

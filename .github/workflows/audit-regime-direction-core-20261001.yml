@@ -1,0 +1,128 @@
+name: Audit Regime Direction Core 2026-10-01
+
+on:
+  push:
+    branches:
+      - audit/research-strategy-stats-20261001
+    paths:
+      - .github/workflows/audit-regime-direction-core-20261001.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      VPS_HOST: 149.56.45.39
+      SSH_PRIVATE_KEY: ${{ secrets.MARKETHUNTER_VPS_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Reconstruct 1D regime and cross with direction
+        run: |
+          set -euo pipefail
+          test -n "${SSH_PRIVATE_KEY}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/key
+          chmod 600 ~/.ssh/key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -i ~/.ssh/key "ubuntu@${VPS_HOST}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd /home/ubuntu/MarketHunter
+          .venv/bin/python - <<'PY'
+          import json,sqlite3,statistics,time,urllib.parse,urllib.request
+          from collections import defaultdict
+          from datetime import datetime,timezone
+          from models.candle import Candle
+          from structure.trend_engine import TrendEngine
+
+          CORE=("OrderBlock","Compression","FVG","LiquiditySweep","PremiumDiscount",
+                "SessionRange","Breaker","TrendPullback","LiquidityPool",
+                "BreakoutRetest","VolumeConfirmedBreakout")
+          con=sqlite3.connect("file:/home/ubuntu/MarketHunter/data/research.db?mode=ro",uri=True)
+          con.row_factory=sqlite3.Row
+          qs=",".join("?" for _ in CORE)
+          rows=con.execute(
+              f"""SELECT symbol,market,timeframe,strategy,direction,created_at,
+                         profit_amount,profit_percent,rr
+                  FROM research_trades
+                  WHERE status IN ('closed','expired')
+                    AND outcome_group!='excluded'
+                    AND timeframe='1h'
+                    AND strategy IN ({qs})
+                  ORDER BY created_at""",CORE
+          ).fetchall()
+          con.close()
+          engine=TrendEngine();cache={};records=[]
+
+          def dt(v):
+              x=datetime.fromisoformat(str(v).replace("Z","+00:00"))
+              if x.tzinfo is None:x=x.replace(tzinfo=timezone.utc)
+              return x.astimezone(timezone.utc)
+
+          def trend(r):
+              when=dt(r["created_at"]);end=int(when.timestamp()*1000)
+              key=(r["symbol"],r["market"],end//60_000)
+              if key not in cache:
+                  base=("https://api.binance.com/api/v3/klines"
+                        if str(r["market"]).lower()=="spot"
+                        else "https://fapi.binance.com/fapi/v1/klines")
+                  url=base+"?"+urllib.parse.urlencode({
+                      "symbol":r["symbol"],"interval":"1d","endTime":end,"limit":500})
+                  req=urllib.request.Request(url,headers={"User-Agent":"MarketHunter-regime-dir-audit/1.0"})
+                  with urllib.request.urlopen(req,timeout=12) as resp:data=json.load(resp)
+                  cache[key]=[Candle.from_binance(x) for x in data
+                              if isinstance(x,list) and len(x)>=11 and int(x[6])<=end]
+                  time.sleep(.025)
+              cs=cache[key]
+              return engine.analyze(cs).trend if len(cs)>=200 else "sideways"
+
+          for i,r in enumerate(rows,1):
+              try:t=trend(r)
+              except Exception:t="unknown"
+              records.append({
+                  "strategy":r["strategy"],"direction":str(r["direction"]).upper(),
+                  "market":str(r["market"]).lower(),"trend":t,
+                  "profit_amount":float(r["profit_amount"] or 0),
+                  "profit_percent":float(r["profit_percent"] or 0),
+                  "rr":float(r["rr"] or 0),
+              })
+              if i%100==0:print("PROGRESS="+str(i),flush=True)
+
+          def m(xs):
+              xs=list(xs);w=[x for x in xs if x["profit_amount"]>1e-12]
+              l=[x for x in xs if x["profit_amount"]<-1e-12]
+              z=[x for x in xs if abs(x["profit_amount"])<=1e-12]
+              gp=sum(x["profit_amount"] for x in w);gl=abs(sum(x["profit_amount"] for x in l))
+              return {"n":len(xs),"wins":len(w),"losses":len(l),"breakeven":len(z),
+                      "total_profit":round(sum(x["profit_amount"] for x in xs),2),
+                      "profit_factor":round(gp/gl,3) if gl else None,
+                      "win_rate":round(100*len(w)/(len(w)+len(l)),1) if w or l else 0,
+                      "avg_profit_pct":round(sum(x["profit_percent"] for x in xs)/len(xs),3) if xs else 0}
+
+          print("AUDIT_UTC="+datetime.now(timezone.utc).isoformat())
+          print("ROWS="+str(len(records)))
+          out=[]
+          for s in CORE:
+              sub=[x for x in records if x["strategy"]==s]
+              if not sub:continue
+              entry={"strategy":s,"all":m(sub),"cells":{}}
+              for trend_name in ("bullish","bearish","sideways","unknown"):
+                  for direction in ("LONG","SHORT"):
+                      cell=[x for x in sub if x["trend"]==trend_name and x["direction"]==direction]
+                      if cell:
+                          entry["cells"][trend_name+"|"+direction]=m(cell)
+              out.append(entry)
+          print("CORE_CROSS="+json.dumps(out,ensure_ascii=False,sort_keys=True))
+
+          # OrderBlock: also split by spot/futures to detect hidden venue/market confounding.
+          ob=[x for x in records if x["strategy"]=="OrderBlock"]
+          cross={}
+          for market in ("spot","futures"):
+              for trend_name in ("bullish","bearish","sideways","unknown"):
+                  for direction in ("LONG","SHORT"):
+                      cell=[x for x in ob if x["market"]==market and x["trend"]==trend_name and x["direction"]==direction]
+                      if cell:cross[market+"|"+trend_name+"|"+direction]=m(cell)
+          print("ORDERBLOCK_MARKET_REGIME_DIRECTION="+json.dumps(cross,sort_keys=True))
+          PY
+          REMOTE

@@ -2,25 +2,25 @@
   "artifact": "trades.json",
   "artifacts": {
     "setup_reasons.json": {
-      "byte_count": 37472,
-      "sha256": "5aa18e44746218e0d6e1635438a0216f2c7bee3204473120eb0258cfe1d85f49",
+      "byte_count": 37937,
+      "sha256": "1d7c72eacd1ccac9ce54f80af4497d1331d7daac57ed66011e0ad32a7e7d113e",
       "source": "/research/statistics/setup-reasons"
     },
     "statistics.json": {
-      "byte_count": 393,
-      "sha256": "fefca1fc5a0dc5b28ddcf5ff660bea6a1b2c428be6e41f696c58584e1ede5c9e",
+      "byte_count": 396,
+      "sha256": "042c8dd530da914bc444fc8f59f421052124ce9126b0ffa4c7bc6a2c476423a2",
       "source": "/research/statistics"
     },
     "trades.json": {
-      "byte_count": 862534,
-      "sha256": "25e0003610e0545b20fa0f35b45aeff92017eaeeb485ea16620e1113aa9badd0",
+      "byte_count": 872902,
+      "sha256": "eb2d882825d47ff45612027c43dffabf77af64e5471a494eef5639069f92477c",
       "source": "/research/trades"
     }
   },
-  "byte_count": 862534,
-  "captured_at_utc": "2026-10-02T12:43:06.339434+00:00",
-  "sha256": "25e0003610e0545b20fa0f35b45aeff92017eaeeb485ea16620e1113aa9badd0",
+  "byte_count": 872902,
+  "captured_at_utc": "2026-10-02T22:17:50.824252+00:00",
+  "sha256": "eb2d882825d47ff45612027c43dffabf77af64e5471a494eef5639069f92477c",
   "source": "/research/trades",
   "source_revision": "64e1269b98509a8641940634d71075a3366a1bba",
-  "total": 584
+  "total": 589
 }
